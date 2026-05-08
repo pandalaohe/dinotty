@@ -1,5 +1,5 @@
 <template>
-  <div class="terminal-pane-container" @contextmenu.prevent="activateSelection">
+  <div class="terminal-pane-container" @contextmenu.prevent>
     <div ref="wrapperRef" class="terminal-pane"></div>
     <SelectionOverlay ref="selectionRef" :get-terminal="getTerminal" />
   </div>

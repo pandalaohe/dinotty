@@ -1,4 +1,5 @@
 import type { ClientMsg, ServerMsg } from '../types/protocol'
+import { wsUrlWithToken } from './apiBase'
 
 export interface Transport {
   send(msg: ClientMsg): void
@@ -9,7 +10,16 @@ export interface Transport {
 }
 
 export function isTauri(): boolean {
-  return !!(window as any).__TAURI__
+  const w = window as any
+  return !!(w.__TAURI_INTERNALS__?.invoke || w.__TAURI__?.core?.invoke)
+}
+
+export function tauriInvoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
+  const tauri = (window as any).__TAURI__
+  const invoke =
+    tauri?.core?.invoke ??
+    ((c: string, a?: object) => (window as any).__TAURI_INTERNALS__.invoke(c, a ?? {}))
+  return invoke(cmd, args ?? {})
 }
 
 export class WebSocketTransport implements Transport {
@@ -55,7 +65,7 @@ export class WebSocketTransport implements Transport {
   private _connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = this.host || location.host
-    const url = `${proto}//${host}/ws?paneId=${encodeURIComponent(this.paneId)}`
+    const url = wsUrlWithToken(`${proto}//${host}/ws?paneId=${encodeURIComponent(this.paneId)}`)
     this.ws = new WebSocket(url)
 
     this.ws.onopen = () => {
@@ -99,18 +109,28 @@ export class TauriIpcTransport implements Transport {
     this._init()
   }
 
+  private _invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
+    return tauriInvoke(cmd, { paneId: this.paneId, ...args })
+  }
+
   private async _init() {
-    const { invoke, event } = (window as any).__TAURI__
+    const tauri = (window as any).__TAURI__
+    const listen = tauri?.event?.listen
+    if (!listen) {
+      console.error('Tauri event API missing; enable app.withGlobalTauri in tauri.conf.json')
+      this._disconnectHandler?.()
+      return
+    }
 
     this._unlistenFns.push(
-      await event.listen('pty-output', (e: any) => {
+      await listen('pty-output', (e: any) => {
         if (e.payload.pane_id === this.paneId) {
           this._messageHandler?.({ type: 'output', data: e.payload.data })
         }
       }),
     )
     this._unlistenFns.push(
-      await event.listen('pty-reconnected', (e: any) => {
+      await listen('pty-reconnected', (e: any) => {
         const p = e.payload
         if (p.pane_id === this.paneId) {
           this._messageHandler?.({ type: 'reconnected', cols: p.cols, rows: p.rows })
@@ -118,7 +138,7 @@ export class TauriIpcTransport implements Transport {
       }),
     )
     this._unlistenFns.push(
-      await event.listen('pty-exit', (e: any) => {
+      await listen('pty-exit', (e: any) => {
         if (e.payload.pane_id === this.paneId) {
           this._disconnectHandler?.()
         }
@@ -126,7 +146,7 @@ export class TauriIpcTransport implements Transport {
     )
 
     try {
-      const shellType: string = await invoke('pty_spawn', { paneId: this.paneId })
+      const shellType: string = await this._invoke('pty_spawn') as string
       this._connectHandler?.()
       this._messageHandler?.({ type: 'shell_info', shell_type: shellType })
     } catch (e) {
@@ -136,11 +156,10 @@ export class TauriIpcTransport implements Transport {
   }
 
   send(msg: ClientMsg) {
-    const { invoke } = (window as any).__TAURI__
     if (msg.type === 'input') {
-      invoke('pty_write', { paneId: this.paneId, data: msg.data })
+      this._invoke('pty_write', { data: msg.data })
     } else if (msg.type === 'resize') {
-      invoke('pty_resize', { paneId: this.paneId, cols: msg.cols, rows: msg.rows })
+      this._invoke('pty_resize', { cols: msg.cols, rows: msg.rows })
     }
   }
 
@@ -157,8 +176,7 @@ export class TauriIpcTransport implements Transport {
   }
 
   disconnect() {
-    const { invoke } = (window as any).__TAURI__
-    invoke('pty_kill', { paneId: this.paneId })
+    this._invoke('pty_kill')
     for (const u of this._unlistenFns) {
       u()
     }

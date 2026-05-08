@@ -2,6 +2,7 @@ use crate::session::{Session, SessionManager, SessionStatus, SyncMsg};
 use crate::vt_screen::VirtualScreen;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
@@ -26,11 +27,11 @@ pub fn create_session(
     cmd.args(get_shell_args(&shell));
     cmd.env("TERM", "xterm-256color");
 
-    if let Ok(home) = std::env::var("HOME") {
-        cmd.cwd(&home);
+    let home_for_cwd = if let Ok(ref home) = std::env::var("HOME") {
+        cmd.cwd(home);
         match shell_type.as_str() {
             "zsh" => {
-                if let Some(zdotdir) = setup_zsh_title_hooks(&home) {
+                if let Some(zdotdir) = setup_zsh_title_hooks(home) {
                     cmd.env("ZDOTDIR", &zdotdir);
                 }
             }
@@ -42,7 +43,10 @@ pub fn create_session(
             }
             _ => {}
         }
-    }
+        PathBuf::from(home)
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
+    };
 
     pair.slave
         .spawn_command(cmd)
@@ -55,6 +59,10 @@ pub fn create_session(
         .map_err(|e| e.to_string())?;
     let writer: Box<dyn Write + Send> = pair.master.take_writer().map_err(|e| e.to_string())?;
 
+    let initial_cwd = home_for_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| home_for_cwd.clone());
+
     let session = Arc::new(Session {
         writer: std::sync::Mutex::new(writer),
         master: std::sync::Mutex::new(pair.master),
@@ -64,6 +72,10 @@ pub fn create_session(
         size: std::sync::Mutex::new((80, 24)),
         shell_type: shell_type.clone(),
         tauri_on_exit: std::sync::Mutex::new(tauri_on_exit),
+        cwd_state: std::sync::Mutex::new(crate::session::CwdState {
+            cwd: initial_cwd,
+            sniff_buf: Vec::new(),
+        }),
     });
     manager.sessions.insert(pane_id.clone(), Arc::clone(&session));
     manager.broadcast_sync(&SyncMsg::TabCreated {
@@ -82,6 +94,7 @@ pub fn create_session(
                 Ok(n) => {
                     let data = &buf[..n];
                     session_clone.screen.lock().unwrap().feed(data);
+                    session_clone.on_pty_output(data);
                     let s = String::from_utf8_lossy(data).to_string();
                     session_clone.broadcast(&s);
                 }

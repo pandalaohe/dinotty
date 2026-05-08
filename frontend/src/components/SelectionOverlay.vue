@@ -17,6 +17,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { copyToClipboard } from '../utils/clipboard'
 
 const props = defineProps<{
   getTerminal: () => any
@@ -132,17 +133,7 @@ function getSelectedText(): string {
 async function doCopy() {
   const text = getSelectedText()
   if (text) {
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      // Fallback
-      const ta = document.createElement('textarea')
-      ta.value = text
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      ta.remove()
-    }
+    await copyToClipboard(text)
   }
   cancel()
 }

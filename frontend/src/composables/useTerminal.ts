@@ -2,6 +2,30 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
+import { onThemeChange, settings, onTextChange } from './useSettings'
+import { wsUrlWithToken } from './apiBase'
+
+let tauriDragDropRegistered = false
+let lastFocusedInstance: TerminalInstance | null = null
+
+function setupGlobalTauriDragDrop() {
+  if (tauriDragDropRegistered) return
+  tauriDragDropRegistered = true
+
+  const w = window as any
+  const listen = w.__TAURI__?.event?.listen
+  if (!listen) return
+
+  listen('file-drop-paths', (event: any) => {
+    const paths: string[] = event.payload || []
+    if (paths.length > 0 && lastFocusedInstance) {
+      const escaped = paths.map((p: string) =>
+        /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p
+      )
+      lastFocusedInstance.sendData(escaped.join(' '))
+    }
+  })
+}
 
 export class TerminalInstance {
   paneId: string
@@ -18,7 +42,10 @@ export class TerminalInstance {
   private _overlay: HTMLElement | null = null
   private _suppressTitleChange = false
   private _touchCleanup: (() => void) | null = null
+  private _focusinCleanup: (() => void) | null = null
   private _resizeObserver: ResizeObserver | null = null
+  private _themeUnsub: (() => void) | null = null
+  private _textUnsub: (() => void) | null = null
 
   onTitleChange: ((title: string) => void) | null = null
   onShellInfo: ((shell: string) => void) | null = null
@@ -37,11 +64,16 @@ export class TerminalInstance {
     const s = getComputedStyle(document.documentElement)
     const v = (name: string) => s.getPropertyValue(name).trim()
 
+    const fontFamily = settings.text.font_family || v('--font-mono')
+
     this.xterm = new XTerm({
-      cursorBlink: true,
-      scrollback: 10000,
-      fontSize: 14,
-      fontFamily: v('--font-mono'),
+      cursorBlink: settings.text.cursor_blink,
+      cursorStyle: settings.text.cursor_style as any,
+      scrollback: settings.text.scrollback,
+      fontSize: settings.text.font_size,
+      fontFamily,
+      lineHeight: settings.text.line_height,
+      letterSpacing: settings.text.letter_spacing,
       allowProposedApi: true,
       theme: {
         background: v('--bg') || '#1A1A1A',
@@ -143,6 +175,22 @@ export class TerminalInstance {
 
     this._resizeObserver = new ResizeObserver(() => this._refit())
     this._resizeObserver.observe(wrapper)
+
+    this._themeUnsub = onThemeChange((xtermTheme) => {
+      if (this.xterm) this.xterm.options.theme = xtermTheme
+    })
+
+    this._textUnsub = onTextChange((text) => {
+      if (!this.xterm) return
+      this.xterm.options.fontSize = text.font_size
+      this.xterm.options.fontFamily = text.font_family || getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim()
+      this.xterm.options.lineHeight = text.line_height
+      this.xterm.options.letterSpacing = text.letter_spacing
+      this.xterm.options.cursorBlink = text.cursor_blink
+      this.xterm.options.cursorStyle = text.cursor_style as any
+      this.xterm.options.scrollback = text.scrollback
+      this._refit()
+    })
   }
 
   focus() {
@@ -166,6 +214,9 @@ export class TerminalInstance {
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
     this._resizeObserver?.disconnect()
     this._touchCleanup?.()
+    this._focusinCleanup?.()
+    this._themeUnsub?.()
+    this._textUnsub?.()
     if (this._transport) {
       this._transport.disconnect()
       this._transport = null
@@ -211,7 +262,7 @@ export class TerminalInstance {
 
   private _connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${proto}//${location.host}/ws?paneId=${encodeURIComponent(this.paneId)}`
+    const url = wsUrlWithToken(`${proto}//${location.host}/ws?paneId=${encodeURIComponent(this.paneId)}`)
     this.ws = new WebSocket(url)
 
     this.ws.onopen = () => {
@@ -299,6 +350,15 @@ export class TerminalInstance {
   }
 
   private _setupDragDrop(wrapper: HTMLElement) {
+    if (isTauri()) {
+      lastFocusedInstance = this
+      const handler = () => { lastFocusedInstance = this }
+      wrapper.addEventListener('focusin', handler)
+      this._focusinCleanup = () => wrapper.removeEventListener('focusin', handler)
+      setupGlobalTauriDragDrop()
+      return
+    }
+
     const xtermEl = wrapper.querySelector('.xterm') as HTMLElement
     const target = xtermEl || wrapper
 
@@ -328,7 +388,12 @@ export class TerminalInstance {
 
       if (paths.length === 0 && types.includes('text/plain')) {
         const text = dt.getData('text/plain').trim()
-        if (text && text.startsWith('/')) {
+        const absPlain =
+          text &&
+          (text.startsWith('/') ||
+            /^[A-Za-z]:[\\/]/.test(text) ||
+            text.startsWith('\\\\'))
+        if (absPlain) {
           text.split('\n').forEach((l) => { if (l.trim()) paths.push(l.trim()) })
         }
       }
@@ -341,10 +406,7 @@ export class TerminalInstance {
       }
 
       if (paths.length > 0) {
-        this.sendData(paths.map((p) => {
-          const escaped = p.replace(/'/g, "'\\''")
-          return `'${escaped}'`
-        }).join(' '))
+        this.sendData(paths.join(' '))
       }
     }, true)
   }

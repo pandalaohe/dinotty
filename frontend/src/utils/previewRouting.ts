@@ -1,0 +1,51 @@
+export function isWebPreviewInput(val: string): boolean {
+  const s = val.trim()
+  if (!s) return false
+  if (/^https?:\/\//i.test(s)) return true
+  if (/^\/\//.test(s)) return true
+  if (/^:?\d+(\/.*)?$/.test(s)) return true
+  if (/^localhost(:\d+)?(\/.*)?$/i.test(s)) return true
+  if (/^127\.0\.0\.1(:\d+)?(\/.*)?$/i.test(s)) return true
+  if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/.*)?$/.test(s)) return true
+  if (/^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}([/:?#].*)?$/.test(s)) return true
+  return false
+}
+
+export function normalizeWebUrl(val: string): string {
+  const v = val.trim()
+  if (/^\/\//.test(v)) return `https:${v}`
+  if (/^https?:\/\//i.test(v)) return v
+  const portSh = v.match(/^:?(\d+)(\/.*)?$/)
+  if (portSh) {
+    const path = portSh[2] || '/'
+    return `http://localhost:${portSh[1]}${path.startsWith('/') ? path : `/${path}`}`
+  }
+  if (/^localhost/i.test(v) || /^127\.0\.0\.1/.test(v)) {
+    return /:\/\//.test(v) ? v : `http://${v}`
+  }
+  if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/.*)?$/.test(v)) {
+    return `http://${v}`
+  }
+  if (/^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}([/:?#].*)?$/.test(v)) {
+    return `https://${v}`
+  }
+  return `http://${v}`
+}
+
+export function urlToPreviewSrc(url: string, embeddedHttpOrigin?: string): string {
+  if (!url) return 'about:blank'
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+      const port = parsed.port || '80'
+      const path = `/preview/${port}${parsed.pathname}${parsed.search}`
+      const base = embeddedHttpOrigin?.replace(/\/$/, '')
+      return base ? `${base}${path}` : path
+    }
+    const proxyPath = `/api/proxy?url=${encodeURIComponent(url)}`
+    const base = embeddedHttpOrigin?.replace(/\/$/, '')
+    return base ? `${base}${proxyPath}` : proxyPath
+  } catch {}
+  return url
+}

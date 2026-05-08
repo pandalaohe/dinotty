@@ -23,6 +23,8 @@ pub struct Settings {
     #[serde(default)]
     pub background: BackgroundConfig,
     #[serde(default)]
+    pub text: TextConfig,
+    #[serde(default)]
     pub bookmarks: Vec<CommandBookmark>,
     #[serde(default)]
     pub action_keyboard: Option<ActionKeyboardConfig>,
@@ -55,7 +57,7 @@ pub struct CustomColors {
     pub foreground: Option<String>,
     pub background: Option<String>,
     pub cursor: Option<String>,
-    pub ansi: Option<[String; 16]>,
+    pub ansi: Option<Vec<Option<String>>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -68,6 +70,44 @@ pub struct BackgroundConfig {
     pub opacity: f32,
     #[serde(default)]
     pub has_image: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TextConfig {
+    #[serde(default = "default_font_size")]
+    pub font_size: u8,
+    #[serde(default)]
+    pub font_family: String,
+    #[serde(default = "default_line_height")]
+    pub line_height: f32,
+    #[serde(default)]
+    pub letter_spacing: f32,
+    #[serde(default = "default_cursor_style")]
+    pub cursor_style: String,
+    #[serde(default = "default_true")]
+    pub cursor_blink: bool,
+    #[serde(default = "default_scrollback")]
+    pub scrollback: u32,
+}
+
+fn default_font_size() -> u8 { 14 }
+fn default_line_height() -> f32 { 1.2 }
+fn default_cursor_style() -> String { "block".into() }
+fn default_true() -> bool { true }
+fn default_scrollback() -> u32 { 10000 }
+
+impl Default for TextConfig {
+    fn default() -> Self {
+        Self {
+            font_size: default_font_size(),
+            font_family: String::new(),
+            line_height: default_line_height(),
+            letter_spacing: 0.0,
+            cursor_style: default_cursor_style(),
+            cursor_blink: true,
+            scrollback: default_scrollback(),
+        }
+    }
 }
 
 fn default_mode() -> String { "solid".into() }
@@ -114,6 +154,7 @@ impl Default for Settings {
         Self {
             theme: ThemeConfig::default(),
             background: BackgroundConfig::default(),
+            text: TextConfig::default(),
             bookmarks: vec![],
             action_keyboard: None,
             locale: default_locale(),

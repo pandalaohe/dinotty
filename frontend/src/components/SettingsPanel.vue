@@ -6,149 +6,21 @@
         <button class="settings-close" @click="$emit('close')">✕</button>
       </div>
 
+      <div class="settings-tabs">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          class="settings-tab"
+          :class="{ active: activeTab === tab.id }"
+          @click="activeTab = tab.id"
+        ><span class="settings-tab-icon" v-html="tab.icon"></span>{{ tab.label }}</button>
+      </div>
+
       <div class="settings-body">
-        <section class="settings-section">
-          <h3>{{ t('settings.language') }}</h3>
-          <div class="settings-row">
-            <select v-model="settings.locale" class="shortcut-input" style="flex:1">
-              <option value="zh">{{ t('settings.lang.zh') }}</option>
-              <option value="en">{{ t('settings.lang.en') }}</option>
-            </select>
-          </div>
-        </section>
-
-        <!-- Theme -->
-        <section class="settings-section">
-          <h3>{{ t('settings.theme') }}</h3>
-          <div class="theme-grid">
-            <button
-              v-for="th in themes"
-              :key="th.name"
-              class="theme-card"
-              :class="{ active: settings.theme.preset === th.name }"
-              @click="selectTheme(th.name)"
-            >
-              <div class="theme-preview" :style="{ background: th.colors['--bg'], color: th.colors['--fg'] }">
-                <span class="theme-sample" :style="{ color: th.colors['--color-green'] }">$</span>
-                <span class="theme-sample" :style="{ color: th.colors['--fg'] }"> ls</span>
-              </div>
-              <span class="theme-name">{{ themeLabel(th.name) }}</span>
-            </button>
-          </div>
-        </section>
-
-        <!-- Action Keyboard -->
-        <section class="settings-section">
-          <h3>{{ t('settings.actionKeyboard') }}</h3>
-          <p class="settings-hint">{{ t('settings.akHint') }}</p>
-          <div class="ak-wysiwyg">
-            <div v-for="(row, ri) in actionRows" :key="ri" class="ak-wyg-row-outer">
-              <div class="mkb-row-wrap">
-                <div class="mkb-row">
-                  <div
-                    v-if="ri === 0"
-                    class="mkb-btn mkb-mod mkb-action-back ak-wyg-chrome"
-                    style="flex-grow: 1.5; flex-basis: 0"
-                  >⌨</div>
-                  <div
-                    v-for="(key, ki) in row"
-                    :key="akItemKey(key)"
-                    class="ak-wyg-slot"
-                    :style="akPreviewSlotStyle(ri, ki)"
-                  >
-                    <div
-                      class="mkb-btn ak-wyg-key"
-                      :class="[previewDef(ri, ki).cls]"
-                    >
-                      <span class="ak-wyg-label" @click="editActionKey(ri, ki)">{{ previewLabel(key) }}</span>
-                      <button type="button" class="ak-key-del" @click.stop="removeActionKey(ri, ki)">✕</button>
-                      <div
-                        class="ak-key-resize"
-                        :title="t('settings.dragResize')"
-                        @pointerdown="akResizePointerDown(ri, ki, $event)"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    class="mkb-btn mkb-mod ak-wyg-add-key"
-                    @click="addActionKey(ri)"
-                  >+</button>
-                </div>
-              </div>
-              <button
-                v-if="actionRows.length > 1"
-                type="button"
-                class="ak-wyg-remove-row"
-                :title="t('settings.deleteRow')"
-                @click="removeActionRow(ri)"
-              >✕</button>
-            </div>
-
-            <div class="mkb-action-arrow-enter ak-wyg-fixed-cluster">
-              <div class="mkb-action-arrowpad">
-                <div class="mkb-action-arrow-top">
-                  <div class="mkb-btn mkb-mod mkb-action-arrow">↑</div>
-                </div>
-                <div class="mkb-action-arrow-bot">
-                  <div class="mkb-btn mkb-mod mkb-action-arrow">←</div>
-                  <div class="mkb-btn mkb-mod mkb-action-arrow">↓</div>
-                  <div class="mkb-btn mkb-mod mkb-action-arrow">→</div>
-                </div>
-              </div>
-              <div class="mkb-btn mkb-mod mkb-action-enter mkb-return">↵</div>
-            </div>
-          </div>
-          <div class="ak-actions">
-            <button class="shortcut-add" @click="addActionRow">{{ t('settings.addRow') }}</button>
-            <button class="shortcut-add ak-reset" @click="resetActionKeyboard">{{ t('settings.resetDefault') }}</button>
-          </div>
-
-          <!-- Edit modal -->
-          <div v-if="akEdit" class="ak-modal-backdrop" @click.self="akEdit = null">
-            <div class="ak-modal">
-              <h4>{{ t('settings.editKey') }}</h4>
-              <label class="ak-field">
-                <span>{{ t('settings.label') }}</span>
-                <input v-model="akEdit.label" class="shortcut-input" />
-              </label>
-              <label class="ak-field">
-                <span>{{ t('settings.send') }}</span>
-                <textarea v-model="akEdit.sendRaw" class="shortcut-input ak-send-textarea" rows="4" spellcheck="false" :placeholder="t('settings.sendPlaceholder')" />
-              </label>
-              <div class="ak-send-row">
-                <code class="ak-esc-preview">{{ akSendPreview }}</code>
-                <button type="button" class="ak-record-btn" :class="{ recording: akRecording }" @click.stop="toggleRecord">
-                  {{ akRecording ? t('settings.stop') : t('settings.record') }}
-                </button>
-              </div>
-              <div
-                v-show="akRecording"
-                ref="recordFocusSinkRef"
-                class="ak-record-focus-sink"
-                tabindex="-1"
-                aria-hidden="true"
-              />
-              <label class="ak-field">
-                <span>{{ t('settings.style') }}</span>
-                <select v-model="akEdit.style" class="shortcut-input">
-                  <option value="">{{ t('settings.style.normal') }}</option>
-                  <option value="danger">{{ t('settings.style.danger') }}</option>
-                </select>
-              </label>
-              <label class="shortcut-check">
-                <input type="checkbox" v-model="akEdit.auto_enter" /> {{ t('settings.appendEnter') }}
-              </label>
-              <label class="shortcut-check">
-                <input type="checkbox" v-model="akEdit.repeat" /> {{ t('settings.repeatHold') }}
-              </label>
-              <div class="ak-modal-actions">
-                <button class="settings-save" @click="saveActionKey">{{ t('settings.save') }}</button>
-                <button class="shortcut-add" @click="akEdit = null">{{ t('settings.cancel') }}</button>
-              </div>
-            </div>
-          </div>
-        </section>
+        <GeneralTab v-show="activeTab === 'general'" />
+        <ThemeTab v-show="activeTab === 'theme'" />
+        <TextTab v-show="activeTab === 'text'" />
+        <KeyboardTab v-show="activeTab === 'keyboard'" />
       </div>
 
       <div class="settings-footer">
@@ -159,341 +31,38 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
-import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../composables/useSettings'
+import { ref, computed } from 'vue'
+import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
-import type { ActionKey } from '../composables/useSettings'
-import { actionKeyToKeyDef } from '../utils/actionKeyDef'
-import { themes } from '../themes'
+import GeneralTab from './settings/GeneralTab.vue'
+import ThemeTab from './settings/ThemeTab.vue'
+import TextTab from './settings/TextTab.vue'
+import KeyboardTab from './settings/KeyboardTab.vue'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
-const { t, themeLabel } = useI18n()
+const { t } = useI18n()
 
-function selectTheme(name: string) {
-  settings.theme.preset = name
-  applyCurrentTheme()
-}
+const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard'>('general')
 
-// ── Action Keyboard ─────────────────────────────────────────
-
-const actionRows = computed(() => {
-  return (settings.action_keyboard ?? DEFAULT_ACTION_KEYBOARD).rows
-})
-
-function previewDef(ri: number, ki: number) {
-  const rows = actionRows.value
-  const bottom = ri === rows.length - 1
-  return actionKeyToKeyDef(rows[ri][ki], bottom ? { bottomIdx: ki } : undefined)
-}
-
-function akPreviewSlotStyle(ri: number, ki: number) {
-  const d = previewDef(ri, ki)
-  return { flexGrow: d.g ?? 1, flexBasis: '0', minWidth: '0' }
-}
-
-function previewLabel(key: ActionKey) {
-  if (key.special === 'space') return '\u00a0'
-  return key.label || '\u00a0'
-}
-
-const akSendPreview = computed(() => {
-  if (!akEdit.value) return ''
-  return escapeForDisplay(akEdit.value.sendRaw)
-})
-
-function ensureActionKeyboard() {
-  if (!settings.action_keyboard) {
-    settings.action_keyboard = JSON.parse(JSON.stringify(DEFAULT_ACTION_KEYBOARD))
-  }
-}
-
-function addActionRow() {
-  ensureActionKeyboard()
-  settings.action_keyboard!.rows.push([])
-}
-
-function removeActionRow(ri: number) {
-  ensureActionKeyboard()
-  settings.action_keyboard!.rows.splice(ri, 1)
-}
-
-function addActionKey(ri: number) {
-  ensureActionKeyboard()
-  settings.action_keyboard!.rows[ri].push({ label: 'new', send: '', auto_enter: true })
-}
-
-function resolveAutoEnterForEdit(key: ActionKey): boolean {
-  if (typeof key.auto_enter === 'boolean') return key.auto_enter
-  const s = key.send
-  if (!s) return true
-  if (s.charCodeAt(0) === 0x1b) return false
-  if (s.length === 1) {
-    const c = s.charCodeAt(0)
-    if (c < 32 || c === 127) return false
-  }
-  return true
-}
-
-function removeActionKey(ri: number, ki: number) {
-  ensureActionKeyboard()
-  settings.action_keyboard!.rows[ri].splice(ki, 1)
-}
-
-const akKeyIds = new WeakMap<ActionKey, string>()
-
-function akItemKey(key: ActionKey) {
-  let id = akKeyIds.get(key)
-  if (!id) {
-    id = `ak-${Math.random().toString(36).slice(2)}`
-    akKeyIds.set(key, id)
-  }
-  return id
-}
-
-let akResizePid = -1
-
-function akResizePointerDown(ri: number, ki: number, e: PointerEvent) {
-  if (e.button !== 0) return
-  e.preventDefault()
-  e.stopPropagation()
-  ensureActionKeyboard()
-  const row = settings.action_keyboard!.rows[ri]
-  const key = row[ki]
-  const startX = e.clientX
-  const startGrow = key.grow != null && key.grow > 0 ? key.grow : 1
-  const el = e.currentTarget as HTMLElement
-  el.setPointerCapture(e.pointerId)
-  akResizePid = e.pointerId
-
-  const clamp = (v: number) => Math.min(12, Math.max(0.5, Math.round(v * 4) / 4))
-
-  const onMove = (ev: PointerEvent) => {
-    if (ev.pointerId !== akResizePid) return
-    key.grow = clamp(startGrow + (ev.clientX - startX) / 28)
-  }
-  const end = (ev: PointerEvent) => {
-    if (ev.pointerId !== akResizePid) return
-    try {
-      el.releasePointerCapture(ev.pointerId)
-    } catch {}
-    akResizePid = -1
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', end)
-    window.removeEventListener('pointercancel', end)
-  }
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', end)
-  window.addEventListener('pointercancel', end)
-}
-
-// Edit modal
-const akEdit = ref<{ ri: number; ki: number; label: string; sendRaw: string; style: string; repeat: boolean; auto_enter: boolean } | null>(null)
-const akRecording = ref(false)
-const recordFocusSinkRef = ref<HTMLElement | null>(null)
-
-function editActionKey(ri: number, ki: number) {
-  const key = actionRows.value[ri][ki]
-  akEdit.value = {
-    ri, ki,
-    label: key.label,
-    sendRaw: key.send,
-    style: key.style || '',
-    repeat: key.repeat || false,
-    auto_enter: resolveAutoEnterForEdit(key),
-  }
-}
-
-function saveActionKey() {
-  if (!akEdit.value) return
-  ensureActionKeyboard()
-  const { ri, ki, label, sendRaw, style, repeat, auto_enter } = akEdit.value
-  const key = settings.action_keyboard!.rows[ri][ki]
-  key.label = label
-  key.send = sendRaw
-  key.style = style || undefined
-  key.repeat = repeat || undefined
-  key.auto_enter = auto_enter
-  akEdit.value = null
-}
-
-function resetActionKeyboard() {
-  settings.action_keyboard = JSON.parse(JSON.stringify(DEFAULT_ACTION_KEYBOARD))
-}
-
-// Key recording
-let recordHandler: ((e: KeyboardEvent) => void) | null = null
-
-function toggleRecord() {
-  if (akRecording.value) {
-    stopRecord()
-  } else {
-    startRecord()
-  }
-}
-
-function recordingEventIgnorable(e: KeyboardEvent): boolean {
-  if (e.repeat) return true
-  const k = e.key
-  return k === 'Shift' || k === 'Control' || k === 'Alt' || k === 'Meta'
-}
-
-function startRecord() {
-  akRecording.value = true
-  recordHandler = (e: KeyboardEvent) => {
-    if (recordingEventIgnorable(e)) return
-    if (!akEdit.value) return
-    const seq = keyEventToSequence(e)
-    if (!seq) return
-    e.preventDefault()
-    e.stopPropagation()
-    e.stopImmediatePropagation()
-    akEdit.value.sendRaw = seq
-    if (akEdit.value.label === 'new' || akEdit.value.label === '') {
-      akEdit.value.label = keyEventToLabel(e)
-    }
-    stopRecord()
-  }
-  window.addEventListener('keydown', recordHandler, true)
-  nextTick(() => {
-    document.querySelector<HTMLElement>('.xterm-helper-textarea')?.blur()
-    const ae = document.activeElement
-    if (ae instanceof HTMLElement) ae.blur()
-    recordFocusSinkRef.value?.focus({ preventScroll: true })
-  })
-}
-
-function stopRecord() {
-  akRecording.value = false
-  if (recordHandler) {
-    window.removeEventListener('keydown', recordHandler, true)
-    recordHandler = null
-  }
-  recordFocusSinkRef.value?.blur()
-}
-
-onBeforeUnmount(() => {
-  stopRecord()
-})
-
-const FKEY_SEQ: Record<string, string> = {
-  F1: '\x1bOP',
-  F2: '\x1bOQ',
-  F3: '\x1bOR',
-  F4: '\x1bOS',
-  F5: '\x1b[15~',
-  F6: '\x1b[17~',
-  F7: '\x1b[18~',
-  F8: '\x1b[19~',
-  F9: '\x1b[20~',
-  F10: '\x1b[21~',
-  F11: '\x1b[23~',
-  F12: '\x1b[24~',
-}
-
-function letterFromPhysicalCode(code: string): string | null {
-  if (code.startsWith('Key')) return code.slice(3).toLowerCase()
-  if (code.startsWith('Digit')) return code.slice(5)
-  return null
-}
-
-function keyEventToSequence(e: KeyboardEvent): string {
-  const ctrl = e.ctrlKey || e.metaKey
-  const alt = e.altKey
-  let ch = ''
-
-  const fk = FKEY_SEQ[e.key]
-  if (fk) return fk
-
-  if (e.key === 'Escape') ch = '\x1b'
-  else if (e.key === 'Tab') ch = e.shiftKey ? '\x1b[Z' : '\t'
-  else if (e.key === 'Backspace') ch = '\x7f'
-  else if (e.key === 'Enter') ch = '\r'
-  else if (e.key === 'ArrowUp') ch = '\x1b[A'
-  else if (e.key === 'ArrowDown') ch = '\x1b[B'
-  else if (e.key === 'ArrowRight') ch = '\x1b[C'
-  else if (e.key === 'ArrowLeft') ch = '\x1b[D'
-  else if (e.key === 'Insert') ch = '\x1b[2~'
-  else if (e.key === 'Delete') ch = '\x1b[3~'
-  else if (e.key === 'Home') ch = '\x1b[H'
-  else if (e.key === 'End') ch = '\x1b[F'
-  else if (e.key === 'PageUp') ch = '\x1b[5~'
-  else if (e.key === 'PageDown') ch = '\x1b[6~'
-  else if (e.key.length === 1) {
-    ch = e.key
-    if (ctrl) {
-      const code = ch.toUpperCase().charCodeAt(0) - 64
-      if (code >= 1 && code <= 26) return String.fromCharCode(code)
-    }
-    if (alt) return '\x1b' + ch
-    return ch
-  } else {
-    const phys = letterFromPhysicalCode(e.code)
-    if (phys && phys.length === 1) {
-      if (ctrl) {
-        const code = phys.toUpperCase().charCodeAt(0) - 64
-        if (code >= 1 && code <= 26) return String.fromCharCode(code)
-      }
-      if (alt) return '\x1b' + phys
-      return phys
-    }
-    return ''
-  }
-
-  if (alt && ch.length > 0) return '\x1b' + ch
-  return ch
-}
-
-function keyEventToLabel(e: KeyboardEvent): string {
-  const parts: string[] = []
-  if (e.ctrlKey) parts.push('ctrl')
-  if (e.metaKey) parts.push('cmd')
-  if (e.altKey) parts.push('opt')
-  if (e.shiftKey) parts.push('shift')
-
-  let key = e.key
-  if (key === ' ') key = 'space'
-  else if (key === 'Escape') key = 'esc'
-  else if (key === 'Backspace') key = '⌫'
-  else if (key === 'Tab') key = 'tab'
-  else if (key === 'Enter') key = '↵'
-  else if (key === 'ArrowUp') key = '↑'
-  else if (key === 'ArrowDown') key = '↓'
-  else if (key === 'ArrowLeft') key = '←'
-  else if (key === 'ArrowRight') key = '→'
-  else if (key.length === 1) key = key.toLowerCase()
-  else return key
-
-  if (parts.length && !['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
-    parts.push(key)
-  } else if (!parts.length) {
-    return key
-  }
-  return parts.join('+')
-}
-
-function escapeForDisplay(s: string): string {
-  return s.replace(/[\x00-\x1f\x7f]/g, c => {
-    const code = c.charCodeAt(0)
-    if (code === 0x1b) return '\\e'
-    if (code === 0x09) return '\\t'
-    if (code === 0x0d) return '\\r'
-    if (code === 0x0a) return '\\n'
-    if (code === 0x7f) return '\\x7f'
-    if (code <= 26) return '^' + String.fromCharCode(code + 64)
-    return '\\x' + code.toString(16).padStart(2, '0')
-  })
-}
+const tabs = computed(() => [
+  { id: 'general' as const, label: t('settings.tab.general'), icon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a2 2 0 0 1 2 2v2h3a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h3V3a2 2 0 0 1 2-2zm0 1.5A.5.5 0 0 0 7.5 3v2h1V3A.5.5 0 0 0 8 2.5z"/></svg>' },
+  { id: 'theme' as const, label: t('settings.tab.theme'), icon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z"/><path d="M8 3v5h4.5a3.5 3.5 0 0 0-4.5-5z"/></svg>' },
+  { id: 'text' as const, label: t('settings.tab.text'), icon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 2h12v2H9v10h-2V4H2V2z"/></svg>' },
+  { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M1 3h14v10H1V3zm1 1v8h12V4H2zm2 2h1v1H4V6zm3 0h1v1H7V6zm3 0h1v1h-1V6zm3 0h1v1h-1V6zM4 8h1v1H4V8zm3 0h1v1H7V8zm3 0h1v1h-1V8zm3 0h1v1h-1V8zM5 10h6v1H5v-1z"/></svg>' },
+])
 
 async function save() {
+  applyCurrentTheme()
+  notifyTextChange()
   await saveSettings()
   emit('close')
 }
 </script>
 
-<style scoped>
+<style>
 .settings-backdrop {
   position: fixed;
   inset: 0;
@@ -554,6 +123,42 @@ async function save() {
   color: var(--fg-bright, #F0F6FC);
 }
 
+.settings-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border, #333);
+  padding: 0 20px;
+}
+.settings-tab {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-muted, #666);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+}
+.settings-tab:hover .settings-tab-icon,
+.settings-tab.active .settings-tab-icon {
+  opacity: 1;
+}
+.settings-tab:hover {
+  color: var(--fg, #C7C7C7);
+}
+.settings-tab.active {
+  color: var(--accent, #4D7FFF);
+  border-bottom-color: var(--accent, #4D7FFF);
+}
+
 .settings-body {
   flex: 1;
   overflow-y: auto;
@@ -574,7 +179,7 @@ async function save() {
 
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 .theme-card {
@@ -582,28 +187,190 @@ async function save() {
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, transform 0.15s;
   text-align: left;
 }
 .theme-card.active {
   border-color: var(--accent, #4D7FFF);
+  box-shadow: 0 0 0 1px var(--accent, #4D7FFF);
 }
 .theme-card:hover {
   border-color: var(--accent-hover, #6E9AFF);
+  transform: translateY(-1px);
 }
 .theme-preview {
-  padding: 8px 10px;
+  padding: 6px 8px;
   font-family: var(--font-mono);
-  font-size: 12px;
-  min-height: 36px;
+  font-size: 11px;
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.theme-preview-header {
+  display: flex;
+  gap: 4px;
+}
+.theme-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  opacity: 0.9;
+}
+.theme-preview-body {
+  flex: 1;
   display: flex;
   align-items: center;
+  font-size: 11px;
+}
+.theme-swatches {
+  display: flex;
+  gap: 3px;
+}
+.swatch {
+  width: 100%;
+  height: 3px;
+  border-radius: 1px;
 }
 .theme-name {
   display: block;
-  padding: 4px 10px 6px;
+  padding: 4px 8px 5px;
+  font-size: 10px;
+  color: var(--fg-muted, #666);
+  text-align: center;
+}
+
+/* ── Access URL ────────────────────────────────────────── */
+.access-url-row {
+  margin-bottom: 10px;
+}
+.access-url-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-input, #1A1A1A);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+}
+.access-url-text {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent, #4D7FFF);
+  word-break: break-all;
+}
+.access-url-copy {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--fg-muted, #666);
+  background: rgba(255,255,255,0.05);
+}
+.access-url-copy:hover {
+  background: rgba(255,255,255,0.1);
+  color: var(--fg-bright, #F0F6FC);
+}
+
+/* ── Custom Colors ──────────────────────────────────────── */
+.custom-colors-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.color-field > span {
   font-size: 11px;
   color: var(--fg-muted, #666);
+}
+.color-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-input, #1A1A1A);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.color-input-wrap input[type="color"] {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  background: none;
+}
+.color-input-wrap input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.color-input-wrap input[type="color"]::-webkit-color-swatch {
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+.color-hex {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted, #666);
+  text-transform: uppercase;
+}
+.ansi-details {
+  margin-bottom: 10px;
+}
+.ansi-details summary {
+  font-size: 12px;
+  color: var(--fg-muted, #666);
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+}
+.ansi-details summary:hover {
+  color: var(--fg, #C7C7C7);
+}
+.ansi-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+.ansi-field {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ansi-field input[type="color"] {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  background: none;
+}
+.ansi-field input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.ansi-field input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+.ansi-label {
+  font-size: 8px;
+  color: var(--fg-muted, #666);
+  text-align: center;
+  line-height: 1.1;
 }
 
 .settings-row {
@@ -634,6 +401,157 @@ async function save() {
 .settings-row input[type="file"] {
   font-size: 12px;
   color: var(--fg-muted, #666);
+}
+
+/* ── Font Dropdown ──────────────────────────────────────── */
+.font-dropdown {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.font-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  min-height: 28px;
+}
+.font-dropdown-trigger:hover {
+  border-color: var(--accent, #4D7FFF);
+}
+.font-dropdown-arrow {
+  font-size: 10px;
+  color: var(--fg-muted, #666);
+  flex-shrink: 0;
+}
+.font-dropdown-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+.font-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-surface, #1A1A1A);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  z-index: 1000;
+  padding: 4px 0;
+}
+.font-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--fg, #C7C7C7);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.font-dropdown-item:hover {
+  background: rgba(255,255,255,0.06);
+}
+.font-dropdown-item.active {
+  background: rgba(77,127,255,0.15);
+  color: var(--accent, #4D7FFF);
+}
+.font-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.font-item-sample {
+  font-size: 12px;
+  color: var(--fg-muted, #666);
+  flex-shrink: 0;
+}
+.font-dropdown-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: rgba(255,255,255,0.08);
+}
+.font-custom-input-wrap {
+  padding: 4px 8px 6px;
+}
+.font-custom-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.range-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+.range-wrap input[type="range"] {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border, #333);
+  border-radius: 2px;
+  outline: none;
+}
+.range-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent, #4D7FFF);
+  cursor: pointer;
+}
+.range-val {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted, #666);
+  min-width: 40px;
+  text-align: right;
+}
+
+.toggle {
+  position: relative;
+  cursor: pointer;
+}
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-track {
+  display: block;
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--border, #333);
+  transition: background 0.2s;
+}
+.toggle input:checked + .toggle-track {
+  background: var(--accent, #4D7FFF);
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+.toggle input:checked ~ .toggle-track .toggle-thumb {
+  transform: translateX(16px);
 }
 
 .shortcut-input {

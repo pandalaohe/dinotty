@@ -1,13 +1,14 @@
-use xterm_server::{session, settings, file_preview, ws, proxy};
+use xterm_server::{auth, session, settings, ws, proxy, workspace, file_watcher};
 mod routes;
 
 use axum::{
     body::Body,
     extract::Path,
     http::{header, Response, StatusCode},
+    middleware,
     response::IntoResponse,
     Router,
-    routing::{any, get, post},
+    routing::{any, delete, get, post, put},
 };
 use rust_embed::Embed;
 use std::net::SocketAddr;
@@ -17,6 +18,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::session::SessionManager;
 use crate::settings::SettingsState;
+use crate::file_watcher::FileWatcherState;
 
 #[derive(Embed)]
 #[folder = "frontend/dist/"]
@@ -26,6 +28,8 @@ pub struct StaticFiles;
 pub struct AppState {
     pub manager: Arc<SessionManager>,
     pub settings: SettingsState,
+    pub file_watcher: Arc<FileWatcherState>,
+    pub auth_token: Arc<String>,
 }
 
 // Allow extracting Arc<SessionManager> from AppState for ws handlers
@@ -39,6 +43,13 @@ impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
 impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, SettingsState) {
     fn from_ref(state: &AppState) -> Self {
         (state.manager.clone(), state.settings.clone())
+    }
+}
+
+// Allow extracting (Arc<SessionManager>, Arc<FileWatcherState>) for file watcher handlers
+impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, Arc<FileWatcherState>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.manager.clone(), state.file_watcher.clone())
     }
 }
 
@@ -92,22 +103,46 @@ async fn main() {
     let manager = Arc::new(SessionManager::new());
     manager.start_cleanup_task();
 
+    let auth_token = {
+        let mut buf = [0u8; 32];
+        rand::fill(&mut buf);
+        let token: String = buf.iter().map(|b| format!("{:02x}", b)).collect();
+        Arc::new(token)
+    };
+    tracing::info!("Auth token: {}", &*auth_token);
+
     let state = AppState {
         manager,
         settings: settings::create_settings_state(),
+        file_watcher: Arc::new(FileWatcherState::new()),
+        auth_token: auth_token.clone(),
     };
 
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))
         .route("/ws/sync", get(ws::sync_handler))
+        .route("/ws/watch", get(file_watcher::watch_handler))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
-        .route("/api/file", get(file_preview::get_file))
+        .route("/api/workspace/resolve", get(workspace::workspace_resolve))
+        .route("/api/workspace/list", get(workspace::workspace_list))
+        .route("/api/workspace/meta", get(workspace::workspace_meta))
+        .route("/api/workspace/raw", get(workspace::workspace_raw))
+        .route("/api/workspace/upload", post(workspace::workspace_upload))
+        .route("/api/workspace/create", post(workspace::workspace_create_entry))
+        .route("/api/workspace/file", put(workspace::workspace_put_file))
+        .route("/api/workspace/delete", delete(workspace::workspace_delete))
+        .route("/api/workspace/rename", post(workspace::workspace_rename))
+        .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/preview/:port", any(proxy::proxy_handler_root))
         .route("/preview/:port/", any(proxy::proxy_handler_root))
         .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))
         .route("/assets/*path", get(static_handler))
         .route("/", get(routes::index))
+        .layer(middleware::from_fn(move |req, next| {
+            let token = auth_token.clone();
+            async move { auth::auth_middleware(req, next, &token).await }
+        }))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
