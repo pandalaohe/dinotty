@@ -3,7 +3,7 @@ use axum::{
     extract::Path,
     http::{header, Response, StatusCode},
     response::IntoResponse,
-    routing::{any, get, post},
+    routing::{any, delete, get, post, put},
     Router,
 };
 use rust_embed::Embed;
@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
-use xterm_server::file_preview;
+use xterm_server::workspace;
 use xterm_server::proxy;
 use xterm_server::session::SessionManager;
 use xterm_server::settings;
@@ -82,7 +82,15 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
             "/api/settings/background",
             post(settings::upload_background).get(settings::get_background),
         )
-        .route("/api/file", get(file_preview::get_file))
+        .route("/api/workspace/resolve", get(workspace::workspace_resolve))
+        .route("/api/workspace/list", get(workspace::workspace_list))
+        .route("/api/workspace/meta", get(workspace::workspace_meta))
+        .route("/api/workspace/raw", get(workspace::workspace_raw))
+        .route("/api/workspace/upload", post(workspace::workspace_upload))
+        .route("/api/workspace/create", post(workspace::workspace_create_entry))
+        .route("/api/workspace/file", put(workspace::workspace_put_file))
+        .route("/api/workspace/delete", delete(workspace::workspace_delete))
+        .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/preview/:port", any(proxy::proxy_handler_root))
         .route("/preview/:port/", any(proxy::proxy_handler_root))
         .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))

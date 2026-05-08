@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { getThemeByName, applyThemeToDOM, getXtermTheme } from '../themes'
+import { getApiBase, apiUrl, authFetch } from './apiBase'
 export interface SettingsData {
   theme: {
     preset: string
@@ -7,15 +8,27 @@ export interface SettingsData {
       foreground?: string
       background?: string
       cursor?: string
-      ansi?: string[]
+      ansi?: (string | undefined)[]
     } | null
   }
   background: {
     color: string | null
   }
+  text: TextConfig
   bookmarks: CommandBookmark[]
   action_keyboard: ActionKeyboardConfig | null
   locale: string
+  port?: number | null
+}
+
+export interface TextConfig {
+  font_size: number
+  font_family: string
+  line_height: number
+  letter_spacing: number
+  cursor_style: 'block' | 'underline' | 'bar'
+  cursor_blink: boolean
+  scrollback: number
 }
 
 export interface CommandBookmark {
@@ -67,6 +80,15 @@ export const DEFAULT_ACTION_KEYBOARD: ActionKeyboardConfig = {
 export const settings = reactive<SettingsData>({
   theme: { preset: 'dark', custom: null },
   background: { color: null },
+  text: {
+    font_size: 14,
+    font_family: '',
+    line_height: 1.2,
+    letter_spacing: 0,
+    cursor_style: 'block',
+    cursor_blink: true,
+    scrollback: 10000,
+  },
   bookmarks: [],
   action_keyboard: null,
   locale: 'zh',
@@ -84,7 +106,8 @@ export function useSettings() {
 
 async function loadSettings() {
   try {
-    const res = await fetch('/api/settings')
+    await getApiBase()
+    const res = await authFetch(apiUrl('/api/settings'))
     if (res.ok) {
       const data = await res.json()
       Object.assign(settings, data)
@@ -105,7 +128,8 @@ async function saveSettings() {
     } else {
       localStorage.removeItem('xterm_action_keyboard')
     }
-    await fetch('/api/settings', {
+    await getApiBase()
+    await authFetch(apiUrl('/api/settings'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
@@ -113,17 +137,77 @@ async function saveSettings() {
   } catch {}
 }
 
+const themeChangeListeners = new Set<(xtermTheme: ReturnType<typeof getXtermTheme>) => void>()
+
+export function onThemeChange(fn: (xtermTheme: ReturnType<typeof getXtermTheme>) => void) {
+  themeChangeListeners.add(fn)
+  return () => { themeChangeListeners.delete(fn) }
+}
+
+const textChangeListeners = new Set<(text: TextConfig) => void>()
+
+export function onTextChange(fn: (text: TextConfig) => void) {
+  textChangeListeners.add(fn)
+  return () => { textChangeListeners.delete(fn) }
+}
+
+export function notifyTextChange() {
+  textChangeListeners.forEach((fn) => fn(settings.text))
+}
+
 export function applyCurrentTheme() {
   const theme = getThemeByName(settings.theme.preset)
   applyThemeToDOM(theme)
 
+  // Apply custom color overrides
+  const custom = settings.theme.custom
+  if (custom) {
+    if (custom.foreground) {
+      document.documentElement.style.setProperty('--fg', custom.foreground)
+    }
+    if (custom.background) {
+      document.documentElement.style.setProperty('--bg', custom.background)
+    }
+    if (custom.cursor) {
+      document.documentElement.style.setProperty('--fg-muted', custom.cursor)
+    }
+    if (custom.ansi) {
+      const keys = [
+        '--color-black', '--color-red', '--color-green', '--color-yellow',
+        '--color-blue', '--color-magenta', '--color-cyan', '--color-white',
+        '--color-bright-black', '--color-bright-red', '--color-bright-green', '--color-bright-yellow',
+        '--color-bright-blue', '--color-bright-magenta', '--color-bright-cyan', '--color-bright-white',
+      ]
+      custom.ansi.forEach((c, i) => {
+        if (c) document.documentElement.style.setProperty(keys[i], c)
+      })
+    }
+  }
+
   if (settings.background.color) {
     document.documentElement.style.setProperty('--bg', settings.background.color)
   }
+
+  const xtermTheme = getCurrentXtermTheme()
+  themeChangeListeners.forEach((fn) => fn(xtermTheme))
 }
 
 export function getCurrentXtermTheme() {
   const theme = getThemeByName(settings.theme.preset)
   const xtermTheme = getXtermTheme(theme)
+  // Apply custom color overrides
+  const custom = settings.theme.custom
+  if (custom) {
+    if (custom.foreground) xtermTheme.foreground = custom.foreground
+    if (custom.background) xtermTheme.background = custom.background
+    if (custom.cursor) xtermTheme.cursor = custom.cursor
+    if (custom.ansi) {
+      const keys = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+        'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'] as const
+      custom.ansi.forEach((c, i) => {
+        if (c) (xtermTheme as any)[keys[i]] = c
+      })
+    }
+  }
   return xtermTheme
 }

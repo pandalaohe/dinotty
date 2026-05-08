@@ -1,10 +1,12 @@
 use serde::Serialize;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, State};
 use xterm_server::pty;
 use xterm_server::session::{SessionManager, SessionStatus, SyncMsg};
 
 mod embedded_server;
+
+static EMBEDDED_HTTP_PORT: OnceLock<u16> = OnceLock::new();
 
 #[derive(Clone, Serialize)]
 struct PtyOutput {
@@ -21,7 +23,7 @@ fn spawn_tauri_output_forwarder(app: AppHandle, pane_id: String, session: Arc<xt
     let mut rx = session.add_client();
     let app2 = app.clone();
     let pid = pane_id.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         while let Some(data) = rx.recv().await {
             let _ = app2.emit(
                 "pty-output",
@@ -147,6 +149,12 @@ fn pty_kill(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<()
     Ok(())
 }
 
+#[tauri::command]
+fn embedded_http_origin() -> String {
+    let port = EMBEDDED_HTTP_PORT.get().copied().unwrap_or(8999);
+    format!("http://127.0.0.1:{port}")
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -158,15 +166,23 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let port = parse_port(&args);
+    let _ = EMBEDDED_HTTP_PORT.set(port);
 
     let manager = Arc::new(SessionManager::new());
-    manager.start_cleanup_task();
 
     if args.contains(&"--server".to_string()) {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(embedded_server::run_server(port, Arc::clone(&manager)));
+        let mgr = Arc::clone(&manager);
+        rt.block_on(async move {
+            mgr.start_cleanup_task();
+            embedded_server::run_server(port, mgr).await
+        });
         return;
     }
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _runtime_enter = runtime.enter();
+    manager.start_cleanup_task();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -174,15 +190,25 @@ fn main() {
         .manage(manager.clone())
         .setup(move |_app| {
             let mgr = Arc::clone(&manager);
-            tokio::spawn(embedded_server::run_server(port, mgr));
+            tauri::async_runtime::spawn(embedded_server::run_server(port, mgr));
             tracing::info!("Desktop mode: embedded server on port {}", port);
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                let path_strings: Vec<String> = paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect();
+                let _ = window.emit("file-drop-paths", &path_strings);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
             pty_resize,
             pty_kill,
+            embedded_http_origin,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

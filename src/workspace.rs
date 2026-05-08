@@ -1,0 +1,864 @@
+use axum::{
+    body::Body,
+    extract::{Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
+use axum_extra::extract::Multipart;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::session::SessionManager;
+
+const MAX_TEXT_PREVIEW: usize = 512 * 1024;
+const MAX_DOWNLOAD: u64 = 100 * 1024 * 1024;
+
+#[derive(Deserialize)]
+pub struct PaneQuery {
+    pub pane_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct PanePathQuery {
+    pub pane_id: String,
+    #[serde(default)]
+    pub path: String,
+}
+
+#[derive(Deserialize)]
+pub struct ResolveQuery {
+    pub pane_id: String,
+    pub path: String,
+}
+
+#[derive(Serialize)]
+pub struct ResolveResponse {
+    pub rel: String,
+}
+
+#[derive(Serialize)]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+#[derive(Serialize)]
+pub struct ListResponse {
+    pub cwd: String,
+    pub path: String,
+    pub entries: Vec<DirEntry>,
+}
+
+#[derive(Serialize)]
+pub struct MetaResponse {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+fn json_err(status: StatusCode, msg: &str) -> Response {
+    (
+        status,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
+}
+
+fn get_session(
+    manager: &SessionManager,
+    pane_id: &str,
+) -> Result<Arc<crate::session::Session>, Response> {
+    manager
+        .sessions
+        .get(pane_id)
+        .map(|r| Arc::clone(r.value()))
+        .ok_or_else(|| json_err(StatusCode::NOT_FOUND, "unknown pane"))
+}
+
+fn workspace_root(session: &crate::session::Session) -> Result<PathBuf, Response> {
+    let state = session.cwd_state.lock().unwrap();
+    match state.cwd.canonicalize() {
+        Ok(c) => Ok(c),
+        Err(_) => Ok(state.cwd.clone()),
+    }
+}
+
+fn normalize_join(root: &Path, rel: &str) -> Result<PathBuf, Response> {
+    let rel = rel.trim().trim_start_matches('/');
+    if rel.split('/').any(|p| p == "..") {
+        return Err(json_err(StatusCode::BAD_REQUEST, "invalid path"));
+    }
+    let mut out = root.to_path_buf();
+    for seg in rel.split('/').filter(|s| !s.is_empty() && *s != ".") {
+        out.push(seg);
+    }
+    Ok(out)
+}
+
+fn path_must_be_under(root: &Path, candidate: &Path) -> Result<(), Response> {
+    let root_canon = root.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "cwd"))?;
+    let cand_canon = candidate
+        .canonicalize()
+        .map_err(|_| json_err(StatusCode::NOT_FOUND, "path"))?;
+    if !cand_canon.starts_with(&root_canon) {
+        return Err(json_err(StatusCode::FORBIDDEN, "outside workspace"));
+    }
+    Ok(())
+}
+
+fn rel_from_root(root: &Path, full: &Path) -> Option<String> {
+    full.strip_prefix(root)
+        .ok()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+}
+
+fn validate_entry_name(name: &str) -> Result<&str, Response> {
+    let name = name.trim();
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(json_err(StatusCode::BAD_REQUEST, "invalid name"));
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err(json_err(StatusCode::BAD_REQUEST, "invalid name"));
+    }
+    Ok(name)
+}
+
+fn parent_dir_must_be_in_workspace(root: &Path, file_path: &Path) -> Result<(), Response> {
+    let root_canon = root.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "cwd"))?;
+    let parent = file_path
+        .parent()
+        .ok_or_else(|| json_err(StatusCode::BAD_REQUEST, "invalid path"))?;
+    if !parent.exists() {
+        return Err(json_err(StatusCode::NOT_FOUND, "parent not found"));
+    }
+    let parent_canon = parent
+        .canonicalize()
+        .map_err(|_| json_err(StatusCode::NOT_FOUND, "parent not found"))?;
+    if !parent_canon.starts_with(&root_canon) {
+        return Err(json_err(StatusCode::FORBIDDEN, "outside workspace"));
+    }
+    Ok(())
+}
+
+
+fn resolve_user_path(home: Option<PathBuf>, raw: &str) -> PathBuf {
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(h) = home.as_ref() {
+            return h.join(rest);
+        }
+    }
+    if raw == "~" {
+        return home.unwrap_or_else(|| PathBuf::from("/"));
+    }
+    PathBuf::from(raw)
+}
+
+pub async fn workspace_resolve(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<ResolveQuery>,
+) -> impl IntoResponse {
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let home = dirs::home_dir();
+    let joined = if Path::new(&q.path).is_absolute() {
+        resolve_user_path(home, &q.path)
+    } else {
+        match normalize_join(&root, &q.path) {
+            Ok(p) => p,
+            Err(e) => return e,
+        }
+    };
+    let canon = match joined.canonicalize() {
+        Ok(c) => c,
+        Err(_) => return json_err(StatusCode::NOT_FOUND, "path not found"),
+    };
+    if let Err(e) = path_must_be_under(&root, &canon) {
+        return e;
+    }
+    let Some(rel) = rel_from_root(&root, &canon) else {
+        return json_err(StatusCode::BAD_REQUEST, "bad path");
+    };
+    Json(ResolveResponse { rel }).into_response()
+}
+
+pub async fn workspace_list(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<PanePathQuery>,
+) -> impl IntoResponse {
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let target = match normalize_join(&root, &q.path) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !target.exists() {
+        return json_err(StatusCode::NOT_FOUND, "not found");
+    }
+    if let Err(e) = path_must_be_under(&root, &target) {
+        return e;
+    }
+    if !target.is_dir() {
+        return json_err(StatusCode::BAD_REQUEST, "not a directory");
+    }
+    let mut entries = match std::fs::read_dir(&target) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+            .collect::<Vec<_>>(),
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+    entries.sort_by_key(|e| {
+        let is_dir = e.path().is_dir();
+        (!is_dir, e.file_name().to_string_lossy().to_lowercase())
+    });
+    let list = entries
+        .into_iter()
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            Some(DirEntry {
+                name: e.file_name().to_string_lossy().into_owned(),
+                is_dir: meta.is_dir(),
+                size: meta.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let cwd_display = root.to_string_lossy().into_owned();
+    let path_display = q.path.trim().trim_start_matches('/').to_string();
+    Json(ListResponse {
+        cwd: cwd_display,
+        path: path_display,
+        entries: list,
+    })
+    .into_response()
+}
+
+fn detect_language(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "rs" => "rust",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "mts" | "cts" => "typescript",
+        "tsx" => "typescript",
+        "jsx" => "javascript",
+        "py" => "python",
+        "go" => "go",
+        "java" => "java",
+        "c" | "h" => "c",
+        "cpp" | "cc" | "cxx" | "hpp" => "cpp",
+        "json" => "json",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "xml" => "xml",
+        "html" | "htm" => "xml",
+        "css" => "css",
+        "scss" | "sass" => "css",
+        "md" | "markdown" => "markdown",
+        "sh" | "bash" | "zsh" => "bash",
+        "sql" => "sql",
+        "vue" => "xml",
+        "txt" | "log" => "plaintext",
+        _ => "plaintext",
+    }
+}
+
+enum ByteRangeResult {
+    Full,
+    Partial { start: u64, end: u64 },
+    NotSatisfiable,
+}
+
+fn resolve_byte_range(range_header: &str, size: u64) -> ByteRangeResult {
+    if size == 0 {
+        return ByteRangeResult::Full;
+    }
+    let Some(spec) = range_header.trim().strip_prefix("bytes=") else {
+        return ByteRangeResult::Full;
+    };
+    let first = spec.split(',').next().unwrap_or("").trim();
+    if first.is_empty() {
+        return ByteRangeResult::Full;
+    }
+    if let Some(suffix_len_s) = first.strip_prefix('-') {
+        if suffix_len_s.is_empty() {
+            return ByteRangeResult::Full;
+        }
+        let Ok(suffix_len) = suffix_len_s.parse::<u64>() else {
+            return ByteRangeResult::Full;
+        };
+        if suffix_len == 0 {
+            return ByteRangeResult::NotSatisfiable;
+        }
+        let start = size.saturating_sub(suffix_len);
+        let end = size - 1;
+        return ByteRangeResult::Partial { start, end };
+    }
+    let Some((from_s, to_s)) = first.split_once('-') else {
+        return ByteRangeResult::Full;
+    };
+    let start = if from_s.is_empty() {
+        0u64
+    } else {
+        let Ok(v) = from_s.parse::<u64>() else {
+            return ByteRangeResult::Full;
+        };
+        v
+    };
+    let end = if to_s.is_empty() {
+        size - 1
+    } else {
+        let Ok(v) = to_s.parse::<u64>() else {
+            return ByteRangeResult::Full;
+        };
+        v
+    };
+    if start >= size {
+        return ByteRangeResult::NotSatisfiable;
+    }
+    let end = end.min(size - 1);
+    if end < start {
+        return ByteRangeResult::NotSatisfiable;
+    }
+    ByteRangeResult::Partial { start, end }
+}
+
+fn media_kind(path: &Path) -> Option<(&'static str, &'static str)> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    Some(match ext.as_str() {
+        "png" => ("image", "image/png"),
+        "jpg" | "jpeg" => ("image", "image/jpeg"),
+        "gif" => ("image", "image/gif"),
+        "webp" => ("image", "image/webp"),
+        "svg" => ("image", "image/svg+xml"),
+        "mp4" | "m4v" => ("video", "video/mp4"),
+        "webm" => ("video", "video/webm"),
+        "mov" => ("video", "video/quicktime"),
+        "ogv" => ("video", "video/ogg"),
+        "3gp" | "3gpp" => ("video", "video/3gpp"),
+        "mkv" => ("video", "video/x-matroska"),
+        "mp3" => ("audio", "audio/mpeg"),
+        "wav" => ("audio", "audio/wav"),
+        "ogg" | "oga" => ("audio", "audio/ogg"),
+        "m4a" => ("audio", "audio/mp4"),
+        "flac" => ("audio", "audio/flac"),
+        "pdf" => ("pdf", "application/pdf"),
+        "html" | "htm" => ("html", "text/html"),
+        _ => return None,
+    })
+}
+
+fn office_kind(path: &Path) -> Option<(&'static str, &'static str)> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    Some(match ext.as_str() {
+        "doc" => ("office", "application/msword"),
+        "docx" => ("office", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "xls" => ("office", "application/vnd.ms-excel"),
+        "xlsx" => ("office", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        "csv" => ("office", "text/csv"),
+        _ => return None,
+    })
+}
+
+pub async fn workspace_meta(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<PanePathQuery>,
+) -> impl IntoResponse {
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let target = match normalize_join(&root, &q.path) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !target.is_file() {
+        return json_err(StatusCode::BAD_REQUEST, "not a file");
+    }
+    if let Err(e) = path_must_be_under(&root, &target) {
+        return e;
+    }
+    let meta = match std::fs::metadata(&target) {
+        Ok(m) => m,
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+    if meta.len() > MAX_DOWNLOAD {
+        return json_err(StatusCode::BAD_REQUEST, "file too large");
+    }
+    if let Some((kind, mime)) = media_kind(&target) {
+        return Json(MetaResponse {
+            kind,
+            content: None,
+            language: None,
+            truncated: false,
+            mime: Some(mime.to_string()),
+            message: None,
+        })
+        .into_response();
+    }
+    if let Some((kind, mime)) = office_kind(&target) {
+        return Json(MetaResponse {
+            kind,
+            content: None,
+            language: None,
+            truncated: false,
+            mime: Some(mime.to_string()),
+            message: None,
+        })
+        .into_response();
+    }
+    let bytes = match std::fs::read(&target) {
+        Ok(b) => b,
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+    let truncated = bytes.len() > MAX_TEXT_PREVIEW;
+    let slice = if truncated {
+        &bytes[..MAX_TEXT_PREVIEW]
+    } else {
+        &bytes[..]
+    };
+    let text = match std::str::from_utf8(slice) {
+        Ok(t) => t.to_string(),
+        Err(_) => {
+            return Json(MetaResponse {
+                kind: "unsupported",
+                content: None,
+                language: None,
+                truncated: false,
+                mime: None,
+                message: Some("binary file".into()),
+            })
+            .into_response();
+        }
+    };
+    let lang = detect_language(&target);
+    let kind = if lang == "markdown" {
+        "markdown"
+    } else {
+        "text"
+    };
+    Json(MetaResponse {
+        kind,
+        content: Some(text),
+        language: Some(lang.into()),
+        truncated,
+        mime: None,
+        message: truncated.then_some("truncated".into()),
+    })
+    .into_response()
+}
+
+pub async fn workspace_raw(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<PanePathQuery>,
+    req_headers: HeaderMap,
+) -> impl IntoResponse {
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let target = match normalize_join(&root, &q.path) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !target.is_file() {
+        return json_err(StatusCode::BAD_REQUEST, "not a file");
+    }
+    if let Err(e) = path_must_be_under(&root, &target) {
+        return e;
+    }
+    let meta = match tokio::fs::metadata(&target).await {
+        Ok(m) => m,
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+    if meta.len() > MAX_DOWNLOAD {
+        return json_err(StatusCode::BAD_REQUEST, "file too large");
+    }
+    let len = meta.len();
+    let mime = media_kind(&target)
+        .map(|(_, m)| m.to_string())
+        .unwrap_or_else(|| {
+            mime_guess::from_path(&target)
+                .first_or_octet_stream()
+                .to_string()
+        });
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&mime).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+
+    if len == 0 {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from_static("0"),
+        );
+        return (StatusCode::OK, headers, Body::empty()).into_response();
+    }
+
+    match req_headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(range) => match resolve_byte_range(range, len) {
+            ByteRangeResult::Partial { start, end } => {
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+                let mut file = match tokio::fs::File::open(&target).await {
+                    Ok(f) => f,
+                    Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                };
+                let chunk_len = (end - start + 1) as usize;
+                let mut chunk = vec![0u8; chunk_len];
+                if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
+                    return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+                }
+                if let Err(e) = file.read_exact(&mut chunk).await {
+                    return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+                }
+                let cr = format!("bytes {start}-{end}/{len}");
+                if let Ok(hv) = HeaderValue::from_str(&cr) {
+                    headers.insert(header::CONTENT_RANGE, hv);
+                }
+                headers.insert(
+                    header::CONTENT_LENGTH,
+                    HeaderValue::from_str(&chunk_len.to_string())
+                        .unwrap_or_else(|_| HeaderValue::from_static("0")),
+                );
+                (StatusCode::PARTIAL_CONTENT, headers, Body::from(chunk)).into_response()
+            }
+            ByteRangeResult::NotSatisfiable => {
+                let cr = format!("bytes */{len}");
+                if let Ok(hv) = HeaderValue::from_str(&cr) {
+                    headers.insert(header::CONTENT_RANGE, hv);
+                }
+                (StatusCode::RANGE_NOT_SATISFIABLE, headers, Body::empty()).into_response()
+            }
+            ByteRangeResult::Full => {
+                let bytes = match tokio::fs::read(&target).await {
+                    Ok(b) => b,
+                    Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                };
+                headers.insert(
+                    header::CONTENT_LENGTH,
+                    HeaderValue::from_str(&len.to_string())
+                        .unwrap_or_else(|_| HeaderValue::from_static("0")),
+                );
+                (StatusCode::OK, headers, Body::from(bytes)).into_response()
+            }
+        },
+        None => {
+            let bytes = match tokio::fs::read(&target).await {
+                Ok(b) => b,
+                Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+            };
+            headers.insert(
+                header::CONTENT_LENGTH,
+                HeaderValue::from_str(&len.to_string())
+                    .unwrap_or_else(|_| HeaderValue::from_static("0")),
+            );
+            (StatusCode::OK, headers, Body::from(bytes)).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UploadQuery {
+    pub pane_id: String,
+    #[serde(default)]
+    pub dir: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateEntryQuery {
+    pub pane_id: String,
+    #[serde(default)]
+    pub parent: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateEntryBody {
+    pub kind: String,
+    pub name: String,
+}
+
+pub async fn workspace_create_entry(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<CreateEntryQuery>,
+    Json(body): Json<CreateEntryBody>,
+) -> impl IntoResponse {
+    let name = match validate_entry_name(&body.name) {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let kind = body.kind.to_lowercase();
+    if kind != "file" && kind != "dir" {
+        return json_err(StatusCode::BAD_REQUEST, "invalid kind");
+    }
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let parent_dir = match normalize_join(&root, &q.parent) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !parent_dir.is_dir() {
+        return json_err(StatusCode::BAD_REQUEST, "parent not a directory");
+    }
+    if let Err(e) = path_must_be_under(&root, &parent_dir) {
+        return e;
+    }
+    let dest = parent_dir.join(name);
+    if dest.exists() {
+        return json_err(StatusCode::CONFLICT, "already exists");
+    }
+    if kind == "dir" {
+        if let Err(e) = std::fs::create_dir(&dest) {
+            return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
+    } else if let Err(e) = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&dest)
+    {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+    let Some(rel) = rel_from_root(&root, &dest) else {
+        return json_err(StatusCode::BAD_REQUEST, "bad path");
+    };
+    Json(serde_json::json!({ "rel": rel })).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct PutFileBody {
+    pub content: String,
+}
+
+pub async fn workspace_put_file(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<PanePathQuery>,
+    Json(body): Json<PutFileBody>,
+) -> impl IntoResponse {
+    if body.content.len() as u64 > MAX_DOWNLOAD {
+        return json_err(StatusCode::BAD_REQUEST, "content too large");
+    }
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let target = match normalize_join(&root, &q.path) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if target.exists() && target.is_dir() {
+        return json_err(StatusCode::BAD_REQUEST, "is directory");
+    }
+    if let Err(e) = parent_dir_must_be_in_workspace(&root, &target) {
+        return e;
+    }
+    if let Err(e) = std::fs::write(&target, body.content.as_bytes()) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+pub async fn workspace_delete(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<PanePathQuery>,
+) -> impl IntoResponse {
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let target = match normalize_join(&root, &q.path) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !target.exists() {
+        return json_err(StatusCode::NOT_FOUND, "not found");
+    }
+    if let Err(e) = path_must_be_under(&root, &target) {
+        return e;
+    }
+    let root_canon = match root.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return json_err(StatusCode::NOT_FOUND, "cwd"),
+    };
+    let cand_canon = match target.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return json_err(StatusCode::NOT_FOUND, "not found"),
+    };
+    if cand_canon == root_canon {
+        return json_err(StatusCode::BAD_REQUEST, "cannot delete workspace root");
+    }
+    if target.is_file() {
+        if let Err(e) = std::fs::remove_file(&target) {
+            return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
+    } else if target.is_dir() {
+        if let Err(e) = std::fs::remove_dir_all(&target) {
+            return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
+    } else {
+        return json_err(StatusCode::BAD_REQUEST, "not a file or directory");
+    }
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct RenameBody {
+    pub new_name: String,
+}
+
+pub async fn workspace_rename(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<PanePathQuery>,
+    Json(body): Json<RenameBody>,
+) -> impl IntoResponse {
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let target = match normalize_join(&root, &q.path) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !target.exists() {
+        return json_err(StatusCode::NOT_FOUND, "not found");
+    }
+    if let Err(e) = path_must_be_under(&root, &target) {
+        return e;
+    }
+    let new_name = match validate_entry_name(&body.new_name) {
+        Ok(n) => n.to_owned(),
+        Err(e) => return e,
+    };
+    let parent = match target.parent() {
+        Some(p) => p.to_path_buf(),
+        None => return json_err(StatusCode::BAD_REQUEST, "invalid path"),
+    };
+    let dest = parent.join(&new_name);
+    if dest.exists() {
+        return json_err(StatusCode::CONFLICT, "already exists");
+    }
+    if let Err(e) = std::fs::rename(&target, &dest) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+    let rel = rel_from_root(&root, &dest).unwrap_or_default();
+    Json(serde_json::json!({ "ok": true, "rel": rel })).into_response()
+}
+
+pub async fn workspace_upload(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<UploadQuery>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let dest_dir = match normalize_join(&root, &q.dir) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !dest_dir.is_dir() {
+        return json_err(StatusCode::BAD_REQUEST, "target not a directory");
+    }
+    if let Err(e) = path_must_be_under(&root, &dest_dir) {
+        return e;
+    }
+    let mut saved: Vec<String> = Vec::new();
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let Some(filename) = field.file_name().map(|s| s.to_string()) else {
+            continue;
+        };
+        let base = Path::new(&filename)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        let data = match field.bytes().await {
+            Ok(b) => b,
+            Err(e) => return json_err(StatusCode::BAD_REQUEST, &e.to_string()),
+        };
+        let path = unique_path(&dest_dir, base);
+        if let Err(e) = std::fs::write(&path, &data) {
+            return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
+        if let Some(rel) = rel_from_root(&root, &path) {
+            saved.push(rel);
+        }
+    }
+    Json(serde_json::json!({ "saved": saved })).into_response()
+}
+
+fn unique_path(dir: &Path, base: &str) -> PathBuf {
+    let dest = dir.join(base);
+    if !dest.exists() {
+        return dest;
+    }
+    let p = Path::new(base);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let mut n = 1u32;
+    loop {
+        let cand = dir.join(format!("{} ({}){}", stem, n, ext));
+        if !cand.exists() {
+            return cand;
+        }
+        n += 1;
+    }
+}

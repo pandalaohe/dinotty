@@ -8,7 +8,7 @@
       @new="newTab"
     >
       <template #right>
-        <button type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreviewDirect">⊡</button>
+        <button type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview">⊡</button>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true">⚙</button>
       </template>
     </TabBar>
@@ -24,14 +24,21 @@
           :ref="(el: any) => { if (el) termRefs[tab.paneId] = el }"
           :pane-id="tab.paneId"
           @title-change="(t: string) => onTitleChange(tab.paneId, t)"
-          @file-click="(path: string) => filePreviewRef?.open(path)"
+          @file-click="onFileClick"
           @preview-link="(url: string) => onPreviewLink(tab.paneId, url)"
         />
-        <WebPreview
+        <PreviewPanel
           v-if="tab.paneId === activePaneId"
+          :ref="setPreviewPanelRef"
           :visible="tab.previewVisible"
-          :url="tab.previewUrl"
+          :pane-id="tab.paneId"
+          :address="tab.previewAddress"
+          :kind="tab.previewKind"
+          :web-url="tab.previewUrl"
           @close="closePreview(tab.paneId)"
+          @update:address="(v: string) => { tab.previewAddress = v; persist() }"
+          @update:kind="(v: 'web' | 'files') => { tab.previewKind = v; persist() }"
+          @update:web-url="(v: string) => { tab.previewUrl = v; persist() }"
         />
       </div>
     </div>
@@ -39,8 +46,6 @@
     <CommandPalette ref="paletteRef" :commands="paletteCommands" />
 
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
-
-    <FilePreview ref="filePreviewRef" />
 
     <CommandBookmarks ref="bookmarksRef" :get-send-fn="getSendFn" />
 
@@ -70,19 +75,23 @@ import type { Command } from './components/CommandPalette.vue'
 import MobileKeyboard from './components/MobileKeyboard.vue'
 import KbToggleButton from './components/KbToggleButton.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
-import FilePreview from './components/FilePreview.vue'
-import WebPreview from './components/WebPreview.vue'
+import PreviewPanel from './components/PreviewPanel.vue'
 import CommandBookmarks from './components/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
 import type { SyncServerMsg, SyncClientMsg } from './types/protocol'
 import { useSettings } from './composables/useSettings'
+import { getApiBase, wsUrlWithToken } from './composables/apiBase'
+import { isTauri } from './composables/useTransport'
 import { useI18n } from './composables/useI18n'
+import { isWebPreviewInput } from './utils/previewRouting'
 
 interface Tab {
   paneId: string
   title: string
   previewVisible: boolean
+  previewAddress: string
   previewUrl: string
+  previewKind: 'web' | 'files'
 }
 
 const tabs = ref<Tab[]>([])
@@ -90,7 +99,11 @@ const activePaneId = ref<string | null>(null)
 const kbVisible = ref(false)
 const settingsOpen = ref(false)
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
-const filePreviewRef = ref<InstanceType<typeof FilePreview>>()
+const previewPanelRef = ref<InstanceType<typeof PreviewPanel> | null>(null)
+
+function setPreviewPanelRef(el: any) {
+  previewPanelRef.value = el
+}
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
 const serverListRef = ref<InstanceType<typeof ServerList>>()
 
@@ -110,7 +123,7 @@ let syncWs: WebSocket | null = null
 let suppressSync = false
 
 const tabList = computed<TabInfo[]>(() =>
-  tabs.value.map((t) => ({ paneId: t.paneId, title: t.title }))
+  tabs.value.map((t) => ({ paneId: t.paneId, title: t.title })),
 )
 
 function genPaneId(): string {
@@ -130,24 +143,42 @@ function persist() {
   const state = tabs.value.map((t) => ({
     paneId: t.paneId,
     title: t.title,
+    previewVisible: t.previewVisible,
+    previewAddress: t.previewAddress,
+    previewUrl: t.previewUrl,
+    previewKind: t.previewKind,
   }))
   const activeIdx = tabs.value.findIndex((t) => t.paneId === activePaneId.value)
   localStorage.setItem('xterm_tabs', JSON.stringify({ tabs: state, activeIdx }))
 }
 
-function getSavedTitle(paneId: string): string | null {
+function getSavedTab(paneId: string): Partial<Tab> | null {
   try {
     const raw = localStorage.getItem('xterm_tabs')
     if (!raw) return null
     const { tabs: savedTabs } = JSON.parse(raw)
-    const t = savedTabs?.find((t: any) => t.paneId === paneId)
-    return t?.title ?? null
-  } catch { return null }
+    return savedTabs?.find((t: any) => t.paneId === paneId) ?? null
+  } catch {
+    return null
+  }
 }
+
+function getSavedTitle(paneId: string): string | null {
+  return getSavedTab(paneId)?.title ?? null
+}
+
+const DEFAULT_PREVIEW_URL = ''
 
 function newTab() {
   const paneId = genPaneId()
-  tabs.value.push({ paneId, title: 'Terminal', previewVisible: false, previewUrl: '' })
+  tabs.value.push({
+    paneId,
+    title: 'Terminal',
+    previewVisible: false,
+    previewAddress: '',
+    previewUrl: '',
+    previewKind: 'web',
+  })
   activePaneId.value = paneId
   sendSync({ type: 'create_tab', pane_id: paneId })
   persist()
@@ -165,14 +196,14 @@ function closeTab(paneId: string) {
   if (tabs.value.length === 1) {
     const oldTab = tabs.value[0]
     sendSync({ type: 'close_tab', pane_id: oldTab.paneId })
-    // Replace with new tab
     const newPaneId = genPaneId()
-    // Remove old terminal ref
     delete termRefs[oldTab.paneId]
     oldTab.paneId = newPaneId
     oldTab.title = 'Terminal'
     oldTab.previewVisible = false
+    oldTab.previewAddress = ''
     oldTab.previewUrl = ''
+    oldTab.previewKind = 'web'
     activePaneId.value = newPaneId
     sendSync({ type: 'create_tab', pane_id: newPaneId })
     persist()
@@ -213,24 +244,50 @@ function onTitleChange(paneId: string, title: string) {
 function onPreviewLink(paneId: string, url: string) {
   const tab = tabs.value.find((t) => t.paneId === paneId)
   if (!tab) return
+  tab.previewKind = 'web'
   tab.previewUrl = url
+  tab.previewAddress = url
   tab.previewVisible = true
+  persist()
 }
 
 function closePreview(paneId: string) {
   const tab = tabs.value.find((t) => t.paneId === paneId)
-  if (tab) tab.previewVisible = false
+  if (tab) {
+    tab.previewVisible = false
+    persist()
+  }
 }
 
-const DEFAULT_PREVIEW_URL = 'http://localhost:5173/'
-
-function openPreviewDirect() {
+function openPreview() {
   const pid = activePaneId.value
   if (!pid) return
   const tab = tabs.value.find((t) => t.paneId === pid)
   if (!tab) return
-  if (!tab.previewUrl) tab.previewUrl = DEFAULT_PREVIEW_URL
+  if (!tab.previewAddress.trim()) {
+    tab.previewKind = 'files'
+  }
   tab.previewVisible = true
+  persist()
+  nextTick(() => {
+    if (tab.previewKind !== 'files') return
+    const raw = tab.previewAddress.trim()
+    if (raw && !isWebPreviewInput(raw)) {
+      previewPanelRef.value?.openFromPath(raw)
+    }
+  })
+}
+
+function onFileClick(path: string) {
+  const pid = activePaneId.value
+  if (!pid) return
+  const tab = tabs.value.find((t) => t.paneId === pid)
+  if (!tab) return
+  tab.previewKind = 'files'
+  tab.previewAddress = path
+  tab.previewVisible = true
+  persist()
+  nextTick(() => previewPanelRef.value?.openFromPath(path))
 }
 
 function getSendFn(): ((data: string) => void) | null {
@@ -239,46 +296,61 @@ function getSendFn(): ((data: string) => void) | null {
 }
 
 function onServerConnect(host: string, port: number) {
-  // Navigate to the new server
   const proto = location.protocol
   window.location.href = `${proto}//${host}:${port}/`
 }
 
-// Palette commands
 const paletteCommands = computed<Command[]>(() => [
   {
-    icon: '＋', title: 'New Tab',
+    icon: '＋',
+    title: 'New Tab',
     subtitle: 'Open a new terminal tab',
     kbd: ['⌘', 'T'],
     action: () => newTab(),
   },
   {
-    icon: '✕', title: 'Close Tab',
+    icon: '✕',
+    title: 'Close Tab',
     subtitle: 'Close the current tab',
     kbd: ['⌘', 'W'],
-    action: () => { if (activePaneId.value) closeTab(activePaneId.value) },
+    action: () => {
+      if (activePaneId.value) closeTab(activePaneId.value)
+    },
   },
   {
-    icon: '★', title: 'Saved Commands',
+    icon: '★',
+    title: 'Saved Commands',
     subtitle: 'Open bookmarked commands',
     action: () => bookmarksRef.value?.open(),
   },
   {
-    icon: '⊡', title: 'Open Preview',
-    subtitle: 'Preview a localhost port',
-    action: () => openPreviewDirect(),
+    icon: '⊡',
+    title: 'Open Preview',
+    subtitle: 'URL or path in the address bar',
+    action: () => openPreview(),
   },
 ])
 
-// Global keyboard shortcuts
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
   const shift = e.shiftKey
   if (!cmd) return
 
-  if (e.key === 'k' && !shift) { e.preventDefault(); paletteRef.value?.toggle(); return }
-  if (e.key === 't' && !shift) { e.preventDefault(); newTab(); return }
-  if (e.key === 'w' && !shift) { e.preventDefault(); if (activePaneId.value) closeTab(activePaneId.value); return }
+  if (e.key === 'k' && !shift) {
+    e.preventDefault()
+    paletteRef.value?.toggle()
+    return
+  }
+  if (e.key === 't' && !shift) {
+    e.preventDefault()
+    newTab()
+    return
+  }
+  if (e.key === 'w' && !shift) {
+    e.preventDefault()
+    if (activePaneId.value) closeTab(activePaneId.value)
+    return
+  }
 
   if (!shift && e.key >= '1' && e.key <= '9') {
     const idx = parseInt(e.key) - 1
@@ -289,32 +361,42 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
 }
 
-// Sync WebSocket
-function connectSyncWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${proto}//${location.host}/ws/sync`
-  syncWs = new WebSocket(url)
+async function connectSyncWS() {
+  let url: string
+  if (isTauri()) {
+    const origin = await getApiBase()
+    url = `${origin.replace(/^http/, 'ws')}/ws/sync`
+  } else {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    url = `${proto}//${location.host}/ws/sync`
+  }
+  syncWs = new WebSocket(wsUrlWithToken(url))
 
   syncWs.onmessage = (e) => {
     let msg: SyncServerMsg
-    try { msg = JSON.parse(e.data) } catch { return }
+    try {
+      msg = JSON.parse(e.data)
+    } catch {
+      return
+    }
 
     if (msg.type === 'tab_list') {
       const localPaneIds = new Set(tabs.value.map((t) => t.paneId))
 
       for (const tab of msg.tabs) {
         if (!localPaneIds.has(tab.pane_id)) {
-          const saved = getSavedTitle(tab.pane_id)
+          const saved = getSavedTab(tab.pane_id)
           tabs.value.push({
             paneId: tab.pane_id,
-            title: saved || 'Terminal',
-            previewVisible: false,
-            previewUrl: '',
+            title: saved?.title || 'Terminal',
+            previewVisible: saved?.previewVisible || false,
+            previewAddress: saved?.previewAddress || '',
+            previewUrl: saved?.previewUrl || '',
+            previewKind: saved?.previewKind || 'web',
           })
         }
       }
 
-      // Remove local tabs not on server
       const serverIds = new Set(msg.tabs.map((t) => t.pane_id))
       tabs.value = tabs.value.filter((t) => serverIds.has(t.paneId))
 
@@ -333,7 +415,9 @@ function connectSyncWS() {
           paneId: msg.pane_id,
           title: 'Terminal',
           previewVisible: false,
+          previewAddress: '',
           previewUrl: '',
+          previewKind: 'web',
         })
       }
     } else if (msg.type === 'tab_closed') {
@@ -365,12 +449,15 @@ function connectSyncWS() {
 
 onMounted(() => {
   document.addEventListener('keydown', onGlobalKeydown)
-  connectSyncWS()
+  void connectSyncWS()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onGlobalKeydown)
-  if (syncWs) { syncWs.close(); syncWs = null }
+  if (syncWs) {
+    syncWs.close()
+    syncWs = null
+  }
 })
 </script>
 
@@ -395,6 +482,12 @@ onBeforeUnmount(() => {
   }
 }
 .tab-page.active.has-preview > .terminal-pane-container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.tab-page.active.has-preview > .preview-panel {
   flex: 1;
   min-width: 0;
   min-height: 0;
