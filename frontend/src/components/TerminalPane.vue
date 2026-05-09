@@ -1,14 +1,12 @@
 <template>
   <div class="terminal-pane-container" @contextmenu.prevent>
     <div ref="wrapperRef" class="terminal-pane"></div>
-    <SelectionOverlay ref="selectionRef" :get-terminal="getTerminal" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { TerminalInstance } from '../composables/useTerminal'
-import SelectionOverlay from './SelectionOverlay.vue'
 
 const props = defineProps<{
   paneId: string
@@ -24,9 +22,7 @@ const emit = defineEmits<{
 }>()
 
 const wrapperRef = ref<HTMLElement>()
-const selectionRef = ref<InstanceType<typeof SelectionOverlay>>()
 let terminal: TerminalInstance | null = null
-let longPressTimer: ReturnType<typeof setTimeout> | null = null
 
 function getTerminal() {
   return terminal
@@ -44,10 +40,6 @@ function sendData(data: string) {
   terminal?.sendData(data)
 }
 
-function activateSelection() {
-  selectionRef.value?.activate()
-}
-
 onMounted(() => {
   terminal = new TerminalInstance(props.paneId)
   terminal.onTitleChange = (t) => emit('titleChange', t)
@@ -60,20 +52,6 @@ onMounted(() => {
   requestAnimationFrame(() => {
     if (wrapperRef.value) {
       terminal!.attach(wrapperRef.value)
-
-      // Long-press detection for mobile selection mode
-      const container = wrapperRef.value.parentElement!
-      container.addEventListener('touchstart', (e) => {
-        longPressTimer = setTimeout(() => {
-          activateSelection()
-        }, 600)
-      }, { passive: true })
-      container.addEventListener('touchmove', () => {
-        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null }
-      }, { passive: true })
-      container.addEventListener('touchend', () => {
-        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null }
-      }, { passive: true })
     }
   })
 })

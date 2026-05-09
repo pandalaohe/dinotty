@@ -37,11 +37,12 @@ export function urlToPreviewSrc(url: string, embeddedHttpOrigin?: string): strin
   try {
     const parsed = new URL(url)
     const host = parsed.hostname
-    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+      const actualHost = (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0')
+        ? window.location.hostname
+        : host
       const port = parsed.port || '80'
-      const path = `/preview/${port}${parsed.pathname}${parsed.search}`
-      const base = embeddedHttpOrigin?.replace(/\/$/, '')
-      return base ? `${base}${path}` : path
+      return `${parsed.protocol}//${actualHost}:${port}${parsed.pathname}${parsed.search}${parsed.hash}`
     }
     const proxyPath = `/api/proxy?url=${encodeURIComponent(url)}`
     const base = embeddedHttpOrigin?.replace(/\/$/, '')

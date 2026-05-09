@@ -57,6 +57,14 @@ var defined=window.__xterm_proxy_port;
 if(!defined){
 var PORT=document.currentScript.getAttribute('data-port');
 window.__xterm_proxy_port=PORT;
+function notifyNav(){
+var m=location.pathname.match(/^\/preview\/(\d+)(\/.*)?$/);
+if(!m)return;
+var pt=m[1],path=m[2]||'/';
+var real='http://127.0.0.1:'+pt+path+location.search+location.hash;
+window.parent.postMessage({type:'proxy-navigate',url:real},'*');
+}
+notifyNav();
 function rewrite(u){
 try{var p=new URL(u,location.href);
 var h=p.hostname;
@@ -88,6 +96,11 @@ if(typeof u==='string'){var r=rewrite(u);if(r)u=r;}
 else if(u instanceof Request){var r2=rewrite(u.url);if(r2)u=new Request(r2,u);}
 return _fetch.call(this,u,o);
 };
+var _pushState=history.pushState;
+history.pushState=function(){var r=_pushState.apply(this,arguments);notifyNav();return r;};
+var _replaceState=history.replaceState;
+history.replaceState=function(){var r=_replaceState.apply(this,arguments);notifyNav();return r;};
+window.addEventListener('popstate',function(){notifyNav();});
 }
 })();</script>"#;
 
@@ -103,10 +116,10 @@ function notifyNav(url){
 window.parent.postMessage({type:'proxy-navigate',url:url},'*');
 }
 function realUrl(){
-if(BASE)return BASE;
 var h=location.href;
 var m=h.match(/[?&]url=([^&]+)/);
 if(m)try{return decodeURIComponent(m[1]);}catch(e){}
+if(BASE)return BASE;
 return h;
 }
 notifyNav(realUrl());
