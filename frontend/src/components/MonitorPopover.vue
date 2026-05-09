@@ -4,7 +4,7 @@
       <!-- CPU Detail -->
       <div v-if="metric === 'cpu' && data" class="popover-content">
         <div class="popover-title">CPU</div>
-        <div class="popover-chart"><canvas ref="cpuCanvas"></canvas></div>
+        <div class="popover-chart"><Line :data="cpuChartData" :options="pctChartOptions" /></div>
         <div class="popover-row"><span>Total Usage</span><span>{{ data.cpu.usage.toFixed(1) }}%</span></div>
         <div class="popover-row"><span>Cores</span><span>{{ data.cpu.core_count.physical }}P / {{ data.cpu.core_count.logical }}L</span></div>
         <div class="popover-row"><span>Load Avg</span><span>{{ data.cpu.load_avg.map(v => v.toFixed(2)).join(' / ') }}</span></div>
@@ -19,7 +19,7 @@
       <!-- Memory Detail -->
       <div v-if="metric === 'memory' && data" class="popover-content">
         <div class="popover-title">Memory</div>
-        <div class="popover-chart"><canvas ref="memCanvas"></canvas></div>
+        <div class="popover-chart"><Line :data="memChartData" :options="pctChartOptions" /></div>
         <div class="popover-row"><span>Used</span><span>{{ fmtBytes(data.memory.used) }}</span></div>
         <div class="popover-row"><span>Available</span><span>{{ fmtBytes(data.memory.available) }}</span></div>
         <div class="popover-row"><span>Total</span><span>{{ fmtBytes(data.memory.total) }}</span></div>
@@ -47,7 +47,7 @@
       <!-- Network Detail -->
       <div v-if="metric === 'network' && data" class="popover-content">
         <div class="popover-title">Network</div>
-        <div class="popover-chart"><canvas ref="netCanvas"></canvas></div>
+        <div class="popover-chart"><Line :data="netChartData" :options="netChartOptions" /></div>
         <template v-for="(n, i) in data.network" :key="i">
           <div v-if="i > 0" class="popover-divider" />
           <div class="popover-subtitle">{{ n.name }}</div>
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -72,6 +72,7 @@ import {
   LineElement,
   Filler,
 } from 'chart.js'
+import { Line } from 'vue-chartjs'
 import type { MonitorData } from '../composables/useMonitor'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler)
@@ -90,81 +91,59 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const popoverEl = ref<HTMLElement>()
-const cpuCanvas = ref<HTMLCanvasElement>()
-const memCanvas = ref<HTMLCanvasElement>()
-const netCanvas = ref<HTMLCanvasElement>()
 
-let chart: ChartJS | null = null
-
-function destroyChart() {
-  if (chart) { chart.destroy(); chart = null }
-}
-
-function buildChart(canvas: HTMLCanvasElement, datasets: any[], maxY?: number) {
-  destroyChart()
-  const labels = datasets[0].data.map(() => '')
-  chart = new ChartJS(canvas, {
-    type: 'line',
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 0 },
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
-      elements: { point: { radius: 0 }, line: { tension: 0.3, borderWidth: 1.5 } },
-      scales: {
-        x: { display: false },
-        y: {
-          min: 0,
-          max: maxY,
-          grid: { color: 'rgba(255,255,255,0.06)' },
-          ticks: { display: false },
-        },
-      },
+const baseOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: { duration: 0 } as const,
+  plugins: { legend: { display: false }, tooltip: { enabled: false } },
+  elements: { point: { radius: 0 }, line: { tension: 0.3, borderWidth: 1.5 } },
+  scales: {
+    x: { display: false },
+    y: {
+      min: 0,
+      grid: { color: 'rgba(255,255,255,0.06)' },
+      ticks: { display: false },
     },
-  })
+  },
 }
 
-function refreshChart() {
-  if (!props.visible) return
-  nextTick(() => {
-    if (props.metric === 'cpu' && cpuCanvas.value) {
-      buildChart(cpuCanvas.value, [{
-        data: [...props.cpuHistory],
-        borderColor: '#4d7fff',
-        backgroundColor: 'rgba(77,127,255,0.1)',
-        fill: true,
-      }], 100)
-    } else if (props.metric === 'memory' && memCanvas.value) {
-      buildChart(memCanvas.value, [{
-        data: [...props.memHistory],
-        borderColor: '#34d399',
-        backgroundColor: 'rgba(52,211,153,0.1)',
-        fill: true,
-      }], 100)
-    } else if (props.metric === 'network' && netCanvas.value) {
-      buildChart(netCanvas.value, [
-        { data: [...props.netTxHistory], borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.05)', fill: true },
-        { data: [...props.netRxHistory], borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.05)', fill: true },
-      ])
-    }
-  })
+const pctChartOptions = {
+  ...baseOptions,
+  scales: { ...baseOptions.scales, y: { ...baseOptions.scales.y, max: 100 } },
 }
 
-watch(() => props.data, () => {
-  if (!props.visible || !chart) return
-  const ds = chart.data.datasets
-  if (props.metric === 'cpu') {
-    ds[0].data = [...props.cpuHistory]
-  } else if (props.metric === 'memory') {
-    ds[0].data = [...props.memHistory]
-  } else if (props.metric === 'network') {
-    ds[0].data = [...props.netTxHistory]
-    if (ds[1]) ds[1].data = [...props.netRxHistory]
-  }
-  chart.data.labels = ds[0].data.map(() => '')
-  chart.update('none')
-})
+const netChartOptions = baseOptions
+
+const labels = computed(() => props.cpuHistory.map(() => ''))
+
+const cpuChartData = computed(() => ({
+  labels: labels.value,
+  datasets: [{
+    data: [...props.cpuHistory],
+    borderColor: '#4d7fff',
+    backgroundColor: 'rgba(77,127,255,0.1)',
+    fill: true,
+  }],
+}))
+
+const memChartData = computed(() => ({
+  labels: labels.value,
+  datasets: [{
+    data: [...props.memHistory],
+    borderColor: '#34d399',
+    backgroundColor: 'rgba(52,211,153,0.1)',
+    fill: true,
+  }],
+}))
+
+const netChartData = computed(() => ({
+  labels: props.netTxHistory.map(() => ''),
+  datasets: [
+    { data: [...props.netTxHistory], borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.05)', fill: true },
+    { data: [...props.netRxHistory], borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.05)', fill: true },
+  ],
+}))
 
 const popoverStyle = computed(() => {
   if (!props.anchorRect) return {}
@@ -202,16 +181,13 @@ function removeClickListener() {
 
 onBeforeUnmount(() => {
   removeClickListener()
-  destroyChart()
 })
 
 watch(() => props.visible, (v) => {
   if (v) {
     addClickListener()
-    nextTick(() => refreshChart())
   } else {
     removeClickListener()
-    destroyChart()
   }
 })
 

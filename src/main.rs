@@ -19,6 +19,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::session::SessionManager;
 use crate::settings::SettingsState;
 use crate::file_watcher::FileWatcherState;
+use crate::monitor::MonitorState;
 
 #[derive(Embed)]
 #[folder = "frontend/dist/"]
@@ -29,6 +30,7 @@ pub struct AppState {
     pub manager: Arc<SessionManager>,
     pub settings: SettingsState,
     pub file_watcher: Arc<FileWatcherState>,
+    pub monitor: MonitorState,
     pub auth_token: Arc<String>,
     pub port: u16,
 }
@@ -51,6 +53,12 @@ impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, SettingsState) {
 impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, Arc<FileWatcherState>) {
     fn from_ref(state: &AppState) -> Self {
         (state.manager.clone(), state.file_watcher.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState> for MonitorState {
+    fn from_ref(state: &AppState) -> Self {
+        state.monitor.clone()
     }
 }
 
@@ -122,10 +130,14 @@ async fn main() {
     };
     tracing::info!("Auth token: {}", &*auth_token);
 
+    let monitor_state = MonitorState::new();
+    monitor_state.clone().start_collector();
+
     let state = AppState {
         manager,
         settings: settings::create_settings_state(),
         file_watcher: Arc::new(FileWatcherState::new()),
+        monitor: monitor_state,
         auth_token: auth_token.clone(),
         port,
     };
