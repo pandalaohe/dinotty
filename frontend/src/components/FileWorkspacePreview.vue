@@ -96,6 +96,8 @@
     ></div>
     <div class="file-workspace-panel">
       <div class="file-workspace-toolbar">
+        <button type="button" :disabled="!canGoBack" @click="goBack" title="Back">←</button>
+        <button type="button" :disabled="!canGoForward" @click="goForward" title="Forward">→</button>
         <button type="button" @click="reloadAll" title="Refresh">↻</button>
         <span class="file-workspace-cwd" :title="cwdLabel">{{ cwdShort }}</span>
         <div class="file-workspace-add-menu">
@@ -314,7 +316,7 @@ const props = withDefaults(
   { embedded: false },
 )
 const treeCollapsed = defineModel<boolean>('treeCollapsed', { default: false })
-const emit = defineEmits<{ close: []; navigate: [path: string] }>()
+const emit = defineEmits<{ close: []; navigate: [path: string]; 'update:canGoBack': [v: boolean]; 'update:canGoForward': [v: boolean] }>()
 
 const { t } = useI18n()
 
@@ -331,6 +333,58 @@ const childCache = ref<Record<string, DirEntry[]>>({})
 const expanded = ref<Set<string>>(new Set(['']))
 const selectedRel = ref<string | null>(null)
 const selectedIsDir = ref(false)
+
+const navHistory = ref<{ rel: string; isDir: boolean }[]>([])
+const navIndex = ref(-1)
+const navFromHistory = ref(false)
+const canGoBack = computed(() => navIndex.value > 0)
+const canGoForward = computed(() => navIndex.value < navHistory.value.length - 1)
+
+watch(canGoBack, v => emit('update:canGoBack', v), { immediate: true })
+watch(canGoForward, v => emit('update:canGoForward', v), { immediate: true })
+
+function pushNav(rel: string, isDir: boolean) {
+  if (navFromHistory.value) { navFromHistory.value = false; return }
+  const cur = navHistory.value[navIndex.value]
+  if (cur && cur.rel === rel && cur.isDir === isDir) return
+  navHistory.value = navHistory.value.slice(0, navIndex.value + 1)
+  navHistory.value.push({ rel, isDir })
+  navIndex.value = navHistory.value.length - 1
+}
+
+function ensureParentsExpanded(rel: string) {
+  const parts = rel.split('/')
+  const next = new Set(expanded.value)
+  next.add('')
+  for (let i = 1; i < parts.length; i++) {
+    const ancestor = parts.slice(0, i).join('/')
+    if (!next.has(ancestor)) {
+      next.add(ancestor)
+      void ensureChildren(ancestor)
+    }
+  }
+  expanded.value = next
+}
+
+function goBack() {
+  if (!canGoBack.value) return
+  navFromHistory.value = true
+  navIndex.value--
+  const entry = navHistory.value[navIndex.value]
+  ensureParentsExpanded(entry.rel)
+  if (entry.isDir) onSelectDir(entry.rel)
+  else void onSelectFile(entry.rel)
+}
+
+function goForward() {
+  if (!canGoForward.value) return
+  navFromHistory.value = true
+  navIndex.value++
+  const entry = navHistory.value[navIndex.value]
+  ensureParentsExpanded(entry.rel)
+  if (entry.isDir) onSelectDir(entry.rel)
+  else void onSelectFile(entry.rel)
+}
 const meta = ref<Meta | null>(null)
 const previewLoading = ref(false)
 const previewErr = ref('')
@@ -513,6 +567,8 @@ const canDownload = computed(
 
 const canDelete = computed(() => !!selectedRel.value)
 
+const MAX_HIGHLIGHT_SIZE = 100_000
+
 const codeLines = computed(() => {
   const text = editorText.value || ''
   return text.split('\n')
@@ -520,6 +576,9 @@ const codeLines = computed(() => {
 
 const highlightedLines = computed(() => {
   const text = editorText.value || ''
+  if (text.length > MAX_HIGHLIGHT_SIZE) {
+    return esc(text).split('\n')
+  }
   const language = meta.value?.language || 'plaintext'
   let html = ''
   try {
@@ -1122,6 +1181,7 @@ function onSelectDir(rel: string) {
   selectedIsDir.value = true
   meta.value = null
   previewErr.value = ''
+  pushNav(rel, true)
   emit('navigate', absolutePath(rel))
 }
 
@@ -1134,6 +1194,7 @@ async function onSelectFile(rel: string) {
   officeLoading.value = false
   officeErr.value = ''
   officeHtml.value = ''
+  pushNav(rel, false)
   emit('navigate', absolutePath(rel))
   try {
     await getApiBase()
@@ -1417,6 +1478,10 @@ defineExpose({
   openDrawer,
   toggleDrawer,
   drawerOpen,
+  canGoBack,
+  canGoForward,
+  goBack,
+  goForward,
 })
 </script>
 
@@ -1742,17 +1807,14 @@ defineExpose({
   background: var(--bg, #1a1a1a);
   border-right: 1px solid var(--border, #333);
   user-select: none;
-  padding: clamp(8px, 2vmin, 14px) 0;
-}
-
-.file-code-line-number {
-  padding: 0 clamp(6px, 1.5vmin, 12px) 0 0;
+  margin: 0;
+  padding: clamp(8px, 2vmin, 14px) clamp(6px, 1.5vmin, 12px) clamp(8px, 2vmin, 14px) 0;
   text-align: right;
   color: var(--fg-muted, #666);
   font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, clamp(11px, 2.5vw, 15px));
+  font-size: var(--preview-code-fs, 13px);
   line-height: 1.45;
-  white-space: nowrap;
+  white-space: pre;
 }
 
 .file-code-editor {
@@ -1768,7 +1830,7 @@ defineExpose({
   margin: 0;
   padding: clamp(8px, 2vmin, 14px);
   font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, clamp(11px, 2.5vw, 15px));
+  font-size: var(--preview-code-fs, 13px);
   line-height: 1.45;
   background: var(--bg-surface, #141414);
   color: var(--fg, #ccc);
@@ -1796,7 +1858,7 @@ defineExpose({
   margin: 0;
   padding: clamp(8px, 2vmin, 14px);
   font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, clamp(11px, 2.5vw, 15px));
+  font-size: var(--preview-code-fs, 13px);
   line-height: 1.45;
   background: transparent;
   color: transparent;
@@ -2003,7 +2065,7 @@ defineExpose({
 }
 
 .file-workspace-preview {
-  --preview-code-fs: clamp(10px, 2.35vmin, 18px);
+  --preview-code-fs: 13px;
   --preview-prose-fs: clamp(12px, 2.55vmin, 17px);
   flex: 1 1 0;
   min-width: 0;
@@ -2222,7 +2284,7 @@ video.file-media {
   margin: 0;
   padding: clamp(8px, 2vmin, 16px);
   font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, clamp(11px, 2.5vw, 15px));
+  font-size: var(--preview-code-fs, 13px);
   color: var(--fg, #ccc);
   white-space: pre-wrap;
   word-break: break-word;

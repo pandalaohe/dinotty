@@ -7,6 +7,8 @@
     ></div>
     <div class="preview-panel-inner">
       <div class="preview-toolbar">
+        <button type="button" :disabled="!canGoBack" @click="goBack" title="Back">←</button>
+        <button type="button" :disabled="!canGoForward" @click="goForward" title="Forward">→</button>
         <button type="button" @click="refresh" title="Refresh">↻</button>
         <form class="preview-address" @submit.prevent="go">
           <input
@@ -46,6 +48,8 @@
           :visible="visible && kind === 'files'"
           :pane-id="paneId"
           @navigate="onFilesNavigate"
+          @update:can-go-back="filesCanGoBack = $event"
+          @update:can-go-forward="filesCanGoForward = $event"
         />
       </div>
     </div>
@@ -56,7 +60,7 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, unref, type Ref } from 'vue'
 import FileWorkspacePreview from './FileWorkspacePreview.vue'
 import { isWebPreviewInput, normalizeWebUrl, urlToPreviewSrc } from '../utils/previewRouting'
-import { getApiBase } from '../composables/apiBase'
+import { getApiBase, getAuthToken } from '../composables/apiBase'
 import { useI18n } from '../composables/useI18n'
 import { isNarrowViewport } from '../utils/viewport'
 import { usePaneResize } from '../composables/usePaneResize'
@@ -87,6 +91,52 @@ const navCounter = ref(0)
 const isLandscape = ref(window.innerWidth > window.innerHeight)
 const narrow = ref(isNarrowViewport())
 
+const navHistory = ref<string[]>([])
+const navIndex = ref(-1)
+const filesCanGoBack = ref(false)
+const filesCanGoForward = ref(false)
+const canGoBack = computed(() => {
+  if (props.kind === 'files') return filesCanGoBack.value
+  return navIndex.value > 0
+})
+const canGoForward = computed(() => {
+  if (props.kind === 'files') return filesCanGoForward.value
+  return navIndex.value < navHistory.value.length - 1
+})
+const navFromHistory = ref(false)
+
+function pushHistory(url: string) {
+  if (navFromHistory.value) { navFromHistory.value = false; return }
+  if (navHistory.value[navIndex.value] === url) return
+  navHistory.value = navHistory.value.slice(0, navIndex.value + 1)
+  navHistory.value.push(url)
+  navIndex.value = navHistory.value.length - 1
+}
+
+function goBack() {
+  if (props.kind === 'files') { filesRef.value?.goBack(); return }
+  if (!canGoBack.value) return
+  navFromHistory.value = true
+  navIndex.value--
+  const url = navHistory.value[navIndex.value]
+  localAddress.value = url
+  emit('update:address', url)
+  emit('update:webUrl', url)
+  navCounter.value++
+}
+
+function goForward() {
+  if (props.kind === 'files') { filesRef.value?.goForward(); return }
+  if (!canGoForward.value) return
+  navFromHistory.value = true
+  navIndex.value++
+  const url = navHistory.value[navIndex.value]
+  localAddress.value = url
+  emit('update:address', url)
+  emit('update:webUrl', url)
+  navCounter.value++
+}
+
 const direction = computed(() => (isLandscape.value ? 'horizontal' : 'vertical'))
 
 function filesDrawerRef(): Ref<boolean> | undefined {
@@ -115,7 +165,12 @@ const resolvedIframeSrc = computed(() => {
   if (!props.webUrl) return 'about:blank'
   const base = urlToPreviewSrc(props.webUrl, previewHttpBase.value || undefined)
   const sep = base.includes('?') ? '&' : '?'
-  return `${base}${sep}_t=${navCounter.value}`
+  let src = `${base}${sep}_t=${navCounter.value}`
+  if (base.startsWith('/api/proxy')) {
+    const token = getAuthToken()
+    if (token) src += `&token=${encodeURIComponent(token)}`
+  }
+  return src
 })
 
 function openInBrowser() {
@@ -171,6 +226,7 @@ function go() {
     emit('update:webUrl', url)
     emit('update:address', url)
     localAddress.value = url
+    pushHistory(url)
     navCounter.value++
   } else {
     treeCollapsed.value = false
@@ -222,6 +278,7 @@ function openFromWebUrl(url: string) {
   emit('update:webUrl', url)
   emit('update:address', url)
   localAddress.value = url
+  pushHistory(url)
   navCounter.value++
 }
 
@@ -234,6 +291,7 @@ function onProxyMessage(e: MessageEvent) {
   if (e.data?.type === 'proxy-navigate' && e.data.url && props.kind === 'web') {
     localAddress.value = e.data.url
     emit('update:address', e.data.url)
+    pushHistory(e.data.url)
   }
 }
 

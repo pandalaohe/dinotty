@@ -43,6 +43,8 @@ export class TerminalInstance {
   private _suppressTitleChange = false
   private _touchCleanup: (() => void) | null = null
   private _focusinCleanup: (() => void) | null = null
+  private _compositionCleanup: (() => void) | null = null
+  private _compositionGuard: ((data: string) => boolean) | null = null
   private _resizeObserver: ResizeObserver | null = null
   private _themeUnsub: (() => void) | null = null
   private _textUnsub: (() => void) | null = null
@@ -104,6 +106,30 @@ export class TerminalInstance {
     this.xterm.loadAddon(this.fitAddon)
 
     this.xterm.open(wrapper)
+
+    const textarea = wrapper.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+    if (textarea) {
+      let compositionJustEnded = false
+      let compositionData = ''
+      const onCompositionEnd = (e: Event) => {
+        compositionJustEnded = true
+        compositionData = ''
+        setTimeout(() => { compositionJustEnded = false; compositionData = '' }, 0)
+      }
+      textarea.addEventListener('compositionend', onCompositionEnd)
+      this._compositionCleanup = () => {
+        textarea.removeEventListener('compositionend', onCompositionEnd)
+      }
+      this._compositionGuard = (data: string): boolean => {
+        if (!compositionJustEnded) return true
+        if (compositionData === '') {
+          compositionData = data
+          return true
+        }
+        if (data === compositionData) return false
+        return true
+      }
+    }
 
     // Register file path link provider
     this.xterm.registerLinkProvider({
@@ -215,6 +241,7 @@ export class TerminalInstance {
     this._resizeObserver?.disconnect()
     this._touchCleanup?.()
     this._focusinCleanup?.()
+    this._compositionCleanup?.()
     this._themeUnsub?.()
     this._textUnsub?.()
     if (this._transport) {
@@ -254,6 +281,7 @@ export class TerminalInstance {
     })
 
     this.xterm!.onData((data) => {
+      if (this._compositionGuard && !this._compositionGuard(data)) return
       this._transport?.send({ type: 'input', data })
     })
   }
@@ -303,6 +331,7 @@ export class TerminalInstance {
     if (!this._onDataRegistered) {
       this._onDataRegistered = true
       this.xterm!.onData((data) => {
+        if (this._compositionGuard && !this._compositionGuard(data)) return
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({ type: 'input', data } as ClientMsg))
         }
@@ -356,8 +385,18 @@ export class TerminalInstance {
       wrapper.addEventListener('focusin', handler)
       this._focusinCleanup = () => wrapper.removeEventListener('focusin', handler)
       setupGlobalTauriDragDrop()
-      return
     }
+
+    // Listen for custom 'terminal-drop-path' events dispatched by the file tree
+    // when Tauri's native layer intercepts HTML5 drop events.
+    wrapper.addEventListener('terminal-drop-path', ((e: CustomEvent) => {
+      const path = e.detail?.path as string
+      if (!path) return
+      const escaped = /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(path)
+        ? `'${path.replace(/'/g, "'\\''")}'`
+        : path
+      this.sendData(escaped)
+    }) as EventListener)
 
     const xtermEl = wrapper.querySelector('.xterm') as HTMLElement
     const target = xtermEl || wrapper
@@ -406,7 +445,10 @@ export class TerminalInstance {
       }
 
       if (paths.length > 0) {
-        this.sendData(paths.join(' '))
+        const escaped = paths.map((p) =>
+          /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p
+        )
+        this.sendData(escaped.join(' '))
       }
     }, true)
   }

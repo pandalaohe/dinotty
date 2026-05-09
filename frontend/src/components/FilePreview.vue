@@ -208,7 +208,6 @@ defineExpose({ open, close })
   user-select: none;
   white-space: nowrap;
   vertical-align: top;
-  font-size: 12px;
   border-right: 1px solid var(--border, #333);
 }
 

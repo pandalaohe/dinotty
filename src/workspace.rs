@@ -283,7 +283,7 @@ fn detect_language(path: &Path) -> &'static str {
         "sh" | "bash" | "zsh" => "bash",
         "sql" => "sql",
         "vue" => "xml",
-        "txt" | "log" => "plaintext",
+        "txt" | "log" | "csv" => "plaintext",
         _ => "plaintext",
     }
 }
@@ -373,6 +373,11 @@ fn media_kind(path: &Path) -> Option<(&'static str, &'static str)> {
     })
 }
 
+fn skip_text_preview(path: &Path) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    matches!(ext.as_str(), "cube" | "lut" | "3dl" | "dat")
+}
+
 fn office_kind(path: &Path) -> Option<(&'static str, &'static str)> {
     let ext = path.extension()?.to_str()?.to_lowercase();
     Some(match ext.as_str() {
@@ -380,7 +385,6 @@ fn office_kind(path: &Path) -> Option<(&'static str, &'static str)> {
         "docx" => ("office", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         "xls" => ("office", "application/vnd.ms-excel"),
         "xlsx" => ("office", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-        "csv" => ("office", "text/csv"),
         _ => return None,
     })
 }
@@ -433,6 +437,17 @@ pub async fn workspace_meta(
             truncated: false,
             mime: Some(mime.to_string()),
             message: None,
+        })
+        .into_response();
+    }
+    if skip_text_preview(&target) {
+        return Json(MetaResponse {
+            kind: "unsupported",
+            content: None,
+            language: None,
+            truncated: false,
+            mime: None,
+            message: Some("binary file".into()),
         })
         .into_response();
     }
