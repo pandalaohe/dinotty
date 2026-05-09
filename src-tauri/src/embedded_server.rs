@@ -16,7 +16,7 @@ use xterm_server::proxy;
 use xterm_server::session::SessionManager;
 use xterm_server::settings;
 use xterm_server::ws;
-use xterm_server::monitor;
+use xterm_server::monitor::{self, MonitorState};
 use xterm_server::file_watcher::{self, FileWatcherState};
 
 #[derive(Embed)]
@@ -28,6 +28,7 @@ pub struct AppState {
     pub manager: Arc<SessionManager>,
     pub settings: settings::SettingsState,
     pub file_watcher: Arc<FileWatcherState>,
+    pub monitor: MonitorState,
 }
 
 impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
@@ -45,6 +46,12 @@ impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, settings::Settin
 impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, Arc<FileWatcherState>) {
     fn from_ref(state: &AppState) -> Self {
         (state.manager.clone(), state.file_watcher.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState> for MonitorState {
+    fn from_ref(state: &AppState) -> Self {
+        state.monitor.clone()
     }
 }
 
@@ -75,10 +82,14 @@ async fn index() -> impl IntoResponse {
 }
 
 pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
+    let monitor_state = MonitorState::new();
+    monitor_state.clone().start_collector();
+
     let state = AppState {
         manager,
         settings: settings::create_settings_state(),
         file_watcher: Arc::new(FileWatcherState::new()),
+        monitor: monitor_state,
     };
 
     let app = Router::new()

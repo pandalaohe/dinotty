@@ -1,15 +1,19 @@
 use axum::{
     extract::ws::{Message, WebSocket},
-    extract::WebSocketUpgrade,
+    extract::{State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use sysinfo::{Disks, Networks, System};
+use tokio::sync::{broadcast, Mutex};
 use tokio::time::{interval, Duration};
 
-#[derive(Serialize)]
+const MAX_HISTORY: usize = 60;
+
+#[derive(Serialize, Clone)]
 pub struct MonitorData {
     pub cpu: CpuData,
     pub memory: MemoryData,
@@ -17,7 +21,7 @@ pub struct MonitorData {
     pub network: Vec<NetworkData>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct CpuData {
     pub usage: f32,
     pub cores: Vec<f32>,
@@ -25,13 +29,13 @@ pub struct CpuData {
     pub load_avg: [f64; 3],
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct CoreCount {
     pub physical: usize,
     pub logical: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct MemoryData {
     pub used: u64,
     pub available: u64,
@@ -41,7 +45,7 @@ pub struct MemoryData {
     pub swap_total: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct DiskData {
     pub mount: String,
     pub fs_type: String,
@@ -51,7 +55,7 @@ pub struct DiskData {
     pub usage: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct NetworkData {
     pub name: String,
     pub ip: String,
@@ -59,6 +63,64 @@ pub struct NetworkData {
     pub tx_rate: u64,
     pub rx_total: u64,
     pub tx_total: u64,
+}
+
+#[derive(Serialize)]
+struct HistoryMessage {
+    r#type: &'static str,
+    data: Vec<MonitorData>,
+}
+
+#[derive(Clone)]
+pub struct MonitorState {
+    history: Arc<Mutex<VecDeque<MonitorData>>>,
+    tx: broadcast::Sender<String>,
+}
+
+impl MonitorState {
+    pub fn new() -> Self {
+        let (tx, _) = broadcast::channel::<String>(8);
+        Self {
+            history: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_HISTORY))),
+            tx,
+        }
+    }
+
+    pub fn start_collector(self) {
+        tokio::spawn(async move {
+            let mut sys = System::new_all();
+            let mut disks = Disks::new_with_refreshed_list();
+            let mut networks = Networks::new_with_refreshed_list();
+            let mut prev_net: HashMap<String, (u64, u64)> = HashMap::new();
+            let mut tick = interval(Duration::from_secs(2));
+
+            sys.refresh_cpu_all();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+
+            loop {
+                tick.tick().await;
+
+                let (data, new_net) =
+                    collect_metrics(&mut sys, &mut disks, &mut networks, &prev_net, 2.0);
+                prev_net = new_net;
+
+                let json = match serde_json::to_string(&data) {
+                    Ok(j) => j,
+                    Err(_) => continue,
+                };
+
+                {
+                    let mut buf = self.history.lock().await;
+                    if buf.len() >= MAX_HISTORY {
+                        buf.pop_front();
+                    }
+                    buf.push_back(data);
+                }
+
+                let _ = self.tx.send(json);
+            }
+        });
+    }
 }
 
 fn collect_metrics(
@@ -176,43 +238,48 @@ fn collect_metrics(
     )
 }
 
-pub async fn ws_monitor_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(handle_monitor_socket)
+pub async fn ws_monitor_handler(
+    State(state): State<MonitorState>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_monitor_socket(socket, state))
 }
 
-async fn handle_monitor_socket(socket: WebSocket) {
+async fn handle_monitor_socket(socket: WebSocket, state: MonitorState) {
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    let send_task = tokio::spawn(async move {
-        let mut sys = System::new_all();
-        let mut disks = Disks::new_with_refreshed_list();
-        let mut networks = Networks::new_with_refreshed_list();
-        let mut prev_net: HashMap<String, (u64, u64)> = HashMap::new();
-        let mut tick = interval(Duration::from_secs(2));
-
-        // Initial refresh to populate CPU usage (first call always returns 0)
-        sys.refresh_cpu_all();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        loop {
-            tick.tick().await;
-
-            let (data, new_net) =
-                collect_metrics(&mut sys, &mut disks, &mut networks, &prev_net, 2.0);
-            prev_net = new_net;
-
-            let json = match serde_json::to_string(&data) {
-                Ok(j) => j,
-                Err(_) => continue,
+    // Send buffered history as first message
+    {
+        let buf = state.history.lock().await;
+        if !buf.is_empty() {
+            let msg = HistoryMessage {
+                r#type: "history",
+                data: buf.iter().cloned().collect(),
             };
+            if let Ok(json) = serde_json::to_string(&msg) {
+                if ws_tx.send(Message::Text(json.into())).await.is_err() {
+                    return;
+                }
+            }
+        }
+    }
 
-            if ws_tx.send(Message::Text(json.into())).await.is_err() {
-                break;
+    let mut rx = state.tx.subscribe();
+
+    let send_task = tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(json) => {
+                    if ws_tx.send(Message::Text(json.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
             }
         }
     });
 
-    // Drain incoming messages; close when client disconnects
     while let Some(Ok(msg)) = ws_rx.next().await {
         if let Message::Close(_) = msg {
             break;

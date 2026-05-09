@@ -43,8 +43,34 @@ export interface MonitorData {
   network: NetworkData[]
 }
 
+export type MonitorMessage =
+  | MonitorData
+  | { type: 'history'; data: MonitorData[] }
+
 export const monitorData = ref<MonitorData | null>(null)
 export const monitorConnected = ref(false)
+
+type MonitorListener = (data: MonitorData) => void
+type HistoryListener = (data: MonitorData[]) => void
+
+const listeners: MonitorListener[] = []
+const historyListeners: HistoryListener[] = []
+
+export function onMonitorData(fn: MonitorListener) {
+  listeners.push(fn)
+  return () => {
+    const i = listeners.indexOf(fn)
+    if (i >= 0) listeners.splice(i, 1)
+  }
+}
+
+export function onMonitorHistory(fn: HistoryListener) {
+  historyListeners.push(fn)
+  return () => {
+    const i = historyListeners.indexOf(fn)
+    if (i >= 0) historyListeners.splice(i, 1)
+  }
+}
 
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -72,7 +98,17 @@ async function connect() {
 
   ws.onmessage = (e) => {
     try {
-      monitorData.value = JSON.parse(e.data)
+      const msg: MonitorMessage = JSON.parse(e.data)
+      if ('type' in msg && msg.type === 'history') {
+        for (const fn of historyListeners) fn(msg.data)
+        if (msg.data.length > 0) {
+          monitorData.value = msg.data[msg.data.length - 1]
+        }
+      } else {
+        const d = msg as MonitorData
+        monitorData.value = d
+        for (const fn of listeners) fn(d)
+      }
     } catch {}
   }
 
