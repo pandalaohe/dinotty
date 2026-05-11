@@ -84,6 +84,7 @@ html, body, #app {
   font-family: var(--font-ui);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
+  touch-action: manipulation;
 }
 
 button {

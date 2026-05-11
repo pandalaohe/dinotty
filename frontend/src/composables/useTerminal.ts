@@ -1,5 +1,7 @@
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebglAddon } from '@xterm/addon-webgl'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, settings, onTextChange } from './useSettings'
@@ -48,6 +50,9 @@ export class TerminalInstance {
   private _resizeObserver: ResizeObserver | null = null
   private _themeUnsub: (() => void) | null = null
   private _textUnsub: (() => void) | null = null
+  private _refitTimer: ReturnType<typeof setTimeout> | null = null
+  private _lastCols = 0
+  private _lastRows = 0
 
   onTitleChange: ((title: string) => void) | null = null
   onShellInfo: ((shell: string) => void) | null = null
@@ -106,6 +111,16 @@ export class TerminalInstance {
     this.xterm.loadAddon(this.fitAddon)
 
     this.xterm.open(wrapper)
+
+    const unicode11 = new Unicode11Addon()
+    this.xterm.loadAddon(unicode11)
+    this.xterm.unicode.activeVersion = '11'
+
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => webgl.dispose())
+      this.xterm.loadAddon(webgl)
+    } catch { /* DOM renderer fallback */ }
 
     const textarea = wrapper.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
     if (textarea) {
@@ -238,6 +253,7 @@ export class TerminalInstance {
   destroy() {
     this._destroyed = true
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
+    if (this._refitTimer) clearTimeout(this._refitTimer)
     this._resizeObserver?.disconnect()
     this._touchCleanup?.()
     this._focusinCleanup?.()
@@ -380,17 +396,22 @@ export class TerminalInstance {
 
   _refit() {
     if (!this.fitAddon || !this._wrapper) return
-    this.fitAddon.fit()
-    const resizeMsg: ClientMsg = {
-      type: 'resize',
-      cols: this.xterm!.cols,
-      rows: this.xterm!.rows,
-    }
-    if (this._transport) {
-      this._transport.send(resizeMsg)
-    } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(resizeMsg))
-    }
+    if (this._refitTimer) clearTimeout(this._refitTimer)
+    this._refitTimer = setTimeout(() => {
+      if (!this.fitAddon || !this.xterm) return
+      this.fitAddon.fit()
+      const cols = this.xterm.cols
+      const rows = this.xterm.rows
+      if (cols === this._lastCols && rows === this._lastRows) return
+      this._lastCols = cols
+      this._lastRows = rows
+      const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
+      if (this._transport) {
+        this._transport.send(resizeMsg)
+      } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(resizeMsg))
+      }
+    }, 100)
   }
 
   private _setupDragDrop(wrapper: HTMLElement) {
