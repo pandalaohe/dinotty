@@ -71,6 +71,9 @@
 }
 .tab:hover .tab-close,
 .tab.active .tab-close { opacity: 1; }
+@media (hover: none) {
+  .tab .tab-close { opacity: 0.7; }
+}
 .tab-close:hover {
   background: rgba(255,255,255,0.12);
   color: var(--fg-bright);
@@ -106,6 +109,10 @@
 .tab-bar-icon-btn:hover {
   color: var(--fg-bright);
   background: var(--tab-hover-bg);
+}
+
+@media (max-width: 600px) {
+  .tab { min-width: 72px; padding: 0 8px; }
 }
 
 /* ── Tab content ─────────────────────────────────────────── */
@@ -246,6 +253,8 @@
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.7);
@@ -253,5 +262,18 @@
   font-size: 14px;
   font-family: var(--font-ui);
   z-index: 100;
-  pointer-events: none;
+}
+.reconnect-retry-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--fg-muted, #666);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--fg-bright, #f0f6fc);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.reconnect-retry-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
 }

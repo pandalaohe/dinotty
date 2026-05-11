@@ -837,27 +837,87 @@ pub async fn workspace_upload(
         return e;
     }
     let mut saved: Vec<String> = Vec::new();
-    while let Ok(Some(field)) = multipart.next_field().await {
+    let mut errors: Vec<String> = Vec::new();
+    let mut pending_rel_path: Option<String> = None;
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                errors.push(format!("multipart read error: {e}"));
+                break;
+            }
+        };
+        let field_name = field.name().unwrap_or("").to_string();
+        if field_name == "path" {
+            let text = match field.text().await {
+                Ok(t) => t,
+                Err(e) => return json_err(StatusCode::BAD_REQUEST, &e.to_string()),
+            };
+            if !text.is_empty() && text != "." {
+                if pending_rel_path.is_some() {
+                    tracing::warn!("upload: consecutive 'path' fields; overwriting previous value");
+                }
+                pending_rel_path = Some(text);
+            }
+            continue;
+        }
         let Some(filename) = field.file_name().map(|s| s.to_string()) else {
             continue;
         };
-        let base = Path::new(&filename)
+        let rel = pending_rel_path.take().unwrap_or_else(|| filename.clone());
+        let rel_path = Path::new(&rel);
+        if rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return json_err(StatusCode::BAD_REQUEST, "path must not contain ..");
+        }
+        let file_dest_dir = if let Some(parent) = rel_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            let sub = match normalize_join(&dest_dir, &parent.to_string_lossy()) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            if let Err(e) = path_must_be_under(&root, &sub) {
+                return e;
+            }
+            if let Err(e) = std::fs::create_dir_all(&sub) {
+                return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+            }
+            sub
+        } else {
+            dest_dir.clone()
+        };
+        let base = rel_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("file");
-        let data = match field.bytes().await {
-            Ok(b) => b,
-            Err(e) => return json_err(StatusCode::BAD_REQUEST, &e.to_string()),
-        };
-        let path = unique_path(&dest_dir, base);
-        if let Err(e) = std::fs::write(&path, &data) {
-            return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        let path = unique_path(&file_dest_dir, base);
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut file = match tokio::fs::File::create(&path).await {
+                Ok(f) => f,
+                Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+            };
+            let mut stream = field;
+            loop {
+                match stream.chunk().await {
+                    Ok(Some(chunk)) => {
+                        if let Err(e) = file.write_all(&chunk).await {
+                            return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => return json_err(StatusCode::BAD_REQUEST, &e.to_string()),
+                }
+            }
         }
         if let Some(rel) = rel_from_root(&root, &path) {
             saved.push(rel);
         }
     }
-    Json(serde_json::json!({ "saved": saved })).into_response()
+    let mut resp = serde_json::json!({ "saved": saved });
+    if !errors.is_empty() {
+        resp["errors"] = serde_json::json!(errors);
+    }
+    Json(resp).into_response()
 }
 
 fn unique_path(dir: &Path, base: &str) -> PathBuf {
@@ -875,5 +935,62 @@ fn unique_path(dir: &Path, base: &str) -> PathBuf {
             return cand;
         }
         n += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn normalize_join_rejects_parent_dir() {
+        let tmp = TempDir::new().unwrap();
+        let result = normalize_join(tmp.path(), "../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn normalize_join_rejects_nested_parent_dir() {
+        let tmp = TempDir::new().unwrap();
+        let result = normalize_join(tmp.path(), "foo/../../etc");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn normalize_join_accepts_normal_subdir() {
+        let tmp = TempDir::new().unwrap();
+        let result = normalize_join(tmp.path(), "subdir/file.txt").unwrap();
+        assert_eq!(result, tmp.path().join("subdir").join("file.txt"));
+    }
+
+    #[test]
+    fn normalize_join_handles_dot_and_empty() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(normalize_join(tmp.path(), ".").unwrap(), tmp.path().to_path_buf());
+        assert_eq!(normalize_join(tmp.path(), "").unwrap(), tmp.path().to_path_buf());
+    }
+
+    #[test]
+    fn normalize_join_strips_leading_slash() {
+        let tmp = TempDir::new().unwrap();
+        let result = normalize_join(tmp.path(), "/foo/bar").unwrap();
+        assert_eq!(result, tmp.path().join("foo").join("bar"));
+    }
+
+    #[test]
+    fn path_must_be_under_accepts_child() {
+        let tmp = TempDir::new().unwrap();
+        let child = tmp.path().join("sub");
+        fs::create_dir(&child).unwrap();
+        assert!(path_must_be_under(tmp.path(), &child).is_ok());
+    }
+
+    #[test]
+    fn path_must_be_under_rejects_outside() {
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        assert!(path_must_be_under(tmp1.path(), tmp2.path()).is_err());
     }
 }

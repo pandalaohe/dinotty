@@ -9,7 +9,7 @@
     >
       <template #right>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview">⊡</button>
-        <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true" @touchend.prevent="settingsOpen = true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+        <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true" @touchend.prevent="settingsOpen = true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </template>
     </TabBar>
 
@@ -121,10 +121,31 @@ watch(
   },
   { immediate: true },
 )
+watch(
+  () => {
+    const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+    return tab?.title
+  },
+  (title) => {
+    document.title = title || 'Terminal'
+  },
+  { immediate: true },
+)
+
 const termRefs = reactive<Record<string, InstanceType<typeof TerminalPane>>>({})
 
 let syncWs: WebSocket | null = null
 let suppressSync = false
+let viewportRefitTimer = 0
+
+function onViewportResize() {
+  clearTimeout(viewportRefitTimer)
+  viewportRefitTimer = window.setTimeout(() => {
+    if (activePaneId.value && termRefs[activePaneId.value]) {
+      termRefs[activePaneId.value].fit()
+    }
+  }, 150)
+}
 
 const tabList = computed<TabInfo[]>(() =>
   tabs.value.map((t) => ({ paneId: t.paneId, title: t.title })),
@@ -453,12 +474,18 @@ async function connectSyncWS() {
 
 onMounted(() => {
   document.addEventListener('keydown', onGlobalKeydown)
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onViewportResize)
+  }
   void connectSyncWS()
   initMonitorHistory()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onGlobalKeydown)
+  if (window.visualViewport) {
+    window.visualViewport.removeEventListener('resize', onViewportResize)
+  }
   if (syncWs) {
     syncWs.close()
     syncWs = null
@@ -497,5 +524,13 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+@media (orientation: portrait) {
+  .tab-page.active.has-preview > .terminal-pane-container {
+    flex: 2;
+  }
+  .tab-page.active.has-preview > .preview-panel {
+    flex: 1;
+  }
 }
 </style>
