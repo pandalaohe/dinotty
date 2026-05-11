@@ -1,7 +1,13 @@
 <template>
   <div v-if="visible && embedded" class="file-workspace-embedded">
     <input ref="fileInputRef" type="file" multiple class="sr-only" @change="onFilePick" />
-    <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': narrow, embedded }">
+    <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': narrow, embedded }"
+      @dragover.prevent
+      @dragenter.prevent="dragCounter++"
+      @dragleave="dragCounter = Math.max(0, dragCounter - 1)"
+      @drop.prevent="dragCounter = 0; onDrop($event)"
+    >
+      <div v-if="dragging" class="file-workspace-drop-overlay">{{ t('filePreview.dropHint') }}</div>
       <div
         v-if="(narrow && drawerOpen) || (!narrow && !treeCollapsed)"
         class="file-workspace-tree-wrap"
@@ -108,7 +114,7 @@
             <button type="button" @click="addMenuOpen = false; startNewFolder()">{{ t('filePreview.ctxNewFolder') }}</button>
           </div>
         </div>
-        <button type="button" @click="triggerUpload" title="Upload">↑</button>
+        <button type="button" @click="triggerUpload()" title="Upload">↑</button>
         <button type="button" :disabled="!canDownload" @click="downloadSelected" title="Download">↓</button>
         <button
           v-if="!narrow"
@@ -131,7 +137,13 @@
         <button type="button" @click="close" title="Close">✕</button>
       </div>
       <input ref="fileInputRef" type="file" multiple class="sr-only" @change="onFilePick" />
-      <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': narrow }">
+      <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': narrow }"
+        @dragover.prevent
+        @dragenter.prevent="dragCounter++"
+        @dragleave="dragCounter = Math.max(0, dragCounter - 1)"
+        @drop.prevent="dragCounter = 0; onDrop($event)"
+      >
+        <div v-if="dragging" class="file-workspace-drop-overlay">{{ t('filePreview.dropHint') }}</div>
         <div
           v-if="(narrow && drawerOpen) || (!narrow && !treeCollapsed)"
           class="file-workspace-tree-wrap"
@@ -389,6 +401,8 @@ const meta = ref<Meta | null>(null)
 const previewLoading = ref(false)
 const previewErr = ref('')
 const fileInputRef = ref<HTMLInputElement>()
+const dragCounter = ref(0)
+const dragging = computed(() => dragCounter.value > 0)
 const drawerOpen = ref(isNarrowViewport())
 const lastTreePointerTs = ref(0)
 const officeLoading = ref(false)
@@ -1370,18 +1384,99 @@ function triggerUpload() {
   fileInputRef.value?.click()
 }
 
-async function onFilePick(ev: Event) {
-  const inp = ev.target as HTMLInputElement
-  const files = inp.files
-  if (!files?.length) return
+async function uploadFiles(files: { file: File; path: string }[]) {
+  if (!files.length) return
   await getApiBase()
   const dir = selectedIsDir.value && selectedRel.value ? selectedRel.value : ''
   const q = new URLSearchParams({ pane_id: props.paneId, dir })
   const fd = new FormData()
-  for (let i = 0; i < files.length; i++) fd.append('file', files[i])
-  await authFetch(apiUrl(`/api/workspace/upload?${q}`), { method: 'POST', body: fd })
-  inp.value = ''
+  for (const { file, path } of files) {
+    fd.append('path', path)
+    fd.append('file', file)
+  }
+  try {
+    const res = await authFetch(apiUrl(`/api/workspace/upload?${q}`), { method: 'POST', body: fd })
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText)
+      console.error('[upload] server error:', res.status, text)
+    }
+  } catch (e) {
+    console.error('[upload] request failed:', e)
+  }
   await reloadAll()
+}
+
+async function onFilePick(ev: Event) {
+  const inp = ev.target as HTMLInputElement
+  const fileList = inp.files
+  if (!fileList?.length) return
+  const files: { file: File; path: string }[] = []
+  for (let i = 0; i < fileList.length; i++) {
+    const f = fileList[i]
+    files.push({ file: f, path: f.webkitRelativePath || f.name })
+  }
+  inp.value = ''
+  try {
+    await uploadFiles(files)
+  } catch (e) {
+    console.error('[upload] file pick upload failed:', e)
+  }
+}
+
+async function traverseEntry(entry: FileSystemEntry, basePath: string): Promise<{ file: File; path: string }[]> {
+  if (entry.isFile) {
+    const fileEntry = entry as FileSystemFileEntry
+    try {
+      const file = await new Promise<File>((resolve, reject) => fileEntry.file(resolve, reject))
+      return [{ file, path: basePath + entry.name }]
+    } catch (e) {
+      console.warn('[upload] skip unreadable file:', basePath + entry.name, e)
+      return []
+    }
+  }
+  if (entry.isDirectory) {
+    const dirEntry = entry as FileSystemDirectoryEntry
+    const reader = dirEntry.createReader()
+    const entries: FileSystemEntry[] = []
+    try {
+      let batch: FileSystemEntry[]
+      do {
+        batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject))
+        entries.push(...batch)
+      } while (batch.length > 0)
+    } catch (e) {
+      console.warn('[upload] skip unreadable directory:', basePath + entry.name, e)
+      return []
+    }
+    const results: { file: File; path: string }[] = []
+    const childResults = await Promise.all(entries.map(child => traverseEntry(child, basePath + entry.name + '/')))
+    for (const r of childResults) results.push(...r)
+    return results
+  }
+  return []
+}
+
+async function onDrop(ev: DragEvent) {
+  const items = ev.dataTransfer?.items
+  if (!items) return
+  const allFiles: { file: File; path: string }[] = []
+  const promises: Promise<void>[] = []
+  for (let i = 0; i < items.length; i++) {
+    const entry = items[i].webkitGetAsEntry?.()
+    if (entry) {
+      promises.push(traverseEntry(entry, '').then(files => { allFiles.push(...files) }))
+    }
+  }
+  try {
+    await Promise.all(promises)
+  } catch (e) {
+    console.error('[upload] directory traversal failed:', e)
+  }
+  if (!allFiles.length) {
+    console.warn('[upload] no files resolved from drop')
+    return
+  }
+  await uploadFiles(allFiles)
 }
 
 async function downloadSelected() {
@@ -1644,6 +1739,22 @@ defineExpose({
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.file-workspace-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(59, 130, 246, 0.12);
+  border: 2px dashed rgba(59, 130, 246, 0.5);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--fg, #C7C7C7);
+  pointer-events: none;
 }
 
 .file-workspace-body.drawer-mode .file-workspace-preview {

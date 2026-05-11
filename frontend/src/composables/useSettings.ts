@@ -64,24 +64,23 @@ export interface ActionKeyboardConfig {
 export const DEFAULT_ACTION_KEYBOARD: ActionKeyboardConfig = {
   rows: [
     [
+      { label: 'cc', send: 'claude' },
+      { label: 'oc', send: 'opencode' },
+    ],
+    [
       { label: 'esc', send: '\x1b' },
-      { label: 'tab', send: '\t' },
-      { label: '⇤', send: '\x1b[Z' },
+      { label: 'ctrl+c', send: '\x03', style: 'danger' },
+      { label: 'clear', send: 'clear' },
       { label: '⌫', send: '\x7f', repeat: true },
     ],
     [
-      { label: 'ctrl+c', send: '\x03', style: 'danger' },
-      { label: 'ctrl+z', send: '\x1a' },
-      { label: 'ctrl+l', send: '\x0c' },
-      { label: 'ctrl+r', send: '\x12' },
-      { label: 'ctrl+d', send: '\x04' },
-      { label: 'ctrl+k', send: '\x0b' },
-    ],
-    [
-      { label: 'ctrl', send: '', special: 'ctrl' },
-      { label: 'opt', send: '', special: 'alt' },
-      { label: '⌘', send: '', special: 'cmd' },
-      { label: '', send: ' ', special: 'space' },
+      { label: 'PlanMode', send: '\x1b[Z' },
+      { label: '/', send: '/' },
+      { label: 'tab', send: '\t' },
+      { label: '1', send: '1' },
+      { label: '2', send: '2' },
+      { label: '3', send: '3' },
+      { label: '4', send: '4' },
     ],
   ],
 }

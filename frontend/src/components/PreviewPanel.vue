@@ -28,7 +28,7 @@
           <button type="button" @click="onFilesTreeToggle" :title="filesTreeTitle">
             {{ filesTreeGlyph }}
           </button>
-          <button type="button" @click="onFilesUpload" title="Upload">↑</button>
+          <button type="button" @click="onFilesUpload()" title="Upload">↑</button>
           <button type="button" @click="onFilesDownload" title="Download">↓</button>
         </template>
         <button type="button" @click="close" title="Close">✕</button>

@@ -351,7 +351,22 @@ export class TerminalInstance {
     if (!this._wrapper || this._overlay) return
     this._overlay = document.createElement('div')
     this._overlay.className = 'reconnect-overlay'
-    this._overlay.textContent = 'Connection lost. Reconnecting...'
+
+    const text = document.createElement('span')
+    text.textContent = 'Connection lost. Reconnecting...'
+
+    const btn = document.createElement('button')
+    btn.className = 'reconnect-retry-btn'
+    btn.textContent = 'Retry Now'
+    btn.addEventListener('click', () => {
+      if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
+      this._reconnectAttempts = 0
+      this._hideOverlay()
+      this._connectWS()
+    })
+
+    this._overlay.appendChild(text)
+    this._overlay.appendChild(btn)
     this._wrapper.style.position = 'relative'
     this._wrapper.appendChild(this._overlay)
   }
@@ -459,12 +474,34 @@ export class TerminalInstance {
       const viewport = wrapper.querySelector('.xterm-viewport') as HTMLElement
       if (!screen || !viewport) return
 
+      let startX = 0
+      let startY = 0
       let lastY = 0
-      const onTouchStart = (e: TouchEvent) => { lastY = e.touches[0].clientY }
+      let mode: 'undecided' | 'scroll' | 'select' = 'undecided'
+      const THRESHOLD = 10
+
+      const onTouchStart = (e: TouchEvent) => {
+        startX = e.touches[0].clientX
+        startY = e.touches[0].clientY
+        lastY = startY
+        mode = 'undecided'
+      }
       const onTouchMove = (e: TouchEvent) => {
-        const dy = lastY - e.touches[0].clientY
-        viewport.scrollTop += dy
-        lastY = e.touches[0].clientY
+        const cx = e.touches[0].clientX
+        const cy = e.touches[0].clientY
+        if (mode === 'undecided') {
+          const dx = Math.abs(cx - startX)
+          const dy = Math.abs(cy - startY)
+          if (dy > THRESHOLD || dx > THRESHOLD) {
+            mode = dy > dx ? 'scroll' : 'select'
+          } else {
+            return
+          }
+        }
+        if (mode === 'scroll') {
+          viewport.scrollTop += lastY - cy
+        }
+        lastY = cy
       }
 
       screen.addEventListener('touchstart', onTouchStart, { passive: true })

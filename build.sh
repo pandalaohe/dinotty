@@ -183,5 +183,6 @@ case "${1:-}" in
     list)     cmd_list ;;
     clean)    cmd_clean ;;
     help|-h|--help) usage ;;
+    "") build_native ;;
     *) die "Unknown command: ${1:-} — run '$0 help' for usage" ;;
 esac

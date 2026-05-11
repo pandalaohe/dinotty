@@ -146,7 +146,7 @@ function previewLabel(key: ActionKey) {
 
 const akSendPreview = computed(() => {
   if (!akEdit.value) return ''
-  return escapeForDisplay(akEdit.value.sendRaw)
+  return akEdit.value.sendRaw
 })
 
 function ensureActionKeyboard() {
@@ -243,7 +243,7 @@ function editActionKey(ri: number, ki: number) {
   akEdit.value = {
     ri, ki,
     label: key.label,
-    sendRaw: key.send,
+    sendRaw: escapeForDisplay(key.send),
     style: key.style || '',
     repeat: key.repeat || false,
     auto_enter: resolveAutoEnterForEdit(key),
@@ -256,7 +256,7 @@ function saveActionKey() {
   const { ri, ki, label, sendRaw, style, repeat, auto_enter } = akEdit.value
   const key = settings.action_keyboard!.rows[ri][ki]
   key.label = label
-  key.send = sendRaw
+  key.send = unescapeFromDisplay(sendRaw)
   key.style = style || undefined
   key.repeat = repeat || undefined
   key.auto_enter = auto_enter
@@ -293,7 +293,7 @@ function startRecord() {
     e.preventDefault()
     e.stopPropagation()
     e.stopImmediatePropagation()
-    akEdit.value.sendRaw = seq
+    akEdit.value.sendRaw = escapeForDisplay(seq)
     if (akEdit.value.label === 'new' || akEdit.value.label === '') {
       akEdit.value.label = keyEventToLabel(e)
     }
@@ -427,6 +427,22 @@ function escapeForDisplay(s: string): string {
     if (code === 0x7f) return '\\x7f'
     if (code <= 26) return '^' + String.fromCharCode(code + 64)
     return '\\x' + code.toString(16).padStart(2, '0')
+  })
+}
+
+function unescapeFromDisplay(s: string): string {
+  return s.replace(/\\e|\\t|\\r|\\n|\\x([0-9a-fA-F]{2})|\^([A-Z@\[\\\]\^_?])/g, (m, hex, caret) => {
+    if (m === '\\e') return '\x1b'
+    if (m === '\\t') return '\t'
+    if (m === '\\r') return '\r'
+    if (m === '\\n') return '\n'
+    if (hex) return String.fromCharCode(parseInt(hex, 16))
+    if (caret) {
+      if (caret === '?') return '\x7f'
+      if (caret === '@') return '\x00'
+      return String.fromCharCode(caret.charCodeAt(0) - 64)
+    }
+    return m
   })
 }
 </script>
