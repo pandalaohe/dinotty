@@ -143,8 +143,13 @@ function onViewportResize() {
   viewportRefitTimer = window.setTimeout(() => {
     if (activePaneId.value && termRefs[activePaneId.value]) {
       termRefs[activePaneId.value].fit()
+      requestAnimationFrame(() => {
+        if (activePaneId.value && termRefs[activePaneId.value]) {
+          termRefs[activePaneId.value].fit()
+        }
+      })
     }
-  }, 150)
+  }, 300)
 }
 
 const tabList = computed<TabInfo[]>(() =>
