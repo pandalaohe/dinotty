@@ -297,7 +297,7 @@ import markdown from 'highlight.js/lib/languages/markdown'
 import cpp from 'highlight.js/lib/languages/cpp'
 import java from 'highlight.js/lib/languages/java'
 import { useI18n } from '../composables/useI18n'
-import { getApiBase, apiUrl, authFetch, wsUrlWithToken } from '../composables/apiBase'
+import { getApiBase, apiUrl, authFetch, wsUrlWithToken, getAuthToken } from '../composables/apiBase'
 import { isNarrowViewport } from '../utils/viewport'
 import { usePaneResize } from '../composables/usePaneResize'
 import { TreeRows, TreeInlineInput, treeFolderIcon, treeFileIcon, absJoinWorkspaceRoot } from './workspace/TreeRows'
@@ -540,6 +540,8 @@ const cwdShort = computed(() => {
 const rawUrl = computed(() => {
   if (!selectedRel.value || selectedIsDir.value) return ''
   const q = new URLSearchParams({ pane_id: props.paneId, path: selectedRel.value })
+  const token = getAuthToken()
+  if (token) q.set('token', token)
   return apiUrl(`/api/workspace/raw?${q}`)
 })
 
