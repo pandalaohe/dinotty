@@ -191,7 +191,7 @@ impl Default for Settings {
 fn config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("xterm")
+        .join("dinotty")
 }
 
 fn settings_path() -> PathBuf {

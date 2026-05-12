@@ -179,12 +179,12 @@ function persist() {
     previewKind: t.previewKind,
   }))
   const activeIdx = tabs.value.findIndex((t) => t.paneId === activePaneId.value)
-  localStorage.setItem('xterm_tabs', JSON.stringify({ tabs: state, activeIdx }))
+  localStorage.setItem('dinotty_tabs', JSON.stringify({ tabs: state, activeIdx }))
 }
 
 function getSavedTab(paneId: string): Partial<Tab> | null {
   try {
-    const raw = localStorage.getItem('xterm_tabs')
+    const raw = localStorage.getItem('dinotty_tabs')
     if (!raw) return null
     const { tabs: savedTabs } = JSON.parse(raw)
     return savedTabs?.find((t: any) => t.paneId === paneId) ?? null

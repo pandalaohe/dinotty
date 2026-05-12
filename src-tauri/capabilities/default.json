@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default permissions for xterm desktop",
+  "description": "Default permissions for Dinotty desktop",
   "windows": ["main"],
   "permissions": [
     "core:default",

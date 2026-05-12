@@ -9,6 +9,14 @@
   user-select: none;
 }
 
+.tab-bar-logo {
+  height: 20px;
+  width: 20px;
+  margin: auto 6px auto 8px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
 #tabs-list {
   display: flex;
   align-items: stretch;

@@ -53,10 +53,10 @@ window.parent.postMessage({type:'preview-ready'},'*');
 window.addEventListener('error',function(e){
 window.parent.postMessage({type:'preview-error',message:e.message,source:e.filename,line:e.lineno},'*');
 });
-var defined=window.__xterm_proxy_port;
+var defined=window.__dinotty_proxy_port;
 if(!defined){
 var PORT=document.currentScript.getAttribute('data-port');
-window.__xterm_proxy_port=PORT;
+window.__dinotty_proxy_port=PORT;
 function notifyNav(){
 var m=location.pathname.match(/^\/preview\/(\d+)(\/.*)?$/);
 if(!m)return;
@@ -109,8 +109,8 @@ window.parent.postMessage({type:'preview-ready'},'*');
 window.addEventListener('error',function(e){
 window.parent.postMessage({type:'preview-error',message:e.message,source:e.filename,line:e.lineno},'*');
 });
-if(window.__xterm_ext_proxy)return;
-window.__xterm_ext_proxy=true;
+if(window.__dinotty_ext_proxy)return;
+window.__dinotty_ext_proxy=true;
 var BASE=document.currentScript.getAttribute('data-base-url')||'';
 function notifyNav(url){
 window.parent.postMessage({type:'proxy-navigate',url:url},'*');
