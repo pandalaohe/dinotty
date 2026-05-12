@@ -42,19 +42,10 @@ fn emit_join_sync(app: &AppHandle, pane_id: &str, session: &Arc<xterm_server::se
         "pty-reconnected",
         serde_json::json!({ "pane_id": pane_id, "cols": cols, "rows": rows }),
     );
-    let (scrollback_chunks, snapshot) = {
+    let snapshot = {
         let screen = session.screen.lock().unwrap();
-        (screen.snapshot_scrollback_chunks(200), screen.snapshot())
+        screen.snapshot()
     };
-    for chunk in scrollback_chunks {
-        let _ = app.emit(
-            "pty-output",
-            PtyOutput {
-                pane_id: pane_id.to_string(),
-                data: chunk,
-            },
-        );
-    }
     let _ = app.emit(
         "pty-output",
         PtyOutput {
