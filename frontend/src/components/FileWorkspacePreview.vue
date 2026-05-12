@@ -452,7 +452,7 @@ const isLandscape = ref(window.innerWidth > window.innerHeight)
 const narrow = ref(isNarrowViewport())
 const fileWorkspaceBodyRef = ref<HTMLElement | null>(null)
 
-const TREE_WIDTH_STORAGE = 'xterm_tree_pane_width'
+const TREE_WIDTH_STORAGE = 'dinotty_tree_pane_width'
 
 function loadTreePaneWidth(): number {
   try {

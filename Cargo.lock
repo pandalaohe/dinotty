@@ -838,6 +838,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "dinotty-desktop"
+version = "0.1.0"
+dependencies = [
+ "axum 0.7.9",
+ "dinotty-server",
+ "mime_guess",
+ "portable-pty",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-shell",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "dinotty-server"
+version = "0.1.0"
+dependencies = [
+ "axum 0.7.9",
+ "axum-extra",
+ "bytes",
+ "dashmap",
+ "dirs 5.0.1",
+ "futures-util",
+ "image",
+ "local-ip-address",
+ "lol_html",
+ "mime_guess",
+ "notify",
+ "portable-pty",
+ "rand 0.10.1",
+ "regex",
+ "reqwest 0.12.28",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-width",
+ "urlencoding",
+ "uuid",
+ "vte",
+]
+
+[[package]]
 name = "dirs"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6395,62 +6451,6 @@ name = "xkeysym"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
-
-[[package]]
-name = "xterm-desktop"
-version = "0.1.0"
-dependencies = [
- "axum 0.7.9",
- "mime_guess",
- "portable-pty",
- "rust-embed",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-shell",
- "tokio",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "xterm-server",
-]
-
-[[package]]
-name = "xterm-server"
-version = "0.1.0"
-dependencies = [
- "axum 0.7.9",
- "axum-extra",
- "bytes",
- "dashmap",
- "dirs 5.0.1",
- "futures-util",
- "image",
- "local-ip-address",
- "lol_html",
- "mime_guess",
- "notify",
- "portable-pty",
- "rand 0.10.1",
- "regex",
- "reqwest 0.12.28",
- "rust-embed",
- "serde",
- "serde_json",
- "sysinfo",
- "tempfile",
- "tokio",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "unicode-width",
- "urlencoding",
- "uuid",
- "vte",
-]
 
 [[package]]
 name = "yoke"

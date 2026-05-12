@@ -57,7 +57,7 @@ const newPort = ref('8999')
 
 function load() {
   try {
-    const raw = localStorage.getItem('xterm_servers')
+    const raw = localStorage.getItem('dinotty_servers')
     if (raw) {
       const data = JSON.parse(raw)
       servers.value = data.servers || []
@@ -72,7 +72,7 @@ function load() {
 }
 
 function save() {
-  localStorage.setItem('xterm_servers', JSON.stringify({
+  localStorage.setItem('dinotty_servers', JSON.stringify({
     servers: servers.value,
     activeIndex: activeIndex.value,
   }))

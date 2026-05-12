@@ -11,13 +11,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
-use xterm_server::workspace;
-use xterm_server::proxy;
-use xterm_server::session::SessionManager;
-use xterm_server::settings;
-use xterm_server::ws;
-use xterm_server::monitor::{self, MonitorState};
-use xterm_server::file_watcher::{self, FileWatcherState};
+use dinotty_server::workspace;
+use dinotty_server::proxy;
+use dinotty_server::session::SessionManager;
+use dinotty_server::settings;
+use dinotty_server::ws;
+use dinotty_server::monitor::{self, MonitorState};
+use dinotty_server::file_watcher::{self, FileWatcherState};
 
 #[derive(Embed)]
 #[folder = "../frontend/dist/"]

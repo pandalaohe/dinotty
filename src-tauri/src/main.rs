@@ -1,8 +1,8 @@
 use serde::Serialize;
 use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, State};
-use xterm_server::pty;
-use xterm_server::session::{SessionManager, SessionStatus, SyncMsg};
+use dinotty_server::pty;
+use dinotty_server::session::{SessionManager, SessionStatus, SyncMsg};
 
 mod embedded_server;
 
@@ -19,7 +19,7 @@ struct PtyExit {
     pane_id: String,
 }
 
-fn spawn_tauri_output_forwarder(app: AppHandle, pane_id: String, session: Arc<xterm_server::session::Session>) {
+fn spawn_tauri_output_forwarder(app: AppHandle, pane_id: String, session: Arc<dinotty_server::session::Session>) {
     let mut rx = session.add_client();
     let app2 = app.clone();
     let pid = pane_id.clone();
@@ -36,7 +36,7 @@ fn spawn_tauri_output_forwarder(app: AppHandle, pane_id: String, session: Arc<xt
     });
 }
 
-fn emit_join_sync(app: &AppHandle, pane_id: &str, session: &Arc<xterm_server::session::Session>) {
+fn emit_join_sync(app: &AppHandle, pane_id: &str, session: &Arc<dinotty_server::session::Session>) {
     let (cols, rows) = *session.size.lock().unwrap();
     let _ = app.emit(
         "pty-reconnected",

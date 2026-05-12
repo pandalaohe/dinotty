@@ -116,28 +116,28 @@ pub fn create_session(
 }
 
 pub fn setup_zsh_title_hooks(home: &str) -> Option<std::path::PathBuf> {
-    let zdotdir = std::env::temp_dir().join(format!("xterm_zsh_{}", std::process::id()));
+    let zdotdir = std::env::temp_dir().join(format!("dinotty_zsh_{}", std::process::id()));
     std::fs::create_dir_all(&zdotdir).ok()?;
 
     let zshrc = format!(
-        r#"# xterm title injection — loaded via ZDOTDIR
+        r#"# dinotty title injection — loaded via ZDOTDIR
 ZDOTDIR=  # reset so child shells behave normally
 
 [[ -f "{home}/.zshrc" ]] && source "{home}/.zshrc"
 
-function _xterm_precmd {{
+function _dinotty_precmd {{
   printf "\033]0;%s@%s:%s\007" "${{USER}}" "${{HOST%%.*}}" "${{PWD/#$HOME/~}}"
 }}
 
-function _xterm_preexec {{
+function _dinotty_preexec {{
   printf "\033]0;%s\007" "$1"
 }}
 
-if [[ -z "${{precmd_functions[(r)_xterm_precmd]}}" ]]; then
-  precmd_functions+=(_xterm_precmd)
+if [[ -z "${{precmd_functions[(r)_dinotty_precmd]}}" ]]; then
+  precmd_functions+=(_dinotty_precmd)
 fi
-if [[ -z "${{preexec_functions[(r)_xterm_preexec]}}" ]]; then
-  preexec_functions+=(_xterm_preexec)
+if [[ -z "${{preexec_functions[(r)_dinotty_preexec]}}" ]]; then
+  preexec_functions+=(_dinotty_preexec)
 fi
 "#,
         home = home

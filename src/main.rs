@@ -1,4 +1,4 @@
-use xterm_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor};
+use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor};
 mod routes;
 
 use axum::{

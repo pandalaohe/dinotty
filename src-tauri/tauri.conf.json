@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nickelpack/tauri/dev/crates/tauri-config-schema/schema.json",
-  "productName": "xterm",
+  "productName": "Dinotty",
   "version": "0.1.0",
-  "identifier": "com.xterm.terminal",
+  "identifier": "com.dinotty.terminal",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "xterm",
+        "title": "Dinotty",
         "width": 1000,
         "height": 700,
         "minWidth": 600,

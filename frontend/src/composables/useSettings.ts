@@ -131,7 +131,7 @@ async function loadSettings() {
       applyCurrentTheme()
       // Sync action keyboard to localStorage for static mobile-keyboard.js
       if (settings.action_keyboard) {
-        localStorage.setItem('xterm_action_keyboard', JSON.stringify(settings.action_keyboard))
+        localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
       }
     }
   } catch {}
@@ -141,9 +141,9 @@ async function saveSettings() {
   try {
     // Sync action keyboard to localStorage for static mobile-keyboard.js
     if (settings.action_keyboard) {
-      localStorage.setItem('xterm_action_keyboard', JSON.stringify(settings.action_keyboard))
+      localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
     } else {
-      localStorage.removeItem('xterm_action_keyboard')
+      localStorage.removeItem('dinotty_action_keyboard')
     }
     await getApiBase()
     await authFetch(apiUrl('/api/settings'), {

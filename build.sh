@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BIN="xterm-server"
+BIN="dinotty-server"
 DIST="dist"
 FRONTEND_DIR="frontend"
 
@@ -78,7 +78,7 @@ build_native() {
     info "Building native release..."
     need cargo
 
-    cargo build --release -p xterm-server
+    cargo build --release -p dinotty-server
 
     mkdir -p "$DIST"
     local host; host="$(rustc -vV | awk '/^host:/{print $2}')"
@@ -102,12 +102,12 @@ build_one_target() {
     fi
 
     if command -v cargo-zigbuild &>/dev/null; then
-        cargo zigbuild --release --target "$target" -p xterm-server
+        cargo zigbuild --release --target "$target" -p dinotty-server
     elif command -v cross &>/dev/null; then
-        cross build --release --target "$target" -p xterm-server
+        cross build --release --target "$target" -p dinotty-server
     else
         warn "Neither cargo-zigbuild nor cross found; trying plain cargo (may fail for cross targets)"
-        cargo build --release --target "$target" -p xterm-server
+        cargo build --release --target "$target" -p dinotty-server
     fi
 
     mkdir -p "$DIST"
