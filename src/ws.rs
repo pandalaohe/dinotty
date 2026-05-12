@@ -119,19 +119,23 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         // Snapshot screen state and register for broadcast atomically
         // (holding the screen lock prevents PTY output from being both in the
         // snapshot AND queued to the broadcast channel)
-        let (cols, rows, snapshot, mut rx) = {
+        let (cols, rows, scrollback_chunks, snapshot, mut rx) = {
             let screen = session.screen.lock().unwrap();
             let (cols, rows) = *session.size.lock().unwrap();
+            let chunks = screen.snapshot_scrollback_chunks(200);
             let snap = screen.snapshot();
             let rx = session.add_client();
-            (cols, rows, snap, rx)
+            (cols, rows, chunks, snap, rx)
         };
 
         // Send reconnected message
         let msg = serde_json::to_string(&ServerMsg::Reconnected { cols, rows }).unwrap();
         if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
+        for chunk in &scrollback_chunks {
+            let msg = serde_json::to_string(&ServerMsg::Output { data: chunk }).unwrap();
+            if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
+        }
 
-        // Send visible screen snapshot only (no scrollback replay)
         let msg = serde_json::to_string(&ServerMsg::Output { data: &snapshot }).unwrap();
         if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
 
