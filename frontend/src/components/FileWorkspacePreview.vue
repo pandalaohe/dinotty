@@ -1039,6 +1039,16 @@ async function reloadAll() {
   try { await ensureChildren('') } catch { previewErr.value = 'list failed' }
 }
 
+async function expandFirstLevelDirs() {
+  const entries = childCache.value['']
+  if (!entries) return
+  const dirs = entries.filter(e => e.is_dir)
+  if (!dirs.length) return
+  const dirPaths = dirs.map(d => d.name)
+  expanded.value = new Set(['', ...dirPaths])
+  await Promise.all(dirPaths.map(p => ensureChildren(p)))
+}
+
 async function boot() {
   layout.drawerOpen.value = false
   selectedRel.value = null
@@ -1051,6 +1061,7 @@ async function boot() {
   expanded.value = new Set([''])
   try {
     await ensureChildren('')
+    await expandFirstLevelDirs()
     fileWatch.connectTreeWatchSocket()
     fetchGitStatus()
   } catch { previewErr.value = 'list failed' }

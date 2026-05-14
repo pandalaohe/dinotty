@@ -3,6 +3,7 @@
     <TabBar
       :tabs="tabList"
       :active-pane-id="activePaneId"
+      :indicators="notif.unreadByPane"
       @activate="activateTab"
       @close="closeTab"
       @new="newTab"
@@ -10,6 +11,10 @@
       <template #right>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview">⊡</button>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true" @touchend.prevent="settingsOpen = true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+        <button type="button" class="tab-bar-icon-btn notif-btn" :title="t('notification.title')" @click="notif.togglePanel()" @touchend.prevent="notif.togglePanel()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0"/></svg>
+          <span v-if="notif.unreadCount.value > 0" class="notif-badge">{{ notif.unreadCount.value > 9 ? '9+' : notif.unreadCount.value }}</span>
+        </button>
       </template>
     </TabBar>
 
@@ -43,6 +48,8 @@
         />
       </div>
     </div>
+
+    <NotificationPanel :pane-labels="paneLabels" @goto-pane="activateTab" />
 
     <StatusBar />
 
@@ -89,6 +96,8 @@ import { isTauri } from './composables/useTransport'
 import { useI18n } from './composables/useI18n'
 import { isWebPreviewInput } from './utils/previewRouting'
 import { initMonitorHistory } from './composables/useMonitorHistory'
+import NotificationPanel from './components/NotificationPanel.vue'
+import { useNotification } from './composables/useNotification'
 
 interface Tab {
   paneId: string
@@ -114,6 +123,7 @@ const serverListRef = ref<InstanceType<typeof ServerList>>()
 
 const { settings: appSettings } = useSettings()
 const { t } = useI18n()
+const notif = useNotification()
 
 const isLandscape = ref(window.innerWidth > window.innerHeight)
 
@@ -164,6 +174,11 @@ function onViewportResize() {
 const tabList = computed<TabInfo[]>(() =>
   tabs.value.map((t) => ({ paneId: t.paneId, title: t.title })),
 )
+const paneLabels = computed(() => {
+  const m: Record<string, string> = {}
+  for (const t of tabs.value) m[t.paneId] = t.title
+  return m
+})
 
 function genPaneId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -226,6 +241,7 @@ function newTab() {
 
 function activateTab(paneId: string) {
   activePaneId.value = paneId
+  notif.clearPaneUnread(paneId)
   sendSync({ type: 'activate_tab', pane_id: paneId })
   persist()
   nextTick(() => focusActive())
@@ -558,5 +574,24 @@ onBeforeUnmount(() => {
 .tab-page.active.has-preview.pos-top > .preview-panel,
 .tab-page.active.has-preview.pos-bottom > .preview-panel {
   flex: 1;
+}
+.notif-btn {
+  position: relative;
+}
+.notif-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--color-red, #ef4444);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  padding: 0 3px;
+  pointer-events: none;
 }
 </style>
