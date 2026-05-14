@@ -53,6 +53,7 @@ export class TerminalInstance {
   private _refitTimer: ReturnType<typeof setTimeout> | null = null
   private _lastCols = 0
   private _lastRows = 0
+  private _visibilityHandler: (() => void) | null = null
 
   onTitleChange: ((title: string) => void) | null = null
   onShellInfo: ((shell: string) => void) | null = null
@@ -217,6 +218,11 @@ export class TerminalInstance {
     this._resizeObserver = new ResizeObserver(() => this._refit())
     this._resizeObserver.observe(wrapper)
 
+    this._visibilityHandler = () => {
+      if (!document.hidden) this._doFitAndResize(true)
+    }
+    document.addEventListener('visibilitychange', this._visibilityHandler)
+
     this._themeUnsub = onThemeChange((xtermTheme) => {
       if (this.xterm) this.xterm.options.theme = xtermTheme
     })
@@ -255,6 +261,9 @@ export class TerminalInstance {
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
     if (this._refitTimer) clearTimeout(this._refitTimer)
     this._resizeObserver?.disconnect()
+    if (this._visibilityHandler) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler)
+    }
     this._touchCleanup?.()
     this._focusinCleanup?.()
     this._compositionCleanup?.()
@@ -277,7 +286,7 @@ export class TerminalInstance {
 
     this._transport.onConnect(() => {
       this.onConnect?.()
-      this._refit()
+      this._doFitAndResize(true)
     })
 
     this._transport.onMessage((msg) => {
@@ -314,7 +323,7 @@ export class TerminalInstance {
       this._reconnectAttempts = 0
       this._hideOverlay()
       this.onConnect?.()
-      this._refit()
+      this._doFitAndResize(true)
     }
 
     this.ws.onmessage = (e) => {
@@ -403,10 +412,13 @@ export class TerminalInstance {
   }
 
   private _doFitAndResize(force = false) {
-    if (!this.fitAddon || !this.xterm) return
+    if (!this.fitAddon || !this.xterm || !this._wrapper) return
+    const rect = this._wrapper.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return
     this.fitAddon.fit()
     const cols = this.xterm.cols
     const rows = this.xterm.rows
+    if (cols < 2 || rows < 2) return
     if (!force && cols === this._lastCols && rows === this._lastRows) return
     this._lastCols = cols
     this._lastRows = rows
