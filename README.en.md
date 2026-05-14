@@ -85,7 +85,8 @@ Mobile devices lack the Ctrl, Esc, Alt, and function keys that terminals depend 
 Coding agents generate code, documents, and web pages — but verifying the output usually means switching to a separate file manager or browser. Dinotty embeds both directly alongside the terminal:
 
 - **File workspace** — tree-view file browser with file listing, upload, rename, and delete. Click any file to preview it instantly
-- **Code preview** — syntax-highlighted source code with line numbers (highlight.js), supporting dozens of languages
+- **Code editor** — Monaco Editor-based code editor with syntax highlighting and auto-completion
+- **Git change indicators** — gutter decorations show added (green), modified (blue), and deleted (red) lines; click to open an inline diff viewer with Stage/Revert per hunk; file tree displays M/U/A/D badges with color coding
 - **Markdown preview** — live-rendered Markdown with sanitized HTML (marked + DOMPurify)
 - **Office documents** — preview Word, Excel, PowerPoint files directly in the browser (officeparser)
 - **Media playback** — built-in audio/video player with seek, volume, and playback controls
@@ -103,6 +104,7 @@ This means an agent can `npm run dev`, write code, and the user can immediately 
 | Session survives network disconnect | ✅ Auto-reconnect + screen restore | ❌ Session lost | ❌ Session lost | ❌ Session lost | Needs tmux/screen |
 | Refresh page = restore session | ✅ Scrollback + screen snapshot replayed | ❌ New session | ❌ New session | ❌ New session | N/A |
 | Built-in file browser & preview | ✅ Code, Markdown, Office, image, audio/video | ❌ | ❌ | ❌ | ❌ |
+| Git change indicators | ✅ Gutter marks + inline diff + Stage/Revert | ❌ | ❌ | ❌ | ❌ |
 | Built-in web preview (reverse proxy) | ✅ Embed local dev server in iframe | ❌ | ❌ | ❌ | ❌ |
 | File change watching | ✅ Real-time via WebSocket | ❌ | ❌ | ❌ | ❌ |
 | Customizable shortcut keyboard | ✅ User-defined keys with raw escape sequences | ❌ | ❌ | ❌ | N/A |
@@ -121,6 +123,7 @@ This means an agent can `npm run dev`, write code, and the user can immediately 
 - **Session persistence** — PTY processes survive disconnection, auto-reconnect with state recovery
 - **Multi-pane sessions** — split and manage multiple terminal panes with tab sync
 - **File workspace** — browse, edit, upload, and preview files (code highlighting, Markdown, Office docs)
+- **Git change indicators** — gutter decorations for added/modified/deleted lines, inline diff viewer with Stage and Revert; file tree shows git status badges
 - **Web preview** — built-in reverse proxy to preview local dev servers
 - **System monitor** — real-time CPU/memory/network charts via vue-chartjs
 - **Command palette** — quick-access command launcher
