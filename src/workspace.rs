@@ -275,7 +275,7 @@ fn detect_language(path: &Path) -> &'static str {
         "yaml" | "yml" => "yaml",
         "toml" => "toml",
         "xml" => "xml",
-        "html" | "htm" => "xml",
+        "html" | "htm" => "html",
         "css" => "css",
         "scss" | "sass" => "css",
         "md" | "markdown" => "markdown",
@@ -367,7 +367,7 @@ fn media_kind(path: &Path) -> Option<(&'static str, &'static str)> {
         "m4a" => ("audio", "audio/mp4"),
         "flac" => ("audio", "audio/flac"),
         "pdf" => ("pdf", "application/pdf"),
-        "html" | "htm" => ("html", "text/html"),
+        // html/htm handled as text with preview toggle
         _ => return None,
     })
 }
@@ -477,6 +477,8 @@ pub async fn workspace_meta(
     let lang = detect_language(&target);
     let kind = if lang == "markdown" {
         "markdown"
+    } else if lang == "html" {
+        "html"
     } else {
         "text"
     };
