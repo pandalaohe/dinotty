@@ -20,14 +20,17 @@ use tracing::{error, info};
 use crate::session::SessionManager;
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type")]
-pub enum FileEvent {
-    #[serde(rename = "changed")]
-    Changed { path: String },
-    #[serde(rename = "created")]
-    Created { path: String },
-    #[serde(rename = "deleted")]
-    Deleted { path: String },
+pub struct FileEvent {
+    pub path: String,
+    pub kind: FileEventKind,
+}
+
+#[derive(Debug, Clone, Serialize, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum FileEventKind {
+    Changed,
+    Created,
+    Deleted,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,29 +107,20 @@ impl FileWatcherState {
             }
             match event_result {
                 Ok(event) => {
-                    let events = match event.kind {
-                        EventKind::Create(_) => {
-                            event.paths.into_iter().map(|p| {
-                                WatchMessage::FileEvent(FileEvent::Created {
-                                    path: p.to_string_lossy().to_string(),
-                                })
-                            }).collect::<Vec<_>>()
-                        }
-                        EventKind::Modify(_) => {
-                            event.paths.into_iter().map(|p| {
-                                WatchMessage::FileEvent(FileEvent::Changed {
-                                    path: p.to_string_lossy().to_string(),
-                                })
-                            }).collect::<Vec<_>>()
-                        }
-                        EventKind::Remove(_) => {
-                            event.paths.into_iter().map(|p| {
-                                WatchMessage::FileEvent(FileEvent::Deleted {
-                                    path: p.to_string_lossy().to_string(),
-                                })
-                            }).collect::<Vec<_>>()
-                        }
-                        _ => vec![],
+                    let kind = match event.kind {
+                        EventKind::Create(_) => Some(FileEventKind::Created),
+                        EventKind::Modify(_) => Some(FileEventKind::Changed),
+                        EventKind::Remove(_) => Some(FileEventKind::Deleted),
+                        _ => None,
+                    };
+                    let events: Vec<WatchMessage> = match kind {
+                        Some(k) => event.paths.into_iter().map(|p| {
+                            WatchMessage::FileEvent(FileEvent {
+                                path: p.to_string_lossy().to_string(),
+                                kind: k,
+                            })
+                        }).collect(),
+                        None => vec![],
                     };
 
                     for msg in events {
