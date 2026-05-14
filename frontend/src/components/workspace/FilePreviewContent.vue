@@ -95,6 +95,8 @@
           :model-value="editorText"
           :language="language"
           :readonly="!!meta?.truncated"
+          :file-path="filePath"
+          :pane-id="paneId"
           @update:model-value="$emit('update:editorText', $event)"
           @save="$emit('saveEditor')"
         />
@@ -132,6 +134,8 @@
           :model-value="editorText"
           :language="language"
           :readonly="!!meta?.truncated"
+          :file-path="filePath"
+          :pane-id="paneId"
           @update:model-value="$emit('update:editorText', $event)"
           @save="$emit('saveEditor')"
         />
@@ -181,6 +185,8 @@ const props = defineProps<{
   officeLoading: boolean
   officeErr: string | null
   officeHtml: string
+  paneId?: string
+  filePath?: string
 }>()
 
 const language = computed(() => props.meta?.language || 'plaintext')

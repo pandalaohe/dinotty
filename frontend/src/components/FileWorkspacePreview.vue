@@ -27,6 +27,7 @@
             :inline-create="inlineCreateForTree"
             :inline-placeholder="inlineInputPlaceholder"
             :inline-rename="inlineRename ?? undefined"
+            :git-status="gitStatusMap"
             @toggle="onToggle"
             @select-file="trySelectFile"
             @select-dir="trySelectDir"
@@ -58,6 +59,8 @@
       <div v-if="layout.narrow.value && layout.drawerOpen.value" class="file-workspace-overlay" @click="tryCloseDrawerFromChrome"></div>
       <FilePreviewContent
         ref="previewContentRef1"
+        :pane-id="paneId"
+        :file-path="selectedRel ?? undefined"
         :preview-loading="previewLoading"
         :preview-err="previewErr"
         :selected-rel="selectedRel"
@@ -163,6 +166,7 @@
               :selected-rel="selectedRel ?? undefined"
               :inline-create="inlineCreateForTree"
               :inline-placeholder="inlineInputPlaceholder"
+              :git-status="gitStatusMap"
               @toggle="onToggle"
               @select-file="trySelectFile"
               @select-dir="trySelectDir"
@@ -192,6 +196,8 @@
         <div v-if="layout.narrow.value && layout.drawerOpen.value" class="file-workspace-overlay" @click="tryCloseDrawerFromChrome"></div>
         <FilePreviewContent
           ref="previewContentRef2"
+          :pane-id="paneId"
+          :file-path="selectedRel ?? undefined"
           :preview-loading="previewLoading"
           :preview-err="previewErr"
           :selected-rel="selectedRel"
@@ -337,6 +343,7 @@ const lastTreePointerTs = ref(0)
 const officeLoading = ref(false)
 const officeErr = ref('')
 const officeHtml = ref('')
+const gitStatusMap = ref<Record<string, string>>({})
 const inlineCreate = ref<{ parentRel: string; kind: 'file' | 'dir' } | null>(null)
 const inlineRename = ref<{ rel: string; isDir: boolean } | null>(null)
 const editorText = ref('')
@@ -368,6 +375,7 @@ const fileWatch = useFileWatch({
     meta.value = newMeta
     editorText.value = newMeta.content ?? ''
     editorBaseline.value = newMeta.content ?? ''
+    fetchGitStatus()
   },
   onBinaryChanged: () => {
     cacheBustTs.value = Date.now()
@@ -582,6 +590,24 @@ async function fetchList(rel: string): Promise<DirEntry[]> {
   const data = await res.json()
   cwdLabel.value = data.cwd || ''
   return data.entries || []
+}
+
+async function fetchGitStatus() {
+  try {
+    await getApiBase()
+    const q = new URLSearchParams({ pane_id: props.paneId })
+    const res = await authFetch(apiUrl(`/api/workspace/git-status?${q}`))
+    if (!res.ok) return
+    const data = await res.json()
+    if (!data.is_git_repo) { gitStatusMap.value = {}; return }
+    const map: Record<string, string> = {}
+    for (const f of data.files || []) {
+      map[f.path] = f.status
+    }
+    gitStatusMap.value = map
+  } catch {
+    gitStatusMap.value = {}
+  }
 }
 
 async function ensureChildren(rel: string) {
@@ -1026,6 +1052,7 @@ async function boot() {
   try {
     await ensureChildren('')
     fileWatch.connectTreeWatchSocket()
+    fetchGitStatus()
   } catch { previewErr.value = 'list failed' }
 }
 
@@ -1455,11 +1482,12 @@ defineExpose({
   cursor: pointer;
   color: var(--fg, #cccccc);
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
   flex: 1 1 0;
   font-weight: 400;
+  display: flex;
+  align-items: center;
 }
 
 .file-workspace-tree :deep(.tree-label.sel) { color: var(--tree-row-selected-fg); }
@@ -1473,6 +1501,16 @@ defineExpose({
 .file-workspace-tree :deep(.tree-svg) { width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; flex-shrink: 0; }
 
 .file-workspace-tree :deep(.tree-inline-create) { align-items: center; }
+
+.file-workspace-tree :deep(.tree-label-text) { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.file-workspace-tree :deep(.tree-git-badge) { margin-left: auto; flex-shrink: 0; font-size: 11px; padding: 0 4px; opacity: 0.85; font-weight: 600; }
+.file-workspace-tree :deep(.tree-git-badge.git-M) { color: #ccb132; }
+.file-workspace-tree :deep(.tree-git-badge.git-U) { color: #73c991; }
+.file-workspace-tree :deep(.tree-git-badge.git-A) { color: #73c991; }
+.file-workspace-tree :deep(.tree-git-badge.git-D) { color: #d32f2f; }
+.file-workspace-tree :deep(.tree-label.git-modified) { color: #ccb132; }
+.file-workspace-tree :deep(.tree-label.git-untracked) { color: #73c991; }
+.file-workspace-tree :deep(.tree-label.git-deleted) { color: #d32f2f; text-decoration: line-through; }
 .file-workspace-tree :deep(.tree-inline-input) {
   flex: 1;
   min-width: 0;

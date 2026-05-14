@@ -107,9 +107,31 @@ export const TreeRows = defineComponent({
     inlineCreate: { type: Object, default: null },
     inlinePlaceholder: { type: String, default: '' },
     inlineRename: { type: Object, default: undefined },
+    gitStatus: { type: Object, default: () => ({}) },
   },
   emits: ['toggle', 'select-file', 'select-dir', 'inline-create-commit', 'inline-create-cancel', 'inline-rename-commit', 'inline-rename-cancel', 'context-menu', 'long-press', 'move-entry'],
   setup(p, { emit }) {
+    function getGitBadge(rel: string, isDir: boolean): { badge: string; cls: string } | null {
+      const gs = p.gitStatus as Record<string, string>
+      if (!gs || Object.keys(gs).length === 0) return null
+      if (!isDir) {
+        const status = gs[rel]
+        if (!status) return null
+        switch (status) {
+          case 'modified': case 'staged_modified': return { badge: 'M', cls: 'git-modified' }
+          case 'untracked': return { badge: 'U', cls: 'git-untracked' }
+          case 'staged_new': return { badge: 'A', cls: 'git-untracked' }
+          case 'deleted': case 'staged_deleted': return { badge: 'D', cls: 'git-deleted' }
+          default: return { badge: 'M', cls: 'git-modified' }
+        }
+      }
+      const prefix = rel ? rel + '/' : ''
+      for (const path of Object.keys(gs)) {
+        if (path.startsWith(prefix)) return { badge: '', cls: 'git-modified' }
+      }
+      return null
+    }
+
     function makeLongPressHandlers(rel: string, isDir: boolean) {
       let timer: ReturnType<typeof setTimeout> | null = null
       let startX = 0
@@ -176,6 +198,7 @@ export const TreeRows = defineComponent({
         const rel = p.relPath ? `${p.relPath}/${e.name}` : e.name
         const isExp = (p.expanded as Set<string>).has(rel)
         const isRenaming = !!(ir && ir.rel === rel)
+        const gitInfo = getGitBadge(rel, e.is_dir)
         if (e.is_dir) {
           const labelContent = isRenaming
             ? h(TreeInlineInput, {
@@ -185,7 +208,7 @@ export const TreeRows = defineComponent({
               })
             : h(
                 'span',
-                { class: ['tree-label', { sel: p.selectedRel === rel }] },
+                { class: ['tree-label', gitInfo?.cls, { sel: p.selectedRel === rel }] },
                 e.name,
               )
           rows.push(
@@ -273,6 +296,7 @@ export const TreeRows = defineComponent({
                 inlineCreate: p.inlineCreate,
                 inlinePlaceholder: p.inlinePlaceholder,
                 inlineRename: p.inlineRename,
+                gitStatus: p.gitStatus,
                 onToggle: (x: string) => emit('toggle', x),
                 onSelectFile: (x: string) => emit('select-file', x),
                 onSelectDir: (x: string) => emit('select-dir', x),
@@ -299,10 +323,15 @@ export const TreeRows = defineComponent({
             : h(
                 'span',
                 {
-                  class: ['tree-label', { sel: p.selectedRel === rel }],
+                  class: ['tree-label', gitInfo?.cls, { sel: p.selectedRel === rel }],
                   onClick: () => emit('select-file', rel),
                 },
-                e.name,
+                [
+                  h('span', { class: 'tree-label-text' }, e.name),
+                  gitInfo?.badge
+                    ? h('span', { class: `tree-git-badge git-${gitInfo.badge}` }, gitInfo.badge)
+                    : null,
+                ],
               )
           rows.push(
             h(

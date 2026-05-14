@@ -7,12 +7,25 @@ import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as monaco from 'monaco-editor'
 import { onThemeChange } from '../../composables/useSettings'
 import { registerLanguageCompletions } from './languageCompletions'
+import {
+  applyGitDecorations,
+  clearGitDecorations,
+  fetchGitDiff,
+  stageLines,
+  revertLines,
+  createDiffWidget,
+  findChangeAtLine,
+  type GitChange,
+  type GitDiffData,
+} from './gitDecorations'
 
 const props = withDefaults(
   defineProps<{
     modelValue: string
     language?: string
     readonly?: boolean
+    filePath?: string
+    paneId?: string
   }>(),
   { language: 'plaintext', readonly: false },
 )
@@ -25,6 +38,9 @@ const emit = defineEmits<{
 const containerRef = ref<HTMLElement | null>(null)
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
 let ignoreChange = false
+let gitDecorationIds: string[] = []
+let gitDiffData: GitDiffData | null = null
+let activeDiffWidget: { dispose: () => void } | null = null
 
 function getTheme(): string {
   const root = document.documentElement
@@ -44,6 +60,7 @@ onMounted(() => {
     theme: getTheme(),
     readOnly: props.readonly,
     minimap: { enabled: true },
+    glyphMargin: false,
     scrollBeyondLastLine: false,
     automaticLayout: true,
     fontSize: 13,
@@ -53,7 +70,7 @@ onMounted(() => {
     suggestOnTriggerCharacters: true,
     tabSize: 2,
     renderWhitespace: 'selection',
-    overviewRulerLanes: 0,
+    overviewRulerLanes: 3,
     hideCursorInOverviewRuler: true,
     scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
   })
@@ -69,6 +86,21 @@ onMounted(() => {
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
     emit('save')
   })
+
+  editor.onMouseDown((e) => {
+    if (
+      (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+       e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS) &&
+      gitDiffData?.changes.length &&
+      e.target.position
+    ) {
+      const line = e.target.position.lineNumber
+      const change = findChangeAtLine(gitDiffData.changes, line)
+      if (change) openDiffWidget(change)
+    }
+  })
+
+  loadGitDecorations()
 })
 
 const unsubTheme = onThemeChange(() => {
@@ -77,7 +109,61 @@ const unsubTheme = onThemeChange(() => {
   }
 })
 
+async function loadGitDecorations() {
+  if (!editor || !props.filePath || !props.paneId) return
+  clearGitDecorations(editor, gitDecorationIds)
+  gitDecorationIds = []
+  gitDiffData = null
+  const data = await fetchGitDiff(props.paneId, props.filePath)
+  if (!data || !data.isGitRepo || !editor) return
+  gitDiffData = data
+  gitDecorationIds = applyGitDecorations(editor, data.changes)
+}
+
+function closeDiffWidget() {
+  if (activeDiffWidget) {
+    activeDiffWidget.dispose()
+    activeDiffWidget = null
+  }
+}
+
+function openDiffWidget(change: GitChange) {
+  if (!editor || !gitDiffData?.originalContent) return
+  closeDiffWidget()
+  activeDiffWidget = createDiffWidget(
+    editor,
+    change,
+    gitDiffData.originalContent,
+    gitDiffData.changes,
+    {
+      onStage: async (c) => {
+        if (!props.paneId || !props.filePath) return
+        const ok = await stageLines(props.paneId, props.filePath, c.modifiedStart, c.modifiedEnd)
+        if (ok) {
+          closeDiffWidget()
+          await loadGitDecorations()
+        }
+      },
+      onRevert: async (c) => {
+        if (!props.paneId || !props.filePath || !gitDiffData?.originalContent) return
+        const origLines = gitDiffData.originalContent.split('\n')
+        const start = (c.originalStart ?? 1) - 1
+        const end = c.originalEnd ?? start
+        const lines = origLines.slice(start, end).join('\n')
+        const ok = await revertLines(props.paneId, props.filePath, c.modifiedStart, c.modifiedEnd, lines)
+        if (ok) {
+          closeDiffWidget()
+          emit('save')
+        }
+      },
+      onClose: closeDiffWidget,
+      onNavigate: (c) => openDiffWidget(c),
+    },
+  )
+}
+
 onBeforeUnmount(() => {
+  closeDiffWidget()
   unsubTheme()
   editor?.dispose()
   editor = null
@@ -101,6 +187,13 @@ watch(() => props.language, (lang) => {
 watch(() => props.readonly, (ro) => {
   editor?.updateOptions({ readOnly: ro })
 })
+
+watch(() => props.filePath, () => {
+  closeDiffWidget()
+  loadGitDecorations()
+})
+
+defineExpose({ refreshGitDecorations: loadGitDecorations })
 </script>
 
 <style scoped>
