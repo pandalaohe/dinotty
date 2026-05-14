@@ -22,6 +22,24 @@ export interface SettingsData {
   panel_position: 'auto' | 'right' | 'left' | 'top' | 'bottom'
   port?: number | null
   monitor: MonitorConfig
+  notification: NotificationConfig
+}
+
+export interface NotificationConfig {
+  enabled: boolean
+  bell: { enabled: boolean; debounce_ms: number }
+  osc_notify: boolean
+  command_complete: { enabled: boolean; threshold_seconds: number }
+  keyword_match: { pattern: string; notification_type: string; case_sensitive: boolean }[]
+  channels: {
+    sound: boolean
+    vibration: boolean
+    title_flash: boolean
+    panel: boolean
+    tab_indicator: boolean
+  }
+  sounds: Record<string, { source: 'builtin' | 'custom'; value: string; volume: number }>
+  panel: { auto_hide_ms: number; pinned: boolean }
 }
 
 export interface MonitorConfig {
@@ -110,6 +128,28 @@ export const settings = reactive<SettingsData>({
     memory: true,
     disk: true,
     network: true,
+  },
+  notification: {
+    enabled: true,
+    bell: { enabled: true, debounce_ms: 300 },
+    osc_notify: true,
+    command_complete: { enabled: false, threshold_seconds: 10 },
+    keyword_match: [],
+    channels: {
+      sound: true,
+      vibration: true,
+      title_flash: true,
+      panel: true,
+      tab_indicator: true,
+    },
+    sounds: {
+      info: { source: 'builtin', value: 'ding', volume: 0.7 },
+      success: { source: 'builtin', value: 'chime-up', volume: 0.7 },
+      warning: { source: 'builtin', value: 'double-beep', volume: 0.8 },
+      error: { source: 'builtin', value: 'error-buzz', volume: 0.8 },
+      urgent: { source: 'builtin', value: 'alarm', volume: 1.0 },
+    },
+    panel: { auto_hide_ms: 4000, pinned: false },
   },
 })
 

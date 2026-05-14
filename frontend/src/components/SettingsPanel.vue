@@ -22,6 +22,7 @@
         <TextTab v-show="activeTab === 'text'" />
         <KeyboardTab v-show="activeTab === 'keyboard'" />
         <MonitorTab v-show="activeTab === 'monitor'" />
+        <NotificationTab v-show="activeTab === 'notification'" />
       </div>
 
     </div>
@@ -37,6 +38,7 @@ import ThemeTab from './settings/ThemeTab.vue'
 import TextTab from './settings/TextTab.vue'
 import KeyboardTab from './settings/KeyboardTab.vue'
 import MonitorTab from './settings/MonitorTab.vue'
+import NotificationTab from './settings/NotificationTab.vue'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
@@ -44,7 +46,7 @@ defineEmits<{ close: [] }>()
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
 
-const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor'>('general')
+const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification'>('general')
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 watch(settings, () => {
@@ -60,6 +62,7 @@ const tabs = computed(() => [
   { id: 'text' as const, label: t('settings.tab.text'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>' },
   { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" ry="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>' },
   { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' },
+  { id: 'notification' as const, label: t('settings.tab.notification'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0"/></svg>' },
 ])
 </script>
 
