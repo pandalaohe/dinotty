@@ -1,4 +1,4 @@
-use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor};
+use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor, notification};
 mod routes;
 
 use axum::{
@@ -20,6 +20,7 @@ use crate::session::SessionManager;
 use crate::settings::SettingsState;
 use crate::file_watcher::FileWatcherState;
 use crate::monitor::MonitorState;
+use crate::notification::NotificationBroadcast;
 
 #[derive(Embed)]
 #[folder = "frontend/dist/"]
@@ -31,6 +32,7 @@ pub struct AppState {
     pub settings: SettingsState,
     pub file_watcher: Arc<FileWatcherState>,
     pub monitor: MonitorState,
+    pub notifier: Arc<NotificationBroadcast>,
     pub auth_token: Arc<String>,
     pub port: u16,
 }
@@ -59,6 +61,12 @@ impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, Arc<FileWatcherS
 impl axum::extract::FromRef<AppState> for MonitorState {
     fn from_ref(state: &AppState) -> Self {
         state.monitor.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<NotificationBroadcast> {
+    fn from_ref(state: &AppState) -> Self {
+        state.notifier.clone()
     }
 }
 
@@ -133,11 +141,14 @@ async fn main() {
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
 
+    let notifier = Arc::new(NotificationBroadcast::new());
+
     let state = AppState {
         manager,
         settings: settings::create_settings_state(),
         file_watcher: Arc::new(FileWatcherState::new()),
         monitor: monitor_state,
+        notifier,
         auth_token: auth_token.clone(),
         port,
     };
@@ -147,6 +158,8 @@ async fn main() {
         .route("/ws/sync", get(ws::sync_handler))
         .route("/ws/watch", get(file_watcher::watch_handler))
         .route("/ws/monitor", get(monitor::ws_monitor_handler))
+        .route("/ws/notify", get(ws::notification_ws_handler))
+        .route("/api/notify", post(notification::post_notify))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))
