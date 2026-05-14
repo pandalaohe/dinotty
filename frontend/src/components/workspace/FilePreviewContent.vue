@@ -64,7 +64,42 @@
           />
         </div>
       </div>
-      <iframe v-else-if="meta?.kind === 'pdf' || meta?.kind === 'html'" class="file-pdf" :src="rawUrl"></iframe>
+      <iframe v-else-if="meta?.kind === 'pdf'" class="file-pdf" :src="rawUrl"></iframe>
+      <template v-else-if="meta?.kind === 'html'">
+        <div class="file-editor-root">
+        <div class="file-editor-chrome">
+          <span v-if="editorDirty" class="file-editor-dirty">{{ t('filePreview.modified') }}</span>
+          <button type="button" class="file-editor-tab" @click="$emit('update:htmlShowPreview', false)">
+            {{ t('filePreview.source') }}
+          </button>
+          <button type="button" class="file-editor-tab" @click="$emit('update:htmlShowPreview', true)">
+            {{ t('filePreview.preview') }}
+          </button>
+          <button
+            v-if="showSave"
+            type="button"
+            class="file-editor-save"
+            :disabled="!canSaveEditor"
+            @click="$emit('saveEditor')"
+          >
+            {{ t('filePreview.save') }}
+          </button>
+        </div>
+        <iframe
+          v-if="htmlShowPreview"
+          class="file-pdf"
+          :srcdoc="editorText"
+        ></iframe>
+        <MonacoEditor
+          v-else
+          :model-value="editorText"
+          :language="language"
+          :readonly="!!meta?.truncated"
+          @update:model-value="$emit('update:editorText', $event)"
+          @save="$emit('saveEditor')"
+        />
+        </div>
+      </template>
       <template v-else-if="meta?.kind === 'text' || meta?.kind === 'markdown'">
         <div class="file-editor-root">
         <div class="file-editor-chrome">
@@ -92,22 +127,14 @@
           class="file-md file-md-body file-editor-preview"
           v-html="markdownEditorHtml"
         ></div>
-        <div v-else class="file-code-preview">
-          <pre class="file-code-line-numbers">{{ lineNumbersText }}</pre>
-          <div class="file-code-editor">
-            <pre class="file-code-highlighted"><code v-html="highlightedHtml"></code></pre>
-            <textarea
-              :value="editorText"
-              class="file-editor-textarea"
-              spellcheck="false"
-              autocapitalize="off"
-              autocomplete="off"
-              :disabled="!!meta?.truncated"
-              @input="$emit('update:editorText', ($event.target as HTMLTextAreaElement).value)"
-              @scroll="$emit('editorScroll', $event)"
-            ></textarea>
-          </div>
-        </div>
+        <MonacoEditor
+          v-else
+          :model-value="editorText"
+          :language="language"
+          :readonly="!!meta?.truncated"
+          @update:model-value="$emit('update:editorText', $event)"
+          @save="$emit('saveEditor')"
+        />
         </div>
       </template>
       <div v-else-if="meta?.kind === 'office'" class="file-office">
@@ -123,6 +150,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from '../../composables/useI18n'
+import MonacoEditor from './MonacoEditor.vue'
 
 const { t } = useI18n()
 
@@ -134,10 +162,9 @@ const props = defineProps<{
   previewErr: string | null
   selectedRel: string | null
   selectedIsDir: boolean
-  meta: { kind: string; message?: string; truncated?: boolean } | null
+  meta: { kind: string; language?: string; message?: string; truncated?: boolean } | null
   rawUrl: string
   showSave: boolean
-  // audio
   audioTitle: string
   audioSub: string
   audioTimeNow: string
@@ -145,26 +172,18 @@ const props = defineProps<{
   audioSeekValue: number
   audioVolValue: number
   audioPlaying: boolean
-  // editor
   editorDirty: boolean
   editorText: string
   canSaveEditor: boolean
   mdShowPreview: boolean
+  htmlShowPreview: boolean
   markdownEditorHtml: string
-  codeLines: unknown[]
-  highlightedHtml: string
-  // office
   officeLoading: boolean
   officeErr: string | null
   officeHtml: string
 }>()
 
-const lineNumbersText = computed(() => {
-  const n = props.codeLines.length
-  const lines = new Array(n)
-  for (let i = 0; i < n; i++) lines[i] = i + 1
-  return lines.join('\n')
-})
+const language = computed(() => props.meta?.language || 'plaintext')
 
 defineEmits<{
   audioTimeUpdate: [e: Event]
@@ -175,9 +194,9 @@ defineEmits<{
   toggleAudio: []
   audioVolumeInput: [e: Event]
   'update:mdShowPreview': [value: boolean]
+  'update:htmlShowPreview': [value: boolean]
   saveEditor: []
   'update:editorText': [value: string]
-  editorScroll: [e: Event]
 }>()
 </script>
 
@@ -239,15 +258,9 @@ video.file-media {
   color: var(--fg, #d6d6d6);
 }
 
-.file-audio-el {
-  display: none;
-}
+.file-audio-el { display: none; }
 
-.file-audio-head {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-}
+.file-audio-head { display: flex; gap: 14px; align-items: center; }
 
 .file-audio-cover {
   width: clamp(64px, 9vmin, 92px);
@@ -263,12 +276,7 @@ video.file-media {
   flex: 0 0 auto;
 }
 
-.file-audio-meta {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+.file-audio-meta { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 
 .file-audio-title {
   font-size: clamp(15px, 3vmin, 20px);
@@ -296,22 +304,10 @@ video.file-media {
   max-width: 400px;
 }
 
-.file-audio-time {
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  color: var(--fg-muted, #9a9a9a);
-}
+.file-audio-time { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--fg-muted, #9a9a9a); }
+.file-audio-seek { width: 100%; accent-color: rgba(255, 255, 255, 0.85); }
 
-.file-audio-seek {
-  width: 100%;
-  accent-color: rgba(255, 255, 255, 0.85);
-}
-
-.file-audio-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+.file-audio-controls { display: flex; align-items: center; gap: 10px; }
 
 .file-audio-btn {
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -324,26 +320,10 @@ video.file-media {
   user-select: none;
 }
 
-.file-audio-btn.play {
-  padding: 10px 14px;
-  font-weight: 650;
-}
-
-.file-audio-spacer {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.file-audio-vol-ico {
-  color: var(--fg-muted, #9a9a9a);
-  font-size: 12px;
-}
-
-.file-audio-vol {
-  width: 140px;
-  max-width: 30vw;
-  accent-color: rgba(255, 255, 255, 0.85);
-}
+.file-audio-btn.play { padding: 10px 14px; font-weight: 650; }
+.file-audio-spacer { flex: 1 1 0; min-width: 0; }
+.file-audio-vol-ico { color: var(--fg-muted, #9a9a9a); font-size: 12px; }
+.file-audio-vol { width: 140px; max-width: 30vw; accent-color: rgba(255, 255, 255, 0.85); }
 
 .file-office {
   flex: 1 1 0;
@@ -353,49 +333,19 @@ video.file-media {
   color: var(--fg, #ccc);
 }
 
-.file-office-body :deep(p) {
-  margin: 0.55em 0;
-  line-height: 1.55;
-}
-
+.file-office-body :deep(p) { margin: 0.55em 0; line-height: 1.55; }
 .file-office-body :deep(h1),
 .file-office-body :deep(h2),
 .file-office-body :deep(h3),
 .file-office-body :deep(h4),
 .file-office-body :deep(h5),
-.file-office-body :deep(h6) {
-  margin: 1.05em 0 0.45em;
-  font-weight: 600;
-  line-height: 1.25;
-  color: var(--fg-bright, #e8e8e8);
-}
-
-.file-office-body :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 0.75em 0;
-  font-size: 0.92em;
-}
-
+.file-office-body :deep(h6) { margin: 1.05em 0 0.45em; font-weight: 600; line-height: 1.25; color: var(--fg-bright, #e8e8e8); }
+.file-office-body :deep(table) { border-collapse: collapse; width: 100%; margin: 0.75em 0; font-size: 0.92em; }
 .file-office-body :deep(td),
-.file-office-body :deep(th) {
-  border: 1px solid var(--border, #444);
-  padding: 0.35em 0.55em;
-  text-align: left;
-  vertical-align: top;
-}
+.file-office-body :deep(th) { border: 1px solid var(--border, #444); padding: 0.35em 0.55em; text-align: left; vertical-align: top; }
+.file-office-body :deep(th) { background: var(--tab-bg, #252525); }
 
-.file-office-body :deep(th) {
-  background: var(--tab-bg, #252525);
-}
-
-.file-pdf {
-  flex: 1 1 0;
-  min-height: min(240px, 45vh);
-  width: 100%;
-  border: none;
-  background: #222;
-}
+.file-pdf { flex: 1 1 0; min-height: min(240px, 45vh); width: 100%; border: none; background: #222; }
 
 .file-editor-root {
   flex: 1 1 0;
@@ -416,10 +366,7 @@ video.file-media {
   flex-shrink: 0;
 }
 
-.file-editor-dirty {
-  font-size: 12px;
-  color: var(--color-orange, #d19a66);
-}
+.file-editor-dirty { font-size: 12px; color: var(--color-orange, #d19a66); }
 
 .file-editor-tab {
   border: none;
@@ -431,9 +378,7 @@ video.file-media {
   cursor: pointer;
 }
 
-.file-editor-tab:hover {
-  color: var(--fg, #ccc);
-}
+.file-editor-tab:hover { color: var(--fg, #ccc); }
 
 .file-editor-save {
   margin-left: auto;
@@ -446,118 +391,7 @@ video.file-media {
   cursor: pointer;
 }
 
-.file-editor-save:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.file-code-preview {
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  overflow: hidden;
-  position: relative;
-}
-
-.file-code-line-numbers {
-  flex-shrink: 0;
-  width: clamp(40px, 5vw, 60px);
-  overflow: hidden;
-  background: var(--bg, #1a1a1a);
-  border-right: 1px solid var(--border, #333);
-  user-select: none;
-  margin: 0;
-  padding: clamp(8px, 2vmin, 14px) clamp(6px, 1.5vmin, 12px) clamp(8px, 2vmin, 14px) 0;
-  text-align: right;
-  color: var(--fg-muted, #666);
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, clamp(11px, 2.5vw, 15px));
-  line-height: 1.45;
-  white-space: pre;
-}
-
-.file-code-editor {
-  flex: 1 1 0;
-  min-height: 0;
-  position: relative;
-  overflow: hidden;
-}
-
-.file-code-highlighted {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  padding: clamp(8px, 2vmin, 14px);
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, clamp(11px, 2.5vw, 15px));
-  line-height: 1.45;
-  background: var(--bg-surface, #141414);
-  color: var(--fg, #ccc);
-  white-space: pre;
-  overflow: auto;
-  pointer-events: none;
-  z-index: 1;
-}
-
-.file-code-highlighted :deep(code) {
-  font-family: inherit;
-  font-size: inherit;
-  background: none;
-  padding: 0;
-}
-
-.file-editor-textarea {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  border: none;
-  resize: none;
-  margin: 0;
-  padding: clamp(8px, 2vmin, 14px);
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, clamp(11px, 2.5vw, 15px));
-  line-height: 1.45;
-  background: transparent;
-  color: transparent;
-  caret-color: var(--fg, #ccc);
-  outline: none;
-  z-index: 2;
-  overflow: auto;
-}
-
-.file-editor-textarea:disabled {
-  opacity: 0.65;
-}
-
-.file-editor-textarea::selection {
-  background: rgba(100, 150, 255, 0.3);
-}
-
-.file-code-highlighted :deep(.hljs-keyword) {
-  color: var(--color-magenta, #ca30c7);
-}
-.file-code-highlighted :deep(.hljs-string) {
-  color: var(--color-green, #00c200);
-}
-.file-code-highlighted :deep(.hljs-number) {
-  color: var(--color-yellow, #c7c400);
-}
-.file-code-highlighted :deep(.hljs-comment) {
-  color: var(--fg-muted, #666);
-  font-style: italic;
-}
-.file-code-highlighted :deep(.hljs-title),
-.file-code-highlighted :deep(.hljs-name) {
-  color: var(--color-cyan, #56b6c2);
-}
-.file-code-highlighted :deep(.hljs-attr) {
-  color: var(--color-orange, #d19a66);
-}
-.file-code-highlighted :deep(.hljs-built_in) {
-  color: var(--accent, #89b4fa);
-}
+.file-editor-save:disabled { opacity: 0.4; cursor: default; }
 
 .file-editor-preview {
   flex: 1 1 0;
@@ -589,140 +423,25 @@ video.file-media {
 .file-md-body :deep(h1),
 .file-md-body :deep(h2),
 .file-md-body :deep(h3),
-.file-md-body :deep(h4) {
-  margin: 1.1em 0 0.45em;
-  font-weight: 600;
-  line-height: 1.25;
-  color: var(--fg-bright, #e8e8e8);
-}
-
-.file-md-body :deep(h1) {
-  font-size: 1.45em;
-  border-bottom: 1px solid var(--border, #333);
-  padding-bottom: 0.25em;
-}
-
-.file-md-body :deep(h2) {
-  font-size: 1.25em;
-}
-
-.file-md-body :deep(h3) {
-  font-size: 1.08em;
-}
-
-.file-md-body :deep(p) {
-  margin: 0.55em 0;
-}
-
-.file-md-body :deep(a) {
-  color: var(--accent, #89b4fa);
-  text-decoration: none;
-}
-
-.file-md-body :deep(a:hover) {
-  text-decoration: underline;
-}
-
+.file-md-body :deep(h4) { margin: 1.1em 0 0.45em; font-weight: 600; line-height: 1.25; color: var(--fg-bright, #e8e8e8); }
+.file-md-body :deep(h1) { font-size: 1.45em; border-bottom: 1px solid var(--border, #333); padding-bottom: 0.25em; }
+.file-md-body :deep(h2) { font-size: 1.25em; }
+.file-md-body :deep(h3) { font-size: 1.08em; }
+.file-md-body :deep(p) { margin: 0.55em 0; }
+.file-md-body :deep(a) { color: var(--accent, #89b4fa); text-decoration: none; }
+.file-md-body :deep(a:hover) { text-decoration: underline; }
 .file-md-body :deep(ul),
-.file-md-body :deep(ol) {
-  margin: 0.5em 0;
-  padding-left: 1.5em;
-}
-
-.file-md-body :deep(li) {
-  margin: 0.18em 0;
-}
-
-.file-md-body :deep(blockquote) {
-  margin: 0.6em 0;
-  padding: 0.2em 0 0.2em 0.85em;
-  border-left: 3px solid var(--border, #555);
-  color: var(--fg-muted, #aaa);
-}
-
-.file-md-body :deep(hr) {
-  border: none;
-  border-top: 1px solid var(--border, #333);
-  margin: 1em 0;
-}
-
-.file-md-body :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 0.75em 0;
-  font-size: 0.92em;
-}
-
+.file-md-body :deep(ol) { margin: 0.5em 0; padding-left: 1.5em; }
+.file-md-body :deep(li) { margin: 0.18em 0; }
+.file-md-body :deep(blockquote) { margin: 0.6em 0; padding: 0.2em 0 0.2em 0.85em; border-left: 3px solid var(--border, #555); color: var(--fg-muted, #aaa); }
+.file-md-body :deep(hr) { border: none; border-top: 1px solid var(--border, #333); margin: 1em 0; }
+.file-md-body :deep(table) { border-collapse: collapse; width: 100%; margin: 0.75em 0; font-size: 0.92em; }
 .file-md-body :deep(th),
-.file-md-body :deep(td) {
-  border: 1px solid var(--border, #444);
-  padding: 0.35em 0.55em;
-  text-align: left;
-}
-
-.file-md-body :deep(th) {
-  background: var(--tab-bg, #252525);
-}
-
-.file-md-body :deep(pre) {
-  margin: 0.65em 0;
-  padding: 10px 12px;
-  overflow: auto;
-  background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border, #333);
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs);
-  line-height: 1.45;
-}
-
-.file-md-body :deep(pre code) {
-  font-family: inherit;
-  font-size: inherit;
-  background: none;
-  padding: 0;
-}
-
-.file-md-body :deep(code:not(pre code)) {
-  font-family: var(--font-mono);
-  font-size: 0.88em;
-  padding: 0.12em 0.38em;
-  background: var(--tab-bg, #252525);
-  border-radius: 3px;
-}
-
-.file-md-body :deep(img) {
-  max-width: 100%;
-  height: auto;
-  vertical-align: middle;
-}
-
-.file-md-body :deep(input[type='checkbox']) {
-  margin-right: 0.35em;
-  vertical-align: middle;
-}
-
-.file-md-body :deep(.hljs-keyword) {
-  color: var(--color-magenta, #ca30c7);
-}
-.file-md-body :deep(.hljs-string) {
-  color: var(--color-green, #00c200);
-}
-.file-md-body :deep(.hljs-number) {
-  color: var(--color-yellow, #c7c400);
-}
-.file-md-body :deep(.hljs-comment) {
-  color: var(--fg-muted, #666);
-  font-style: italic;
-}
-.file-md-body :deep(.hljs-title),
-.file-md-body :deep(.hljs-name) {
-  color: var(--color-cyan, #56b6c2);
-}
-.file-md-body :deep(.hljs-attr) {
-  color: var(--color-orange, #d19a66);
-}
-.file-md-body :deep(.hljs-built_in) {
-  color: var(--accent, #89b4fa);
-}
+.file-md-body :deep(td) { border: 1px solid var(--border, #444); padding: 0.35em 0.55em; text-align: left; }
+.file-md-body :deep(th) { background: var(--tab-bg, #252525); }
+.file-md-body :deep(pre) { margin: 0.65em 0; padding: 10px 12px; overflow: auto; background: var(--bg, #1a1a1a); border: 1px solid var(--border, #333); border-radius: 4px; font-family: var(--font-mono); font-size: var(--preview-code-fs); line-height: 1.45; }
+.file-md-body :deep(pre code) { font-family: inherit; font-size: inherit; background: none; padding: 0; }
+.file-md-body :deep(code:not(pre code)) { font-family: var(--font-mono); font-size: 0.88em; padding: 0.12em 0.38em; background: var(--tab-bg, #252525); border-radius: 3px; }
+.file-md-body :deep(img) { max-width: 100%; height: auto; vertical-align: middle; }
+.file-md-body :deep(input[type='checkbox']) { margin-right: 0.35em; vertical-align: middle; }
 </style>
