@@ -13,6 +13,7 @@ use std::{io::Write, sync::Arc};
 use tracing::{error, info};
 
 use crate::session::{SessionManager, SessionStatus, SyncMsg};
+use crate::notification::NotificationBroadcast;
 
 #[derive(Deserialize)]
 pub struct WsQuery {
@@ -248,5 +249,34 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
         info!("Session detached (abnormal close): pane={}", pane_id);
     }
+}
+
+pub async fn notification_ws_handler(
+    ws: WebSocketUpgrade,
+    State(notifier): State<Arc<NotificationBroadcast>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_notification_socket(socket, notifier))
+}
+
+async fn handle_notification_socket(socket: WebSocket, notifier: Arc<NotificationBroadcast>) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let mut rx = notifier.subscribe();
+
+    let fwd = tokio::spawn(async move {
+        while let Ok(event) = rx.recv().await {
+            let json = serde_json::to_string(&event).unwrap();
+            if ws_tx.send(Message::Text(json.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Keep connection alive until client disconnects
+    while let Some(Ok(msg)) = ws_rx.next().await {
+        if matches!(msg, Message::Close(_)) {
+            break;
+        }
+    }
+    fwd.abort();
 }
 
