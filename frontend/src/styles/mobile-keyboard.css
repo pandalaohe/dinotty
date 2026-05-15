@@ -326,7 +326,7 @@
   color: var(--fg-bright);
   background: var(--bg);
   border: none;
-  border-radius: 13.5px;
+  border-radius: 7px;
   outline: none;
   -webkit-appearance: none;
   resize: none;
@@ -336,18 +336,18 @@
 .mkb-text-input-glow {
   position: relative;
   flex: 1;
-  border-radius: 15px;
+  border-radius: 8px;
   padding: 1px;
   background: var(--border);
 }
 .mkb-text-input-glow:has(.mkb-text-input-focused) {
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 1px;
   background: var(--border);
 }
 .mkb-text-input-glow.mkb-glow-active {
-  background: conic-gradient(from var(--mkb-glow-angle, 0deg), #9ca3af, transparent, #9ca3af, transparent, #9ca3af);
-  animation: mkb-glow-spin 6s linear infinite;
+  background: conic-gradient(from var(--mkb-glow-angle, 0deg), var(--accent), color-mix(in srgb, var(--accent) 40%, transparent), var(--accent), color-mix(in srgb, var(--accent) 40%, transparent), var(--accent));
+  animation: mkb-glow-spin 4s linear infinite;
 }
 @keyframes mkb-glow-spin {
   to { --mkb-glow-angle: 360deg; }
@@ -362,7 +362,7 @@
   min-height: 80px;
   max-height: 120px;
   overflow-y: auto;
-  border-radius: 10.5px;
+  border-radius: 6px;
 }
 .mkb-text-input::placeholder {
   color: var(--fg-muted);

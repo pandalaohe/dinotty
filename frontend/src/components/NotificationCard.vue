@@ -6,7 +6,7 @@
         <span class="card-dot"></span>
         <span class="card-title">{{ title || body }}</span>
         <button class="card-close" @click.stop="$emit('dismiss')">
-          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+          <X :size="12" />
         </button>
       </div>
       <div v-if="title && body" class="card-body">{{ body }}</div>
@@ -20,6 +20,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { X } from 'lucide-vue-next'
 import type { NotificationType } from '../composables/useNotificationSound'
 
 const props = defineProps<{
