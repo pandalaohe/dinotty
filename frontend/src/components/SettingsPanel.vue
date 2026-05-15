@@ -3,7 +3,7 @@
     <div class="settings-panel" :class="{ open }">
       <div class="settings-header">
         <h2>{{ t('settings.title') }}</h2>
-        <button class="settings-close" @click="$emit('close')">✕</button>
+        <button class="settings-close" @click="$emit('close')"><X :size="14" /></button>
       </div>
 
       <div class="settings-tabs">
@@ -13,7 +13,7 @@
           class="settings-tab"
           :class="{ active: activeTab === tab.id }"
           @click="activeTab = tab.id"
-        ><span class="settings-tab-icon" v-html="tab.icon"></span><span class="settings-tab-label">{{ tab.label }}</span></button>
+        ><span class="settings-tab-icon"><component :is="tab.icon" :size="20" /></span><span class="settings-tab-label">{{ tab.label }}</span></button>
       </div>
 
       <div class="settings-body">
@@ -33,6 +33,7 @@
 import { ref, computed, watch } from 'vue'
 import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
+import { Settings as SettingsIcon, Palette, Type, Keyboard, Activity, Bell, X } from 'lucide-vue-next'
 import GeneralTab from './settings/GeneralTab.vue'
 import ThemeTab from './settings/ThemeTab.vue'
 import TextTab from './settings/TextTab.vue'
@@ -57,12 +58,12 @@ watch(settings, () => {
 }, { deep: true })
 
 const tabs = computed(() => [
-  { id: 'general' as const, label: t('settings.tab.general'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
-  { id: 'theme' as const, label: t('settings.tab.theme'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.04-.23-.29-.38-.63-.38-1.01 0-.83.67-1.5 1.5-1.5H16c3.31 0 6-2.69 6-6 0-5.17-4.49-9-10-9z"/><circle cx="7.5" cy="11.5" r="1.5" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1.5" fill="currentColor"/><circle cx="14.5" cy="7.5" r="1.5" fill="currentColor"/><circle cx="17.5" cy="11.5" r="1.5" fill="currentColor"/></svg>' },
-  { id: 'text' as const, label: t('settings.tab.text'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>' },
-  { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" ry="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>' },
-  { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' },
-  { id: 'notification' as const, label: t('settings.tab.notification'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0"/></svg>' },
+  { id: 'general' as const, label: t('settings.tab.general'), icon: SettingsIcon },
+  { id: 'theme' as const, label: t('settings.tab.theme'), icon: Palette },
+  { id: 'text' as const, label: t('settings.tab.text'), icon: Type },
+  { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: Keyboard },
+  { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: Activity },
+  { id: 'notification' as const, label: t('settings.tab.notification'), icon: Bell },
 ])
 </script>
 
@@ -194,7 +195,7 @@ const tabs = computed(() => [
 }
 .theme-card {
   border: 2px solid var(--border, #333);
-  border-radius: 8px;
+  border-radius: 6px;
   overflow: hidden;
   cursor: pointer;
   transition: border-color 0.15s, transform 0.15s;
@@ -451,7 +452,7 @@ const tabs = computed(() => [
   background: var(--bg-surface, #1A1A1A);
   border: 1px solid var(--border, #333);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   z-index: 1000;
   padding: 4px 0;
 }
@@ -616,7 +617,7 @@ const tabs = computed(() => [
   margin-bottom: 10px;
   background: #1c1c1e;
   border: 1px solid #38383a;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .ak-wysiwyg :deep(.mkb-btn) {

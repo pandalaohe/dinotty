@@ -7,9 +7,9 @@
     ></div>
     <div class="preview-panel-inner">
       <div class="preview-toolbar">
-        <button type="button" :disabled="!canGoBack" @click="goBack" title="Back">←</button>
-        <button type="button" :disabled="!canGoForward" @click="goForward" title="Forward">→</button>
-        <button type="button" @click="refresh" title="Refresh">↻</button>
+        <button type="button" :disabled="!canGoBack" @click="goBack" title="Back"><ChevronLeft :size="14" /></button>
+        <button type="button" :disabled="!canGoForward" @click="goForward" title="Forward"><ChevronRight :size="14" /></button>
+        <button type="button" @click="refresh" title="Refresh"><RotateCw :size="14" /></button>
         <form class="preview-address" @submit.prevent="go">
           <input
             ref="addressInputRef"
@@ -21,17 +21,17 @@
             spellcheck="false"
             :placeholder="t('previewPanel.placeholder')"
           />
-          <button type="submit" class="go-btn" title="Go">→</button>
+          <button type="submit" class="go-btn" title="Go"><ArrowRight :size="14" /></button>
         </form>
-        <button v-if="kind === 'web' && webUrl" type="button" @click="openInBrowser" :title="t('previewPanel.openInBrowser')">⎋</button>
+        <button v-if="kind === 'web' && webUrl" type="button" @click="openInBrowser" :title="t('previewPanel.openInBrowser')"><ExternalLink :size="14" /></button>
         <template v-if="kind === 'files'">
           <button type="button" @click="onFilesTreeToggle" :title="filesTreeTitle">
-            {{ filesTreeGlyph }}
+            <component :is="filesTreeIcon" :size="14" />
           </button>
-          <button type="button" @click="onFilesUpload()" title="Upload">↑</button>
-          <button type="button" @click="onFilesDownload" title="Download">↓</button>
+          <button type="button" @click="onFilesUpload()" title="Upload"><Upload :size="14" /></button>
+          <button type="button" @click="onFilesDownload" title="Download"><Download :size="14" /></button>
         </template>
-        <button type="button" @click="close" title="Close">✕</button>
+        <button type="button" @click="close" title="Close"><X :size="14" /></button>
       </div>
       <div class="preview-body">
         <div v-show="kind === 'web'" class="preview-web">
@@ -62,6 +62,7 @@ import FileWorkspacePreview from './FileWorkspacePreview.vue'
 import { isWebPreviewInput, normalizeWebUrl, urlToPreviewSrc } from '../utils/previewRouting'
 import { getApiBase, getAuthToken } from '../composables/apiBase'
 import { useI18n } from '../composables/useI18n'
+import { ChevronLeft, ChevronRight, RotateCw, ArrowRight, ExternalLink, PanelLeftClose, PanelLeftOpen, Upload, Download, X } from 'lucide-vue-next'
 import { isNarrowViewport } from '../utils/viewport'
 import { usePaneResize } from '../composables/usePaneResize'
 
@@ -147,9 +148,9 @@ function filesDrawerRef(): Ref<boolean> | undefined {
   return inst?.drawerOpen
 }
 
-const filesTreeGlyph = computed(() => {
-  if (!narrow.value) return treeCollapsed.value ? '▶' : '◀'
-  return unref(filesDrawerRef()) ? '◀' : '▶'
+const filesTreeIcon = computed(() => {
+  if (!narrow.value) return treeCollapsed.value ? PanelLeftOpen : PanelLeftClose
+  return unref(filesDrawerRef()) ? PanelLeftClose : PanelLeftOpen
 })
 
 const filesTreeTitle = computed(() => {

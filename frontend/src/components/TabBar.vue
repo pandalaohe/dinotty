@@ -11,15 +11,17 @@
       >
         <span class="tab-title">{{ tab.title }}</span>
         <span v-if="indicators[tab.paneId]" class="tab-notif-dot" :class="'dot-' + indicators[tab.paneId]"></span>
-        <button class="tab-close" @click.stop="$emit('close', tab.paneId)" @touchend.stop.prevent="$emit('close', tab.paneId)">✕</button>
+        <button class="tab-close" @click.stop="$emit('close', tab.paneId)" @touchend.stop.prevent="$emit('close', tab.paneId)"><X :size="10" /></button>
       </div>
     </div>
-    <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')" @touchend.prevent="$emit('new')">+</button>
+    <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')" @touchend.prevent="$emit('new')"><Plus :size="16" /></button>
     <slot name="right"></slot>
   </div>
 </template>
 
 <script setup lang="ts">
+import { X, Plus } from 'lucide-vue-next'
+
 export interface TabInfo {
   paneId: string
   title: string

@@ -2,10 +2,7 @@
   <div id="palette-backdrop" :class="{ open: isOpen }" @mousedown.self="close">
     <div id="palette">
       <div id="palette-input-wrap">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="6.5" cy="6.5" r="5"/>
-          <line x1="10.5" y1="10.5" x2="14" y2="14"/>
-        </svg>
+        <Search :size="14" />
         <input
           ref="inputRef"
           id="palette-input"
@@ -43,6 +40,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
+import { Search } from 'lucide-vue-next'
 
 export interface Command {
   icon?: string

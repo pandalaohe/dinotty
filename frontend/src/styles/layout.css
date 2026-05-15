@@ -83,7 +83,7 @@
   .tab .tab-close { opacity: 0.7; }
 }
 .tab-close:hover {
-  background: rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.08);
   color: var(--fg-bright);
 }
 
@@ -161,11 +161,11 @@
   background: var(--palette-bg);
   border: 1px solid var(--palette-border);
   border-radius: var(--radius);
-  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(8px);
 }
 
 #palette-input-wrap {
