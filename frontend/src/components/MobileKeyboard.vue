@@ -1,6 +1,18 @@
 <template>
   <div ref="barRef" id="mobile-kb" v-show="visible">
-    <div id="mkb-kb-bar">
+    <!-- Default mode: suggestion bar on top -->
+    <div class="mkb-kb-bar" v-show="kbMode === 'default'">
+      <SuggestionBar :suggestions="suggestions" @select="onSuggestionSelect" @edit="onSuggestionEdit" @expand="onExpandHistory" />
+      <button
+        type="button"
+        class="mkb-collapse-btn"
+        @mousedown.prevent="emit('update:visible', false)"
+        @touchstart.prevent="emit('update:visible', false)"
+      >▼</button>
+    </div>
+
+    <!-- Action mode: text input on top -->
+    <div class="mkb-kb-bar" v-show="kbMode === 'action'">
       <div class="mkb-text-input-glow" :class="{ 'mkb-glow-active': !textInputFocused }">
         <textarea
           ref="textInputRef"
@@ -23,8 +35,16 @@
       >▼</button>
     </div>
 
+    <!-- Swipeable panels container -->
+    <div
+      ref="swipeContainerRef"
+      class="mkb-swipe-container"
+      v-show="!textInputFocused"
+    >
+    <div class="mkb-swipe-track" :style="swipeTrackStyle">
+
     <!-- Main keyboard panel -->
-    <div id="mkb-main-panel" v-show="kbMode === 'default' && !textInputFocused">
+    <div id="mkb-main-panel">
       <!-- Row 1: ` 1-0 - = ⌫ -->
       <MkbRow :keys="row1" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
       <!-- Row 2: tab q-p [ ] \ -->
@@ -49,7 +69,7 @@
     </div>
 
     <!-- Action panel -->
-    <div id="mkb-action-panel" v-show="kbMode === 'action' && !textInputFocused">
+    <div id="mkb-action-panel">
       <MkbRow :keys="actionFirstRow" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
       <MkbRow
         v-for="(r, i) in actionFollowingRows"
@@ -71,6 +91,29 @@
         <MkbKey :k="actionEnter" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
       </div>
     </div>
+
+    </div><!-- /mkb-swipe-track -->
+    </div><!-- /mkb-swipe-container -->
+
+    <!-- Swipe indicator dots (outside overflow-hidden container) -->
+    <div
+      class="mkb-swipe-dots"
+      v-show="!textInputFocused"
+      @touchstart.passive="onSwipeStart"
+      @touchmove.passive="onSwipeMove"
+      @touchend="onSwipeEnd"
+    >
+      <span class="mkb-dot" :class="{ active: kbMode === 'default' }" @click="switchMode('default')"></span>
+      <span class="mkb-dot" :class="{ active: kbMode === 'action' }" @click="switchMode('action')"></span>
+    </div>
+
+    <HistoryPanel
+      v-if="showHistoryPanel"
+      :items="allSuggestions"
+      @select="onHistoryPanelSelect"
+      @delete="onHistoryPanelDelete"
+      @close="showHistoryPanel = false"
+    />
   </div>
 </template>
 
@@ -78,9 +121,12 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import MkbRow from './MkbRow.vue'
 import MkbKey from './MkbKey.vue'
+import SuggestionBar from './SuggestionBar.vue'
+import HistoryPanel from './HistoryPanel.vue'
 import type { KeyDef, ModState } from './mkbTypes'
 import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
+import { useHistory } from '../composables/useHistory'
 import { mapActionKeys } from '../utils/actionKeyDef'
 import { Keyboard, SquareTerminal } from 'lucide-vue-next'
 
@@ -95,12 +141,84 @@ const emit = defineEmits<{
 
 const { settings } = useSettings()
 const { t } = useI18n()
+const { suggestions, fetchSuggestions, fetchDebounced } = useHistory()
+
+const showHistoryPanel = ref(false)
+const allSuggestions = ref<import('../composables/useHistory').SuggestionItem[]>([])
 
 const barRef = ref<HTMLElement>()
+const swipeContainerRef = ref<HTMLElement>()
 const textInputRef = ref<HTMLTextAreaElement>()
 const textInput = ref('')
 const textInputFocused = ref(false)
 const kbMode = ref<'default' | 'action'>('action')
+const inputBuffer = ref('')
+
+// Swipe gesture state
+const swipeStartX = ref(0)
+const swipeStartY = ref(0)
+const swipeDeltaX = ref(0)
+const swiping = ref(false)
+const swipeTransition = ref(false)
+
+const swipeTrackStyle = computed(() => {
+  const baseOffset = kbMode.value === 'default' ? 0 : -50
+  const dragPct = swiping.value ? (swipeDeltaX.value / (barRef.value?.offsetWidth || 375)) * 50 : 0
+  return {
+    transform: `translateX(${baseOffset + dragPct}%)`,
+    transition: swipeTransition.value ? 'transform 0.25s ease-out' : 'none',
+  }
+})
+
+function onSwipeStart(e: TouchEvent) {
+  swipeTransition.value = false
+  swipeStartX.value = e.touches[0].clientX
+  swipeStartY.value = e.touches[0].clientY
+  swipeDeltaX.value = 0
+  swiping.value = false
+}
+
+function onSwipeMove(e: TouchEvent) {
+  const dx = e.touches[0].clientX - swipeStartX.value
+  const dy = e.touches[0].clientY - swipeStartY.value
+  if (!swiping.value) {
+    // Lock direction once finger moves enough — vertical locks out swipe entirely
+    if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) {
+      // Mark as locked-out by setting delta to NaN sentinel
+      swipeDeltaX.value = NaN
+      return
+    }
+    if (Math.abs(dx) > 15 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      swiping.value = true
+    } else {
+      return
+    }
+  }
+  swipeDeltaX.value = dx
+}
+
+function onSwipeEnd() {
+  if (!swiping.value) { swipeDeltaX.value = 0; swiping.value = false; return }
+  const threshold = (barRef.value?.offsetWidth || 375) * 0.15
+  swipeTransition.value = true
+  if (swipeDeltaX.value < -threshold && kbMode.value === 'default') {
+    kbMode.value = 'action'
+  } else if (swipeDeltaX.value > threshold && kbMode.value === 'action') {
+    kbMode.value = 'default'
+    fetchSuggestions()
+  }
+  swipeDeltaX.value = 0
+  swiping.value = false
+  nextTick(() => updateHeight())
+}
+
+function switchMode(mode: 'default' | 'action') {
+  if (kbMode.value === mode) return
+  swipeTransition.value = true
+  kbMode.value = mode
+  if (mode === 'default') fetchSuggestions()
+  nextTick(() => updateHeight())
+}
 
 const modState = reactive<ModState>({
   shift: false,
@@ -206,24 +324,33 @@ function sendTextInput() {
 function onKeyPress(ch: string) {
   let data = ch
   if (data.length !== 1) {
+    if (data === '\r' || data === '\n') inputBuffer.value = ''
+    else if (data === '\x1b[A' || data === '\x1b[B') inputBuffer.value = ''
     modState.ctrl = false
     modState.alt = false
     modState.shift = false
     props.getSendFn()?.(data)
+    if (kbMode.value === 'default') fetchDebounced(inputBuffer.value || undefined)
     return
   }
   const cc = data.charCodeAt(0)
   if (cc < 32 || cc === 127) {
+    if (cc === 13 || cc === 10) inputBuffer.value = ''
+    else if (cc === 127 || cc === 8) inputBuffer.value = inputBuffer.value.slice(0, -1)
     modState.ctrl = false
     modState.alt = false
     modState.shift = false
     props.getSendFn()?.(data)
+    if (kbMode.value === 'default') fetchDebounced(inputBuffer.value || undefined)
     return
   }
   if (modState.ctrl) {
     const code = data.toUpperCase().charCodeAt(0) - 64
     if (code >= 1 && code <= 26) data = String.fromCharCode(code)
     modState.ctrl = false
+    inputBuffer.value = ''
+  } else {
+    inputBuffer.value += data
   }
   if (modState.alt) {
     data = '\x1b' + data
@@ -232,6 +359,7 @@ function onKeyPress(ch: string) {
   if (modState.shift) modState.shift = false
 
   props.getSendFn()?.(data)
+  if (kbMode.value === 'default') fetchDebounced(inputBuffer.value || undefined)
 }
 
 function onSpecial(sp: string) {
@@ -239,13 +367,70 @@ function onSpecial(sp: string) {
   if (sp === 'ctrl') modState.ctrl = !modState.ctrl
   if (sp === 'alt') modState.alt = !modState.alt
   if (sp === 'kbswitch') {
+    swipeTransition.value = true
     kbMode.value = kbMode.value === 'action' ? 'default' : 'action'
+    if (kbMode.value === 'default') fetchSuggestions()
     nextTick(() => updateHeight())
   }
 }
 
+function onSuggestionSelect(command: string) {
+  const sendFn = props.getSendFn()
+  if (!sendFn) return
+  // Clear current input line before inserting suggestion
+  const currentLen = inputBuffer.value.length
+  if (currentLen > 0) {
+    sendFn('\x15') // Ctrl+U: kill line (works in bash/zsh)
+  }
+  inputBuffer.value = command
+  sendFn(command)
+}
+
+function onSuggestionEdit(command: string) {
+  const sendFn = props.getSendFn()
+  if (kbMode.value === 'action') {
+    inputBuffer.value = command
+    textInput.value = command
+    nextTick(() => textInputRef.value?.focus())
+  } else {
+    if (sendFn && inputBuffer.value.length > 0) {
+      sendFn('\x15')
+    }
+    inputBuffer.value = command
+    sendFn?.(command)
+  }
+}
+
+async function onExpandHistory() {
+  const { authFetch, apiUrl } = await import('../composables/apiBase')
+  try {
+    const res = await authFetch(apiUrl('/api/history?limit=100'))
+    if (res.ok) allSuggestions.value = await res.json()
+  } catch {}
+  showHistoryPanel.value = true
+}
+
+function onHistoryPanelSelect(command: string) {
+  showHistoryPanel.value = false
+  const sendFn = props.getSendFn()
+  if (sendFn && inputBuffer.value.length > 0) {
+    sendFn('\x15')
+  }
+  inputBuffer.value = command
+  sendFn?.(command)
+}
+
+function onHistoryPanelDelete(command: string) {
+  allSuggestions.value = allSuggestions.value.filter(s => s.command !== command)
+}
+
 function updateHeight() {
   if (!barRef.value) return
+  // Sync swipe container height to main panel so action panel doesn't exceed it
+  const mainPanel = barRef.value.querySelector('#mkb-main-panel') as HTMLElement | null
+  if (mainPanel && swipeContainerRef.value) {
+    swipeContainerRef.value.style.height = `${mainPanel.scrollHeight}px`
+  }
   const h = props.visible ? barRef.value.getBoundingClientRect().height : 0
   document.documentElement.style.setProperty('--mkb-height', `${h}px`)
 }
@@ -281,6 +466,8 @@ watch(() => props.visible, (v) => {
 })
 
 onMounted(() => {
+  fetchSuggestions()
+
   if (window.visualViewport) {
     naturalVH = window.visualViewport.height
     window.visualViewport.addEventListener('resize', onViewportChange)

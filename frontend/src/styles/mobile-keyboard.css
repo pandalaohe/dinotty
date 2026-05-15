@@ -6,8 +6,8 @@
   z-index: 500;
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
-  padding: 5px 4px env(safe-area-inset-bottom, 0px);
-  gap: 4px;
+  padding: 3px 4px env(safe-area-inset-bottom, 0px);
+  gap: 3px;
   user-select: none;
   -webkit-user-select: none;
   --mkb-key-bg: color-mix(in srgb, var(--bg-input), white 10%);
@@ -44,7 +44,7 @@
   flex-grow: unset !important;
   flex-basis: unset !important;
   width: 44px;
-  height: 44px;
+  height: 36px;
   font-size: 11px;
   color: var(--fg-muted);
 }
@@ -63,7 +63,7 @@
   background: var(--mkb-key-bg);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 6px;
-  height: 44px;
+  height: 36px;
   padding: 0 2px;
   display: flex;
   align-items: center;
@@ -172,7 +172,7 @@
 .mkb-arrow {
   flex: 1 1 0;
   font-size: 15px;
-  height: 44px;
+  height: 36px;
   min-width: 0;
   min-height: 38px;
   box-sizing: border-box;
@@ -190,8 +190,50 @@
 #mkb-action-panel {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   width: 100%;
+  flex-shrink: 0;
+}
+
+/* Swipe container */
+.mkb-swipe-container {
+  overflow: hidden;
+  width: 100%;
+}
+.mkb-swipe-track {
+  display: flex;
+  align-items: stretch;
+  width: 200%;
+}
+.mkb-swipe-track > #mkb-action-panel {
+  justify-content: space-between;
+  overflow: hidden;
+}
+.mkb-swipe-track > #mkb-main-panel,
+.mkb-swipe-track > #mkb-action-panel {
+  width: 50%;
+}
+
+/* Swipe indicator dots */
+.mkb-swipe-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 0 10px;
+  touch-action: pan-y;
+  cursor: grab;
+}
+.mkb-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  opacity: 0.3;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.mkb-dot.active {
+  opacity: 0.9;
+  transform: scale(1.3);
 }
 
 #mkb-action-panel .mkb-row-wrap {
@@ -200,7 +242,7 @@
 
 #mkb-action-panel .mkb-btn {
   font-size: 13px;
-  min-height: 44px;
+  min-height: 36px;
 }
 
 .mkb-action-arrow {
@@ -243,8 +285,8 @@
   width: 100%;
   max-width: 100%;
   flex: 1 1 auto;
-  height: 44px;
-  min-height: 44px;
+  height: 36px;
+  min-height: 36px;
   box-sizing: border-box;
   font-size: 20px !important;
 }
@@ -259,8 +301,8 @@
 .mkb-action-arrow-bot .mkb-btn {
   width: 100%;
   min-width: 0;
-  height: 44px;
-  min-height: 44px;
+  height: 36px;
+  min-height: 36px;
   flex: none;
   box-sizing: border-box;
   font-size: 20px !important;
@@ -287,7 +329,7 @@
   bottom: calc(var(--mkb-height, 0px) + 16px + env(safe-area-inset-bottom, 0px));
   z-index: 501;
   width: 44px;
-  height: 44px;
+  height: 36px;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -307,7 +349,7 @@
 }
 
 /* ── Keyboard top bar (collapse) ───────────────────────────── */
-#mkb-kb-bar {
+#mkb-kb-bar, .mkb-kb-bar {
   display: flex;
   align-items: center;
   gap: 6px;
