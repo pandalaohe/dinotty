@@ -1,4 +1,4 @@
-use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor, notification};
+use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor, notification, history};
 mod routes;
 
 use axum::{
@@ -21,6 +21,7 @@ use crate::settings::SettingsState;
 use crate::file_watcher::FileWatcherState;
 use crate::monitor::MonitorState;
 use crate::notification::NotificationBroadcast;
+use crate::history::HistoryState;
 
 #[derive(Embed)]
 #[folder = "frontend/dist/"]
@@ -33,6 +34,7 @@ pub struct AppState {
     pub file_watcher: Arc<FileWatcherState>,
     pub monitor: MonitorState,
     pub notifier: Arc<NotificationBroadcast>,
+    pub history: HistoryState,
     pub auth_token: Arc<String>,
     pub port: u16,
 }
@@ -67,6 +69,12 @@ impl axum::extract::FromRef<AppState> for MonitorState {
 impl axum::extract::FromRef<AppState> for Arc<NotificationBroadcast> {
     fn from_ref(state: &AppState) -> Self {
         state.notifier.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for HistoryState {
+    fn from_ref(state: &AppState) -> Self {
+        state.history.clone()
     }
 }
 
@@ -142,6 +150,7 @@ async fn main() {
     monitor_state.clone().start_collector();
 
     let notifier = Arc::new(NotificationBroadcast::new());
+    let history_state = HistoryState::new();
 
     let state = AppState {
         manager,
@@ -149,6 +158,7 @@ async fn main() {
         file_watcher: Arc::new(FileWatcherState::new()),
         monitor: monitor_state,
         notifier,
+        history: history_state,
         auth_token: auth_token.clone(),
         port,
     };
@@ -180,6 +190,8 @@ async fn main() {
         .route("/api/workspace/git-diff", get(workspace::workspace_git_diff))
         .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
         .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
+        .route("/ws/history", get(history::ws_history_handler))
+        .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/api/info", get(server_info))
         .route("/preview/:port", any(proxy::proxy_handler_root))
