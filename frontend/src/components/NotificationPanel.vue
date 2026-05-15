@@ -2,9 +2,7 @@
   <div class="notification-panel" :class="{ visible: panelVisible }">
     <div class="panel-header">
       <span class="panel-title">{{ t('notification.title') }}</span>
-      <button class="panel-pin" :class="{ active: panelPinned }" :title="t('notification.pin')" @click="togglePin">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 11V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v7"/><path d="M5 17h14"/><path d="M7 11l-2 6h14l-2-6"/></svg>
-      </button>
+      <button class="panel-close" @click="panelVisible = false">&times;</button>
     </div>
     <div class="panel-list">
       <NotificationCard
@@ -35,30 +33,34 @@ defineProps<{
 
 defineEmits<{ 'goto-pane': [paneId: string] }>()
 
-const { notifications, panelVisible, panelPinned, dismissOne, clearAll, togglePin } = useNotification()
+const { notifications, panelVisible, dismissOne, clearAll } = useNotification()
 const { t } = useI18n()
 </script>
 
 <style scoped>
 .notification-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 280px;
+  position: fixed;
+  top: 40px;
+  right: 8px;
+  width: min(320px, calc(100vw - 16px));
+  max-height: min(480px, calc(100vh - 60px));
   overflow: hidden;
-  flex-shrink: 0;
-  transform: translateX(100%);
-  transition: transform 0.25s ease;
-  border-left: 1px solid var(--border, #333);
+  transform: translateY(-10px);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
   background: var(--bg-surface, #1e1e2e);
   display: flex;
   flex-direction: column;
-  z-index: 10;
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .notification-panel.visible {
-  transform: translateX(0);
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 .panel-header {
   display: flex;
@@ -75,20 +77,18 @@ const { t } = useI18n()
   letter-spacing: 0.5px;
   color: var(--fg-muted, #888);
 }
-.panel-pin {
+.panel-close {
   background: none;
   border: none;
-  cursor: pointer;
-  opacity: 0.4;
-  transition: opacity 0.15s, transform 0.15s;
   color: var(--fg-muted, #888);
-  display: flex;
-  align-items: center;
-  padding: 4px;
-  border-radius: 4px;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
 }
-.panel-pin:hover { opacity: 0.7; }
-.panel-pin.active { opacity: 1; transform: rotate(-45deg); color: var(--accent, #4d7fff); }
+.panel-close:hover {
+  color: var(--fg, #ccc);
+}
 .panel-list {
   flex: 1;
   overflow-y: auto;

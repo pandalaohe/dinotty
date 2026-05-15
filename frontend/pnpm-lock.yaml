@@ -47,6 +47,9 @@ importers:
       vue-chartjs:
         specifier: ^5.3.3
         version: 5.3.3(chart.js@4.5.1)(vue@3.5.34(typescript@5.7.2))
+      vue-toastification:
+        specifier: ^2.0.0-rc.5
+        version: 2.0.0-rc.5(vue@3.5.34(typescript@5.7.2))
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^5.2.3
@@ -823,6 +826,11 @@ packages:
       '@vue/composition-api':
         optional: true
 
+  vue-toastification@2.0.0-rc.5:
+    resolution: {integrity: sha512-q73e5jy6gucEO/U+P48hqX+/qyXDozAGmaGgLFm5tXX4wJBcVsnGp4e/iJqlm9xzHETYOilUuwOUje2Qg1JdwA==}
+    peerDependencies:
+      vue: ^3.0.2
+
   vue-tsc@2.2.0:
     resolution: {integrity: sha512-gtmM1sUuJ8aSb0KoAFmK9yMxb8TxjewmxqTJ1aKphD5Cbu0rULFY6+UQT51zW7SpUcenfPUuflKyVwyx9Qdnxg==}
     hasBin: true
@@ -1443,6 +1451,10 @@ snapshots:
       vue: 3.5.34(typescript@5.7.2)
 
   vue-demi@0.14.10(vue@3.5.34(typescript@5.7.2)):
+    dependencies:
+      vue: 3.5.34(typescript@5.7.2)
+
+  vue-toastification@2.0.0-rc.5(vue@3.5.34(typescript@5.7.2)):
     dependencies:
       vue: 3.5.34(typescript@5.7.2)
 

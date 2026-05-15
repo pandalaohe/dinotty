@@ -13,7 +13,7 @@ pub async fn auth_middleware(
 ) -> Response {
     let path = request.uri().path();
 
-    if path == "/" || path.starts_with("/assets/") || path.starts_with("/preview/") {
+    if path == "/" || path == "/api/notify" || path.starts_with("/assets/") || path.starts_with("/preview/") {
         return next.run(request).await;
     }
 
