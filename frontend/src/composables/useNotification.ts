@@ -1,7 +1,9 @@
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, h, watch } from 'vue'
+import { useToast, TYPE } from 'vue-toastification'
 import { getApiBase, wsUrlWithToken } from './apiBase'
 import { isTauri } from './useTransport'
 import { settings } from './useSettings'
+import { useI18n } from './useI18n'
 import { playSound, type NotificationType, type SoundConfig } from './useNotificationSound'
 
 export interface NotificationItem {
@@ -15,12 +17,10 @@ export interface NotificationItem {
 
 const notifications = ref<NotificationItem[]>([])
 const panelVisible = ref(false)
-const panelPinned = ref(false)
 const unreadByPane = reactive<Record<string, NotificationType>>({})
 const unreadCount = computed(() => Object.keys(unreadByPane).length)
 
 let ws: WebSocket | null = null
-let autoHideTimer = 0
 let idCounter = 0
 let initialized = false
 let reconnectDelay = 3000
@@ -93,10 +93,36 @@ function handleEvent(event: { type: string; pane_id: string; title?: string | nu
     flashTitle(body)
   }
 
-  // Panel
+  // Toast notification (reuses panel channel config)
   if (cfg.channels?.panel) {
-    showPanel()
+    showToast(item)
   }
+}
+
+const toastTypeMap: Record<NotificationType, any> = {
+  info: TYPE.INFO,
+  success: TYPE.SUCCESS,
+  warning: TYPE.WARNING,
+  error: TYPE.ERROR,
+  urgent: TYPE.ERROR,
+}
+
+function showToast(item: NotificationItem) {
+  const toast = useToast()
+  const { t } = useI18n()
+  const children = [
+    item.title ? h('strong', { class: 'notif-toast-title' }, item.title) : null,
+    h('span', { class: 'notif-toast-body' }, item.body),
+    h('button', {
+      class: 'notif-toast-btn',
+      onClick: () => { panelVisible.value = true },
+    }, t('notification.viewAll')),
+  ].filter(Boolean)
+  const content = h('div', { class: 'notif-toast-content' }, children)
+  toast(content, {
+    type: toastTypeMap[item.type] ?? TYPE.INFO,
+    timeout: item.type === 'urgent' ? 8000 : 5000,
+  })
 }
 
 let flashInterval = 0
@@ -118,21 +144,6 @@ function flashTitle(msg: string) {
   window.addEventListener('focus', onFocus)
 }
 
-function showPanel() {
-  panelVisible.value = true
-  resetAutoHide()
-}
-
-function resetAutoHide() {
-  clearTimeout(autoHideTimer)
-  if (panelPinned.value) return
-  const ms = getNotifConfig()?.panel?.auto_hide_ms ?? 4000
-  if (ms > 0) {
-    autoHideTimer = window.setTimeout(() => {
-      if (!panelPinned.value) panelVisible.value = false
-    }, ms)
-  }
-}
 
 function connectWs() {
   if (ws) return
@@ -172,7 +183,6 @@ export function useNotification() {
   return {
     notifications,
     panelVisible,
-    panelPinned,
     unreadByPane,
     unreadCount,
     dismissOne(id: string) {
@@ -181,17 +191,13 @@ export function useNotification() {
     clearAll() {
       notifications.value = []
       for (const k of Object.keys(unreadByPane)) delete unreadByPane[k]
+      panelVisible.value = false
     },
     clearPaneUnread(paneId: string) {
       delete unreadByPane[paneId]
     },
     togglePanel() {
       panelVisible.value = !panelVisible.value
-      if (panelVisible.value) resetAutoHide()
-    },
-    togglePin() {
-      panelPinned.value = !panelPinned.value
-      if (!panelPinned.value) resetAutoHide()
     },
   }
 }
