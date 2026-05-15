@@ -5,7 +5,7 @@
         ref="textInputRef"
         class="mkb-text-input"
         :class="{ 'mkb-text-input-focused': textInputFocused }"
-        :placeholder="t('keyboard.textInput.placeholder')"
+        placeholder=""
         enterkeyhint="send"
         v-model="textInput"
         @focus="onTextInputFocus"
@@ -13,6 +13,7 @@
         @keydown.enter.exact.prevent="sendTextInput"
       />
       <button
+        v-show="!textInputFocused"
         type="button"
         class="mkb-collapse-btn"
         @mousedown.prevent="emit('update:visible', false)"
