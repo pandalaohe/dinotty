@@ -38,7 +38,7 @@ pub fn create_session(
             "bash" => {
                 cmd.env(
                     "PROMPT_COMMAND",
-                    r#"printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD/#$HOME/~}""#,
+                    r#"history -a; history -r; printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD/#$HOME/~}""#,
                 );
             }
             _ => {}
@@ -119,11 +119,23 @@ pub fn setup_zsh_title_hooks(home: &str) -> Option<std::path::PathBuf> {
     let zdotdir = std::env::temp_dir().join(format!("dinotty_zsh_{}", std::process::id()));
     std::fs::create_dir_all(&zdotdir).ok()?;
 
+    let zshenv = format!(
+        r#"[[ -f "{home}/.zshenv" ]] && source "{home}/.zshenv"
+"#,
+        home = home
+    );
+
     let zshrc = format!(
         r#"# dinotty title injection — loaded via ZDOTDIR
 ZDOTDIR=  # reset so child shells behave normally
 
 [[ -f "{home}/.zshrc" ]] && source "{home}/.zshrc"
+
+# Ensure history is saved — fallback if user config doesn't set these
+[[ $HISTSIZE -gt 0 ]] || HISTSIZE=10000
+[[ $SAVEHIST -gt 0 ]] || SAVEHIST=10000
+[[ -n "$HISTFILE" ]] || HISTFILE="$HOME/.zsh_history"
+setopt INC_APPEND_HISTORY SHARE_HISTORY
 
 function _dinotty_precmd {{
   printf "\033]0;%s@%s:%s\007" "${{USER}}" "${{HOST%%.*}}" "${{PWD/#$HOME/~}}"
@@ -149,6 +161,7 @@ fi
         home = home
     );
 
+    std::fs::write(zdotdir.join(".zshenv"), zshenv).ok()?;
     std::fs::write(zdotdir.join(".zshrc"), zshrc).ok()?;
     std::fs::write(zdotdir.join(".zprofile"), zprofile).ok()?;
     Some(zdotdir)
