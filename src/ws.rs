@@ -12,6 +12,7 @@ use std::{io::Write, sync::Arc};
 
 use tracing::{error, info};
 
+use crate::history::HistoryState;
 use crate::session::{SessionManager, SessionStatus, SyncMsg};
 use crate::notification::NotificationBroadcast;
 
@@ -48,9 +49,10 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(q): Query<WsQuery>,
     State(manager): State<Arc<SessionManager>>,
+    State(history): State<HistoryState>,
 ) -> impl IntoResponse {
     let pane_id = q.pane_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager))
+    ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager, history))
 }
 
 pub async fn sync_handler(
@@ -106,9 +108,10 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
     fwd.abort();
 }
 
-async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionManager>) {
+async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionManager>, history: HistoryState) {
     info!("WebSocket connected: pane={}", pane_id);
     let (mut ws_tx, mut ws_rx) = socket.split();
+    let mut input_buffer = String::new();
 
     // Check if session already exists (reconnection / multi-client case)
     let existing_session = manager.sessions.get(&pane_id).map(|r| Arc::clone(r.value()));
@@ -154,6 +157,22 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                 Message::Text(text) => {
                     match serde_json::from_str::<ClientMsg>(&text) {
                         Ok(ClientMsg::Input { data }) => {
+                            for ch in data.chars() {
+                                if ch == '\r' || ch == '\n' {
+                                    let cmd = input_buffer.trim().to_string();
+                                    if !cmd.is_empty() {
+                                        let h = history.clone();
+                                        tokio::spawn(async move { h.push_realtime(&cmd).await; });
+                                    }
+                                    input_buffer.clear();
+                                } else if ch == '\x7f' || ch == '\x08' {
+                                    input_buffer.pop();
+                                } else if ch == '\x03' || ch == '\x15' {
+                                    input_buffer.clear();
+                                } else if !ch.is_control() {
+                                    input_buffer.push(ch);
+                                }
+                            }
                             let mut w = session.writer.lock().unwrap();
                             let _ = w.write_all(data.as_bytes());
                         }
@@ -218,6 +237,22 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
             Message::Text(text) => {
                 match serde_json::from_str::<ClientMsg>(&text) {
                     Ok(ClientMsg::Input { data }) => {
+                        for ch in data.chars() {
+                            if ch == '\r' || ch == '\n' {
+                                let cmd = input_buffer.trim().to_string();
+                                if !cmd.is_empty() {
+                                    let h = history.clone();
+                                    tokio::spawn(async move { h.push_realtime(&cmd).await; });
+                                }
+                                input_buffer.clear();
+                            } else if ch == '\x7f' || ch == '\x08' {
+                                input_buffer.pop();
+                            } else if ch == '\x03' || ch == '\x15' {
+                                input_buffer.clear();
+                            } else if !ch.is_control() {
+                                input_buffer.push(ch);
+                            }
+                        }
                         let mut w = session.writer.lock().unwrap();
                         let _ = w.write_all(data.as_bytes());
                     }
