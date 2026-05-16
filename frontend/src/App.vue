@@ -132,7 +132,7 @@ const isLandscape = ref(window.innerWidth > window.innerHeight)
 
 const resolvedPosition = computed(() => {
   const pos = appSettings.panel_position ?? 'auto'
-  if (pos === 'auto') return isLandscape.value ? 'right' : 'bottom'
+  if (pos === 'auto') return isLandscape.value ? 'right' : 'top'
   return pos
 })
 

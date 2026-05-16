@@ -1,7 +1,7 @@
 <template>
   <div v-if="visible && embedded" class="file-workspace-embedded">
     <input ref="fileInputRef" type="file" multiple class="sr-only" @change="onFilePick" />
-    <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': layout.narrow.value, embedded }"
+    <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ embedded }"
       @dragover.prevent
       @dragenter.prevent="dragCounter++"
       @dragleave="dragCounter = Math.max(0, dragCounter - 1)"
@@ -9,11 +9,10 @@
     >
       <div v-if="dragging" class="file-workspace-drop-overlay">{{ t('filePreview.dropHint') }}</div>
       <div
-        v-if="(layout.narrow.value && layout.drawerOpen.value) || (!layout.narrow.value && !treeCollapsed)"
+        v-if="!treeCollapsed"
         class="file-workspace-tree-wrap"
-        :class="{ drawer: layout.narrow.value }"
+        :class="{ narrow: layout.narrow.value }"
         :style="layout.treeWrapStyle.value"
-        @click.self="layout.narrow.value && tryCloseDrawerFromChrome()"
       >
         <div class="file-workspace-tree tree-host" @click.stop @pointerdown.capture="bumpTreePointerTs" @contextmenu.prevent="onTreeBgContextMenu">
           <TreeRows
@@ -56,7 +55,6 @@
       >
         ▶
       </button>
-      <div v-if="layout.narrow.value && layout.drawerOpen.value" class="file-workspace-overlay" @click="tryCloseDrawerFromChrome"></div>
       <FilePreviewContent
         ref="previewContentRef1"
         :pane-id="paneId"
@@ -106,6 +104,24 @@
     ></div>
     <div class="file-workspace-panel">
       <div class="file-workspace-toolbar">
+        <button
+          v-if="!layout.narrow.value"
+          type="button"
+          class="file-workspace-drawer-btn"
+          :title="treeCollapsed ? t('previewPanel.expandTree') : t('previewPanel.collapseTree')"
+          @click="treeCollapsed = !treeCollapsed"
+        >
+          {{ treeCollapsed ? '▶' : '◀' }}
+        </button>
+        <button
+          v-if="layout.narrow.value"
+          type="button"
+          class="file-workspace-drawer-btn"
+          :title="treeCollapsed ? t('previewPanel.expandTree') : t('previewPanel.collapseTree')"
+          @click="treeCollapsed = !treeCollapsed"
+        >
+          {{ treeCollapsed ? '▶' : '◀' }}
+        </button>
         <button type="button" :disabled="!nav.canGoBack.value" @click="doGoBack" title="Back">←</button>
         <button type="button" :disabled="!nav.canGoForward.value" @click="doGoForward" title="Forward">→</button>
         <button type="button" @click="reloadAll" title="Refresh">↻</button>
@@ -120,28 +136,10 @@
         </div>
         <button type="button" @click="triggerUpload()" title="Upload">↑</button>
         <button type="button" :disabled="!canDownload" @click="downloadSelected" title="Download">↓</button>
-        <button
-          v-if="!layout.narrow.value"
-          type="button"
-          class="file-workspace-drawer-btn"
-          :title="treeCollapsed ? t('previewPanel.expandTree') : t('previewPanel.collapseTree')"
-          @click="treeCollapsed = !treeCollapsed"
-        >
-          {{ treeCollapsed ? '▶' : '◀' }}
-        </button>
-        <button
-          v-if="layout.narrow.value"
-          type="button"
-          class="file-workspace-drawer-btn"
-          :title="layout.drawerOpen.value ? t('previewPanel.collapseTree') : t('previewPanel.expandTree')"
-          @click="layout.toggleDrawer()"
-        >
-          {{ layout.drawerOpen.value ? '◀' : '▶' }}
-        </button>
         <button type="button" @click="close" title="Close">✕</button>
       </div>
       <input ref="fileInputRef" type="file" multiple class="sr-only" @change="onFilePick" />
-      <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': layout.narrow.value }"
+      <div ref="fileWorkspaceBodyRef" class="file-workspace-body"
         @dragover.prevent
         @dragenter.prevent="dragCounter++"
         @dragleave="dragCounter = Math.max(0, dragCounter - 1)"
@@ -149,11 +147,10 @@
       >
         <div v-if="dragging" class="file-workspace-drop-overlay">{{ t('filePreview.dropHint') }}</div>
         <div
-          v-if="(layout.narrow.value && layout.drawerOpen.value) || (!layout.narrow.value && !treeCollapsed)"
+          v-if="!treeCollapsed"
           class="file-workspace-tree-wrap"
-          :class="{ drawer: layout.narrow.value }"
+          :class="{ narrow: layout.narrow.value }"
           :style="layout.treeWrapStyle.value"
-          @click.self="layout.narrow.value && tryCloseDrawerFromChrome()"
         >
           <div class="file-workspace-tree tree-host" @click.stop @pointerdown.capture="bumpTreePointerTs" @contextmenu.prevent="onTreeBgContextMenu">
             <TreeRows
@@ -193,8 +190,7 @@
         >
           ▶
         </button>
-        <div v-if="layout.narrow.value && layout.drawerOpen.value" class="file-workspace-overlay" @click="tryCloseDrawerFromChrome"></div>
-        <FilePreviewContent
+          <FilePreviewContent
           ref="previewContentRef2"
           :pane-id="paneId"
           :file-path="selectedRel ?? undefined"
@@ -512,12 +508,6 @@ function doGoForward() {
 
 // --- Tree interactions ---
 function bumpTreePointerTs() { lastTreePointerTs.value = Date.now() }
-
-function tryCloseDrawerFromChrome() {
-  if (!layout.narrow.value || !layout.drawerOpen.value) return
-  if (Date.now() - lastTreePointerTs.value < 450) return
-  layout.drawerOpen.value = false
-}
 
 function shouldBlockNavigate(): boolean {
   if (!editorDirty.value || !meta.value || (meta.value.kind !== 'text' && meta.value.kind !== 'markdown')) return false
@@ -1055,7 +1045,6 @@ async function expandFirstLevelDirs() {
 }
 
 async function boot() {
-  layout.drawerOpen.value = false
   selectedRel.value = null
   selectedIsDir.value = false
   meta.value = null
@@ -1232,10 +1221,6 @@ defineExpose({
   overflow: hidden;
 }
 
-.file-workspace-body.embedded .file-workspace-tree-wrap.drawer {
-  top: 0;
-}
-
 .file-workspace {
   display: flex;
   flex: 1;
@@ -1408,25 +1393,11 @@ defineExpose({
   background: var(--tab-hover-bg, #333);
 }
 
-.file-workspace-tree-wrap.drawer {
-  position: absolute;
-  left: 0;
-  top: 72px;
-  bottom: 0;
-  z-index: 120;
-  width: min(86vw, 320px);
-  max-width: 100%;
-  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.4);
+.file-workspace-tree-wrap.narrow {
+  border-right: 1px solid var(--border, #333);
 }
 
-.file-workspace-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  z-index: 110;
-}
-
-.file-workspace-body.drawer-mode { position: relative; }
+.file-workspace-body { position: relative; }
 
 </style>
 

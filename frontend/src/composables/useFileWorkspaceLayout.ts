@@ -39,7 +39,7 @@ export function useFileWorkspaceLayout(): FileWorkspaceLayout {
   const direction = computed(() => (isLandscape.value ? 'horizontal' : 'vertical') as 'horizontal' | 'vertical')
 
   const treeWrapStyle = computed((): Record<string, string> => {
-    if (narrow.value) return {}
+    if (narrow.value) return { width: 'clamp(100px, 35vw, 160px)' }
     return { width: `${treePaneWidth.value}px` }
   })
 
@@ -94,11 +94,7 @@ export function useFileWorkspaceLayout(): FileWorkspaceLayout {
 
   function onResize() {
     isLandscape.value = window.innerWidth > window.innerHeight
-    const next = isNarrowViewport()
-    const was = narrow.value
-    narrow.value = next
-    if (!next) drawerOpen.value = false
-    else if (!was && next) drawerOpen.value = true
+    narrow.value = isNarrowViewport()
   }
 
   function toggleDrawer() {
