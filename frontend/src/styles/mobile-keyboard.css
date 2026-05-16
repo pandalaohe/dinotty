@@ -454,3 +454,31 @@
   .mkb-arrow-cluster { flex-basis: calc((100% - 3px) * 3 / 14); }
   .mkb-arrow-cluster > .mkb-btn { width: calc((100% - 6px) / 3); }
 }
+
+/* Toolbar */
+.mkb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+}
+
+.mkb-tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.mkb-tool-btn:active {
+  background: var(--border);
+}

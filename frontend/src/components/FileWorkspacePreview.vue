@@ -15,7 +15,7 @@
         :style="layout.treeWrapStyle.value"
         @click.self="layout.narrow.value && tryCloseDrawerFromChrome()"
       >
-        <div class="file-workspace-tree" @click.stop @pointerdown.capture="bumpTreePointerTs" @contextmenu.prevent="onTreeBgContextMenu">
+        <div class="file-workspace-tree tree-host" @click.stop @pointerdown.capture="bumpTreePointerTs" @contextmenu.prevent="onTreeBgContextMenu">
           <TreeRows
             :pane-id="paneId"
             :depth="0"
@@ -155,7 +155,7 @@
           :style="layout.treeWrapStyle.value"
           @click.self="layout.narrow.value && tryCloseDrawerFromChrome()"
         >
-          <div class="file-workspace-tree" @click.stop @pointerdown.capture="bumpTreePointerTs" @contextmenu.prevent="onTreeBgContextMenu">
+          <div class="file-workspace-tree tree-host" @click.stop @pointerdown.capture="bumpTreePointerTs" @contextmenu.prevent="onTreeBgContextMenu">
             <TreeRows
               :pane-id="paneId"
               :depth="0"
@@ -1423,120 +1423,11 @@ defineExpose({
 
 .file-workspace-body.drawer-mode { position: relative; }
 
-.file-workspace-tree {
-  --tree-base-hpad: 8px;
-  --tree-indent-step: 8px;
-  --tree-icon-size: 16px;
-  --tree-twistie-size: 16px;
-  --tree-row-height: 22px;
-  --tree-row-hover: var(--list-hover-bg, rgba(255, 255, 255, 0.06));
-  --tree-row-selected: var(--list-selection-bg, #04395e);
-  --tree-row-selected-fg: var(--list-selection-fg, #ffffff);
-  padding: 2px 0;
-  min-height: 100%;
-  font-size: 13px;
-  line-height: var(--tree-row-height);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-}
-
-.file-workspace-tree :deep(.tree-rows) { user-select: none; }
-
-.file-workspace-tree :deep(.tree-row) {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  box-sizing: border-box;
-  height: var(--tree-row-height);
-  min-height: var(--tree-row-height);
-  padding: 0 8px 0 0;
-  margin: 0;
-  border-radius: 2px;
-}
-
-.file-workspace-tree :deep(.tree-row:hover) { background: var(--tree-row-hover); }
-.file-workspace-tree :deep(.tree-row.drop-target) { background: var(--tree-row-selected); outline: 1px solid var(--focus-border, #007fd4); outline-offset: -1px; }
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel)) { background: var(--tree-row-selected); }
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel):hover) { background: var(--tree-row-selected); }
-
-.file-workspace-tree :deep(.tree-twistie) {
-  border: none;
-  background: none;
-  color: var(--fg-muted, #858585);
-  cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-  width: var(--tree-twistie-size);
-  min-width: var(--tree-twistie-size);
-  height: var(--tree-row-height);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  line-height: 1;
-  opacity: 0.9;
-}
-
-.file-workspace-tree :deep(.tree-twistie:focus-visible) { outline: 1px solid var(--accent, #007fd4); outline-offset: -1px; }
-
-.file-workspace-tree :deep(.tree-twistie-placeholder) {
-  flex-shrink: 0;
-  width: var(--tree-twistie-size);
-  min-width: var(--tree-twistie-size);
-  height: var(--tree-row-height);
-  display: inline-block;
-  pointer-events: none;
-}
-
-.file-workspace-tree :deep(.tree-folder-hit) { display: flex; flex: 1 1 0; align-items: center; min-width: 0; cursor: pointer; }
-
-.file-workspace-tree :deep(.tree-label) {
-  cursor: pointer;
-  color: var(--fg, #cccccc);
-  overflow: hidden;
-  white-space: nowrap;
-  min-width: 0;
-  flex: 1 1 0;
-  font-weight: 400;
-  display: flex;
-  align-items: center;
-}
-
-.file-workspace-tree :deep(.tree-label.sel) { color: var(--tree-row-selected-fg); }
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-twistie) { color: rgba(255, 255, 255, 0.82); }
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-kind-icon-folder) { color: var(--tree-folder-icon-selected, #e8dcc4); }
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-kind-icon-file) { color: var(--tree-file-icon-selected, #b4e1ff); }
-
-.file-workspace-tree :deep(.tree-kind-icon) { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: var(--tree-icon-size); height: var(--tree-icon-size); margin-right: 6px; }
-.file-workspace-tree :deep(.tree-kind-icon-folder) { width: var(--tree-icon-size); height: var(--tree-icon-size); color: var(--tree-folder-icon, #dcb67a); }
-.file-workspace-tree :deep(.tree-kind-icon-file) { color: var(--tree-file-icon, #90caf9); }
-.file-workspace-tree :deep(.tree-svg) { width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; flex-shrink: 0; }
-
-.file-workspace-tree :deep(.tree-inline-create) { align-items: center; }
-
-.file-workspace-tree :deep(.tree-label-text) { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.file-workspace-tree :deep(.tree-git-badge) { margin-left: auto; flex-shrink: 0; font-size: 11px; padding: 0 4px; opacity: 0.85; font-weight: 600; }
-.file-workspace-tree :deep(.tree-git-badge.git-M) { color: #ccb132; }
-.file-workspace-tree :deep(.tree-git-badge.git-U) { color: #73c991; }
-.file-workspace-tree :deep(.tree-git-badge.git-A) { color: #73c991; }
-.file-workspace-tree :deep(.tree-git-badge.git-D) { color: #d32f2f; }
-.file-workspace-tree :deep(.tree-label.git-modified) { color: #ccb132; }
-.file-workspace-tree :deep(.tree-label.git-untracked) { color: #73c991; }
-.file-workspace-tree :deep(.tree-label.git-deleted) { color: #d32f2f; text-decoration: line-through; }
-.file-workspace-tree :deep(.tree-inline-input) {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  padding: 2px 6px;
-  border: 1px solid var(--accent, #89b4fa);
-  border-radius: 2px;
-  background: var(--bg-surface, #141414);
-  color: var(--fg, #ccc);
-  outline: none;
-  font-family: var(--font-mono);
-}
 </style>
 
 <style>
+@import '../styles/tree-rows.css';
+
 .tree-ctx-backdrop {
   position: fixed;
   inset: 0;

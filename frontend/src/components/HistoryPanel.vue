@@ -89,7 +89,7 @@ onMounted(() => {
   width: 100%;
   max-width: 500px;
   max-height: 70vh;
-  background: var(--mkb-bg, #1e1e2e);
+  background: var(--bg-surface);
   border-radius: 12px 12px 0 0;
   display: flex;
   flex-direction: column;
@@ -101,23 +101,23 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 12px;
-  border-bottom: 1px solid var(--mkb-border, #333);
+  border-bottom: 1px solid var(--border);
 }
 
 .history-search {
   flex: 1;
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid var(--mkb-key-border, #444);
-  background: var(--mkb-key-bg, #2a2a3a);
-  color: var(--mkb-key-fg, #e0e0e0);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
   font-size: 14px;
   font-family: monospace;
   outline: none;
 }
 
 .history-search:focus {
-  border-color: var(--accent, #7c3aed);
+  border-color: var(--border-focus);
 }
 
 .history-close-btn {
@@ -128,13 +128,13 @@ onMounted(() => {
   height: 32px;
   border: none;
   background: transparent;
-  color: var(--mkb-key-fg, #e0e0e0);
+  color: var(--fg);
   cursor: pointer;
   border-radius: 6px;
 }
 
 .history-close-btn:active {
-  background: var(--mkb-key-active, #444);
+  background: var(--border);
 }
 
 .history-list {
@@ -160,7 +160,7 @@ onMounted(() => {
   padding: 10px 12px;
   border: none;
   background: transparent;
-  color: var(--mkb-key-fg, #e0e0e0);
+  color: var(--fg);
   font-size: 13px;
   font-family: monospace;
   text-align: left;
@@ -169,7 +169,7 @@ onMounted(() => {
 }
 
 .history-item-cmd:active {
-  background: var(--mkb-key-active, #444);
+  background: var(--border);
 }
 
 .history-item-text {
@@ -194,21 +194,21 @@ onMounted(() => {
   height: 28px;
   border: none;
   background: transparent;
-  color: #888;
+  color: var(--fg-muted);
   cursor: pointer;
   border-radius: 4px;
   flex-shrink: 0;
 }
 
 .history-item-delete:active {
-  color: #e44;
-  background: rgba(228, 68, 68, 0.1);
+  color: var(--color-red);
+  background: rgba(244, 71, 71, 0.1);
 }
 
 .history-empty {
   text-align: center;
   padding: 24px;
-  color: #666;
+  color: var(--fg-muted);
   font-size: 13px;
 }
 </style>

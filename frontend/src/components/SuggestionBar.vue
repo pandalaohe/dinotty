@@ -91,8 +91,8 @@ function cancelLongPress() {
   align-items: center;
   height: 36px;
   padding: 0 6px;
-  background: var(--mkb-bg, #1e1e2e);
-  border-bottom: 1px solid var(--mkb-border, #333);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
   overflow: hidden;
 }
 
@@ -119,9 +119,9 @@ function cancelLongPress() {
   flex-shrink: 0;
   padding: 4px 10px;
   border-radius: 14px;
-  border: 1px solid var(--mkb-key-border, #444);
-  background: var(--mkb-key-bg, #2a2a3a);
-  color: var(--mkb-key-fg, #e0e0e0);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg);
   font-size: 12px;
   font-family: monospace;
   cursor: pointer;
@@ -132,7 +132,7 @@ function cancelLongPress() {
 }
 
 .suggestion-chip:active {
-  background: var(--mkb-key-active, #444);
+  background: var(--border);
 }
 
 .suggestion-chip-freq {
@@ -142,7 +142,7 @@ function cancelLongPress() {
 
 .suggestion-empty {
   font-size: 12px;
-  color: #666;
+  color: var(--fg-muted);
   padding: 0 8px;
 }
 
@@ -155,7 +155,7 @@ function cancelLongPress() {
   height: 28px;
   border: none;
   background: transparent;
-  color: var(--mkb-key-fg, #e0e0e0);
+  color: var(--fg);
   opacity: 0.6;
   cursor: pointer;
   border-radius: 4px;
@@ -163,6 +163,6 @@ function cancelLongPress() {
 
 .suggestion-expand-btn:active {
   opacity: 1;
-  background: var(--mkb-key-active, #444);
+  background: var(--border);
 }
 </style>
