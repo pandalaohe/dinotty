@@ -35,6 +35,13 @@
       >▼</button>
     </div>
 
+    <!-- Toolbar (visible when textarea focused) -->
+    <div class="mkb-toolbar" v-show="textInputFocused">
+      <button class="mkb-tool-btn" @mousedown.prevent="showFilePicker = true">
+        <FolderOpen :size="18" />
+      </button>
+    </div>
+
     <!-- Swipeable panels container -->
     <div
       ref="swipeContainerRef"
@@ -114,6 +121,13 @@
       @delete="onHistoryPanelDelete"
       @close="showHistoryPanel = false"
     />
+
+    <FilePickerModal
+      :visible="showFilePicker"
+      :pane-id="props.paneId"
+      @update:visible="showFilePicker = $event"
+      @select="onFilePickerSelect"
+    />
   </div>
 </template>
 
@@ -123,15 +137,17 @@ import MkbRow from './MkbRow.vue'
 import MkbKey from './MkbKey.vue'
 import SuggestionBar from './SuggestionBar.vue'
 import HistoryPanel from './HistoryPanel.vue'
+import FilePickerModal from './FilePickerModal.vue'
 import type { KeyDef, ModState } from './mkbTypes'
 import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
 import { useHistory } from '../composables/useHistory'
 import { mapActionKeys } from '../utils/actionKeyDef'
-import { Keyboard, SquareTerminal } from 'lucide-vue-next'
+import { Keyboard, SquareTerminal, FolderOpen } from 'lucide-vue-next'
 
 const props = defineProps<{
   visible: boolean
+  paneId: string
   getSendFn: () => ((data: string) => void) | null
 }>()
 
@@ -145,7 +161,7 @@ const { suggestions, fetchSuggestions, fetchDebounced } = useHistory()
 
 const showHistoryPanel = ref(false)
 const allSuggestions = ref<import('../composables/useHistory').SuggestionItem[]>([])
-
+const showFilePicker = ref(false)
 const barRef = ref<HTMLElement>()
 const swipeContainerRef = ref<HTMLElement>()
 const textInputRef = ref<HTMLTextAreaElement>()
@@ -422,6 +438,22 @@ function onHistoryPanelSelect(command: string) {
 
 function onHistoryPanelDelete(command: string) {
   allSuggestions.value = allSuggestions.value.filter(s => s.command !== command)
+}
+
+function onFilePickerSelect(path: string) {
+  const el = textInputRef.value
+  if (el) {
+    const start = el.selectionStart ?? textInput.value.length
+    const end = el.selectionEnd ?? start
+    textInput.value = textInput.value.slice(0, start) + path + textInput.value.slice(end)
+    nextTick(() => {
+      el.selectionStart = el.selectionEnd = start + path.length
+      el.focus()
+    })
+  } else {
+    textInput.value += path
+  }
+  showFilePicker.value = false
 }
 
 function updateHeight() {

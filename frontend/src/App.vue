@@ -63,6 +63,7 @@
 
     <MobileKeyboard
       :visible="kbVisible"
+      :pane-id="activePaneId ?? ''"
       :get-send-fn="getSendFn"
       @update:visible="(v: boolean) => kbVisible = v"
     />
