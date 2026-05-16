@@ -12,6 +12,22 @@
 
 A **mobile-first** terminal server purpose-built for **coding agents**. Run Claude Code, opencode, Codex, or OpenClaw on your phone with the same experience as on your laptop — use fragmented time to stay productive while you're on the go.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/1.png" alt="Running Claude Code on mobile" width="250" />
+  <img src="docs/images/2.png" alt="Full keyboard layout with htop" width="250" />
+  <img src="docs/images/3.png" alt="Theme settings" width="250" />
+</p>
+<p align="center">
+  <img src="docs/images/4.png" alt="Custom shortcut keyboard" width="250" />
+  <img src="docs/images/5.png" alt="System monitor" width="250" />
+  <img src="docs/images/6.png" alt="Notification system" width="250" />
+</p>
+<p align="center">
+  <img src="docs/images/7.png" alt="Tablet landscape desktop-class layout" width="500" />
+</p>
+
 ## Why Dinotty?
 
 Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are powerful, but they are tethered to your desktop. What if you could:

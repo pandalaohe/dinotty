@@ -12,6 +12,22 @@
 
 为 **Coding Agent** 打造的**移动优先**终端服务器。在手机上运行 Claude Code、opencode、Codex 或 OpenClaw，获得与电脑上完全一致的体验——利用碎片时间，随时随地编程。
 
+## 截图
+
+<p align="center">
+  <img src="docs/images/1.png" alt="手机上运行 Claude Code" width="250" />
+  <img src="docs/images/2.png" alt="完整键盘布局与 htop" width="250" />
+  <img src="docs/images/3.png" alt="主题设置" width="250" />
+</p>
+<p align="center">
+  <img src="docs/images/4.png" alt="快捷键盘自定义" width="250" />
+  <img src="docs/images/5.png" alt="系统监控" width="250" />
+  <img src="docs/images/6.png" alt="通知系统" width="250" />
+</p>
+<p align="center">
+  <img src="docs/images/7.png" alt="平板横屏桌面级布局" width="500" />
+</p>
+
 ## 为什么选择 Dinotty？
 
 终端 Coding Agent（Claude Code、opencode、Codex、OpenClaw 等）功能强大，但它们被束缚在桌面上。如果你可以：
