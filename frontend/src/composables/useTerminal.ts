@@ -394,10 +394,7 @@ export class TerminalInstance {
     btn.className = 'reconnect-retry-btn'
     btn.textContent = 'Retry Now'
     btn.addEventListener('click', () => {
-      if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
-      this._reconnectAttempts = 0
-      this._hideOverlay()
-      this._connectWS()
+      window.location.reload()
     })
 
     this._overlay.appendChild(text)
