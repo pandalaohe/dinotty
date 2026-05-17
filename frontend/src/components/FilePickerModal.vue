@@ -53,7 +53,7 @@ const emit = defineEmits<{
 
 const cwdLabel = ref('')
 const childCache = ref<Record<string, DirEntry[]>>({})
-const expanded = ref<Set<string>>(new Set(['']))
+const expanded = ref<Set<string>>(new Set())
 const selectedPath = ref<string>('')
 const selectedName = ref<string>('')
 
@@ -71,7 +71,7 @@ async function fetchList(rel: string) {
 }
 
 function navigateTo(rel: string) {
-  expanded.value = new Set([''])
+  expanded.value = new Set()
   childCache.value = {}
   fetchList(rel)
 }
@@ -111,7 +111,7 @@ function close() {
 
 watch(() => props.visible, (v) => {
   if (v) {
-    expanded.value = new Set([''])
+    expanded.value = new Set()
     childCache.value = {}
     selectedPath.value = ''
     selectedName.value = ''
