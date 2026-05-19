@@ -137,7 +137,6 @@ pub struct VirtualScreen {
     cols: usize,
     rows: usize,
     saved_cursor: Option<CursorState>,
-    pending_switch: Option<bool>, // Some(true)=enter alt, Some(false)=leave alt
 }
 
 impl VirtualScreen {
@@ -151,35 +150,53 @@ impl VirtualScreen {
             cols,
             rows,
             saved_cursor: None,
-            pending_switch: None,
         }
     }
 
     pub fn feed(&mut self, data: &[u8]) {
+        let mut performer = ScreenPerformer {
+            screen: if self.using_alternate { &mut self.alternate } else { &mut self.primary },
+            scrollback: &mut self.scrollback,
+            saved_cursor: &mut self.saved_cursor,
+            pending_switch: None,
+            using_alternate: self.using_alternate,
+        };
+
         for &byte in data {
-            let mut performer = ScreenPerformer {
-                screen: if self.using_alternate { &mut self.alternate } else { &mut self.primary },
-                scrollback: &mut self.scrollback,
-                saved_cursor: &mut self.saved_cursor,
-                pending_switch: &mut self.pending_switch,
-            };
             self.parser.advance(&mut performer, byte);
 
             // Handle alternate screen switch after processing
-            if let Some(enter) = self.pending_switch.take() {
-                if enter && !self.using_alternate {
+            if let Some(enter) = performer.pending_switch.take() {
+                if enter && !performer.using_alternate {
                     self.saved_cursor = Some(self.primary.cursor.clone());
-                    self.using_alternate = true;
-                    // Clear alternate screen on enter
                     self.alternate = ScreenBuffer::new(self.cols, self.rows);
-                } else if !enter && self.using_alternate {
-                    self.using_alternate = false;
-                    if let Some(ref saved) = self.saved_cursor {
-                        self.primary.cursor = saved.clone();
+                    // Recreate performer pointing at alternate screen
+                    performer = ScreenPerformer {
+                        screen: &mut self.alternate,
+                        scrollback: &mut self.scrollback,
+                        saved_cursor: &mut self.saved_cursor,
+                        pending_switch: None,
+                        using_alternate: true,
+                    };
+                    continue;
+                } else if !enter && performer.using_alternate {
+                    let saved = self.saved_cursor.clone();
+                    // Recreate performer pointing at primary screen
+                    performer = ScreenPerformer {
+                        screen: &mut self.primary,
+                        scrollback: &mut self.scrollback,
+                        saved_cursor: &mut self.saved_cursor,
+                        pending_switch: None,
+                        using_alternate: false,
+                    };
+                    if let Some(ref s) = saved {
+                        performer.screen.cursor = s.clone();
                     }
+                    continue;
                 }
             }
         }
+        self.using_alternate = performer.using_alternate;
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) {
@@ -326,7 +343,8 @@ struct ScreenPerformer<'a> {
     screen: &'a mut ScreenBuffer,
     scrollback: &'a mut VecDeque<Vec<Cell>>,
     saved_cursor: &'a mut Option<CursorState>,
-    pending_switch: &'a mut Option<bool>,
+    pending_switch: Option<bool>,
+    using_alternate: bool,
 }
 
 impl<'a> Perform for ScreenPerformer<'a> {
@@ -426,7 +444,7 @@ impl<'a> Perform for ScreenPerformer<'a> {
                 'h' => {
                     for &p in &ps {
                         if p == 1049 || p == 47 || p == 1047 {
-                            *self.pending_switch = Some(true);
+                            self.pending_switch = Some(true);
                         }
                     }
                     return;
@@ -434,7 +452,7 @@ impl<'a> Perform for ScreenPerformer<'a> {
                 'l' => {
                     for &p in &ps {
                         if p == 1049 || p == 47 || p == 1047 {
-                            *self.pending_switch = Some(false);
+                            self.pending_switch = Some(false);
                         }
                     }
                     return;
