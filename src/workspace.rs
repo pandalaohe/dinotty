@@ -836,12 +836,13 @@ pub async fn workspace_git_status(
     Query(q): Query<PaneQuery>,
 ) -> impl IntoResponse {
     let root = try_res!(get_root(&manager, &q.pane_id));
-    let output = match std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(&root)
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
+    let output = match tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&root)
+            .output()
+    }).await {
+        Ok(Ok(o)) if o.status.success() => o,
         _ => {
             return Json(GitStatusResponse {
                 is_git_repo: false,
@@ -914,23 +915,35 @@ pub async fn workspace_git_diff(
         .into_response()
     };
     let root = try_res!(get_root(&manager, &q.pane_id));
-    let git_check = std::process::Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .current_dir(&root)
-        .output();
-    if git_check.is_err() || !git_check.unwrap().status.success() {
-        return no_git();
+    let git_check = tokio::task::spawn_blocking({
+        let root = root.clone();
+        move || {
+            std::process::Command::new("git")
+                .args(["rev-parse", "--git-dir"])
+                .current_dir(&root)
+                .output()
+        }
+    }).await;
+    match git_check {
+        Ok(Ok(o)) if o.status.success() => {},
+        _ => return no_git(),
     }
     let rel = q.path.trim().trim_start_matches('/');
     if rel.is_empty() {
         return no_git();
     }
-    let original = std::process::Command::new("git")
-        .args(["show", &format!("HEAD:{}", rel)])
-        .current_dir(&root)
-        .output();
+    let original = tokio::task::spawn_blocking({
+        let root = root.clone();
+        let rel = rel.to_string();
+        move || {
+            std::process::Command::new("git")
+                .args(["show", &format!("HEAD:{}", rel)])
+                .current_dir(&root)
+                .output()
+        }
+    }).await;
     let original_content = match original {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Ok(Ok(o)) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => return no_git(),
     };
     let target = try_res!(normalize_join(&root, rel));
@@ -1007,12 +1020,18 @@ pub async fn workspace_git_stage_lines(
     if rel.is_empty() {
         return json_err(StatusCode::BAD_REQUEST, "path required");
     }
-    let original_out = std::process::Command::new("git")
-        .args(["show", &format!("HEAD:{}", rel)])
-        .current_dir(&root)
-        .output();
+    let original_out = tokio::task::spawn_blocking({
+        let root = root.clone();
+        let rel = rel.to_string();
+        move || {
+            std::process::Command::new("git")
+                .args(["show", &format!("HEAD:{}", rel)])
+                .current_dir(&root)
+                .output()
+        }
+    }).await;
     let original = match original_out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Ok(Ok(o)) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => String::new(),
     };
     let target = try_res!(normalize_join(&root, rel));
@@ -1076,24 +1095,27 @@ pub async fn workspace_git_stage_lines(
     if patch.lines().count() <= 2 {
         return Json(serde_json::json!({ "ok": true })).into_response();
     }
-    let result = std::process::Command::new("git")
-        .args(["apply", "--cached", "--unidiff-zero"])
-        .stdin(std::process::Stdio::piped())
-        .current_dir(&root)
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(patch.as_bytes())?;
-            }
-            child.wait()
-        });
+    let result = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["apply", "--cached", "--unidiff-zero"])
+            .stdin(std::process::Stdio::piped())
+            .current_dir(&root)
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                if let Some(ref mut stdin) = child.stdin {
+                    stdin.write_all(patch.as_bytes())?;
+                }
+                child.wait()
+            })
+    }).await;
     match result {
-        Ok(s) if s.success() => Json(serde_json::json!({ "ok": true })).into_response(),
-        Ok(s) => json_err(
+        Ok(Ok(s)) if s.success() => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(Ok(s)) => json_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("git apply failed: {}", s),
         ),
+        Ok(Err(e)) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
