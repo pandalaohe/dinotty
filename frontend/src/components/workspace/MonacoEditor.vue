@@ -7,6 +7,8 @@ import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as monaco from 'monaco-editor'
 import { onThemeChange } from '../../composables/useSettings'
 import { registerLanguageCompletions } from './languageCompletions'
+import { initBuiltInDiagnostics } from './languageDiagnostics'
+import { useSyntaxCheck } from './useSyntaxCheck'
 import {
   applyGitDecorations,
   clearGitDecorations,
@@ -41,6 +43,8 @@ let ignoreChange = false
 let gitDecorationIds: string[] = []
 let gitDiffData: GitDiffData | null = null
 let activeDiffWidget: { dispose: () => void } | null = null
+let scheduleCheck: (paneId: string | undefined, filePath: string | undefined, language: string) => void = () => {}
+let disposeSyntaxCheck: () => void = () => {}
 
 function getTheme(): string {
   const root = document.documentElement
@@ -79,9 +83,15 @@ onMounted(() => {
     if (ignoreChange) return
     const val = editor!.getValue()
     emit('update:modelValue', val)
+    scheduleCheck(props.paneId, props.filePath, props.language)
   })
 
   registerLanguageCompletions(props.language)
+
+  initBuiltInDiagnostics()
+  const syntaxCheck = useSyntaxCheck(editor)
+  scheduleCheck = syntaxCheck.scheduleCheck
+  disposeSyntaxCheck = syntaxCheck.dispose
 
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
     emit('save')
@@ -163,6 +173,7 @@ function openDiffWidget(change: GitChange) {
 }
 
 onBeforeUnmount(() => {
+  disposeSyntaxCheck()
   closeDiffWidget()
   unsubTheme()
   editor?.dispose()
@@ -175,6 +186,7 @@ watch(() => props.modelValue, (val) => {
   ignoreChange = true
   editor.setValue(val)
   ignoreChange = false
+  scheduleCheck(props.paneId, props.filePath, props.language)
 })
 
 watch(() => props.language, (lang) => {
@@ -182,6 +194,7 @@ watch(() => props.language, (lang) => {
   registerLanguageCompletions(lang)
   const model = editor.getModel()
   if (model) monaco.editor.setModelLanguage(model, lang)
+  scheduleCheck(props.paneId, props.filePath, lang)
 })
 
 watch(() => props.readonly, (ro) => {
@@ -191,6 +204,7 @@ watch(() => props.readonly, (ro) => {
 watch(() => props.filePath, () => {
   closeDiffWidget()
   loadGitDecorations()
+  scheduleCheck(props.paneId, props.filePath, props.language)
 })
 
 defineExpose({ refreshGitDecorations: loadGitDecorations })
