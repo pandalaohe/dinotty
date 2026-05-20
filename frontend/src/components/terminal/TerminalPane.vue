@@ -2,11 +2,23 @@
   <div class="terminal-pane-container" @contextmenu.prevent>
     <div ref="wrapperRef" class="terminal-pane"></div>
   </div>
+  <ConfirmModal
+    :visible="confirmVisible"
+    :title="confirmTitle"
+    :message="confirmMessage"
+    :target="confirmTarget"
+    :confirm-text="confirmBtnText"
+    :cancel-text="t('terminal.cancel')"
+    @confirm="onConfirm"
+    @cancel="confirmVisible = false"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { TerminalInstance } from '../../composables/useTerminal'
+import { useI18n } from '../../composables/useI18n'
+import ConfirmModal from '../ui/ConfirmModal.vue'
 
 const props = defineProps<{
   paneId: string
@@ -19,10 +31,21 @@ const emit = defineEmits<{
   disconnect: []
   fileClick: [path: string]
   previewLink: [url: string]
+  linkActivate: []
 }>()
 
+const { t } = useI18n()
 const wrapperRef = ref<HTMLElement>()
 let terminal: TerminalInstance | null = null
+
+const confirmVisible = ref(false)
+const confirmTitle = ref('')
+const confirmMessage = ref('')
+const confirmTarget = ref('')
+const confirmBtnText = ref('')
+let confirmType: 'file' | 'link' = 'file'
+let pendingPath = ''
+let pendingUrl = ''
 
 function getTerminal() {
   return terminal
@@ -40,14 +63,41 @@ function sendData(data: string) {
   terminal?.sendData(data)
 }
 
+function onConfirm() {
+  confirmVisible.value = false
+  if (confirmType === 'file') {
+    emit('fileClick', pendingPath)
+  } else {
+    emit('previewLink', pendingUrl)
+  }
+}
+
 onMounted(() => {
   terminal = new TerminalInstance(props.paneId)
-  terminal.onTitleChange = (t) => emit('titleChange', t)
+  terminal.onTitleChange = (tv) => emit('titleChange', tv)
   terminal.onShellInfo = (s) => emit('shellInfo', s)
   terminal.onConnect = () => emit('connect')
   terminal.onDisconnect = () => emit('disconnect')
-  terminal.onFileClick = (path) => emit('fileClick', path)
-  terminal.onPreviewLink = (url) => emit('previewLink', url)
+  terminal.onFileClick = (path) => {
+    emit('linkActivate')
+    confirmType = 'file'
+    pendingPath = path
+    confirmTitle.value = t('terminal.confirmOpenFileTitle')
+    confirmMessage.value = t('terminal.confirmOpenFileMessage')
+    confirmTarget.value = path
+    confirmBtnText.value = t('terminal.confirmOpenFile')
+    confirmVisible.value = true
+  }
+  terminal.onPreviewLink = (url) => {
+    emit('linkActivate')
+    confirmType = 'link'
+    pendingUrl = url
+    confirmTitle.value = t('terminal.confirmVisitUrlTitle')
+    confirmMessage.value = t('terminal.confirmVisitUrlMessage')
+    confirmTarget.value = url
+    confirmBtnText.value = t('terminal.confirmVisitUrl')
+    confirmVisible.value = true
+  }
 
   requestAnimationFrame(() => {
     if (wrapperRef.value) {
