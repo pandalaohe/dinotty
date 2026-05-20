@@ -32,6 +32,7 @@
           @title-change="(t: string) => onTitleChange(tab.paneId, t)"
           @file-click="onFileClick"
           @preview-link="(url: string) => onPreviewLink(tab.paneId, url)"
+          @link-activate="onLinkActivate"
         />
         <PreviewPanel
           v-if="tab.paneId === activePaneId"
@@ -115,6 +116,7 @@ interface Tab {
 const tabs = ref<Tab[]>([])
 const activePaneId = ref<string | null>(null)
 const kbVisible = ref(false)
+let linkJustActivated = false
 const settingsOpen = ref(false)
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
 const previewPanelRef = ref<InstanceType<typeof PreviewPanel> | null>(null)
@@ -358,10 +360,16 @@ function getSendFn(): ((data: string) => void) | null {
   return (data: string) => termRefs[activePaneId.value!]?.sendData(data)
 }
 
+function onLinkActivate() {
+  linkJustActivated = true
+}
+
 function onTerminalTouch(e: TouchEvent) {
   if (!isTouchDevice()) return
   const target = e.target as HTMLElement
   if (target.closest('.terminal-pane-container')) {
+    // Don't show keyboard when tapping a link (file path or URL)
+    if (linkJustActivated) { linkJustActivated = false; return }
     const term = activePaneId.value ? termRefs[activePaneId.value]?.getTerminal() : null
     if (term && term.touchMoved) {
       term.touchMoved = false
