@@ -1,12 +1,11 @@
 use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor, notification, history};
-mod routes;
 
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{header, Response, StatusCode},
+    http::{header, HeaderValue, Response, StatusCode},
     middleware,
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     Json, Router,
     routing::{any, delete, get, post, put},
 };
@@ -22,6 +21,21 @@ use crate::file_watcher::FileWatcherState;
 use crate::monitor::MonitorState;
 use crate::notification::NotificationBroadcast;
 use crate::history::HistoryState;
+
+async fn index(State(state): State<AppState>) -> impl IntoResponse {
+    let content = StaticFiles::get("index.html")
+        .expect("index.html must exist in frontend/dist/");
+    let html = String::from_utf8_lossy(&content.data);
+    let tag = format!(
+        "<meta name=\"auth-token\" content=\"{}\">\n</head>",
+        &*state.auth_token
+    );
+    let html = html.replace("</head>", &tag);
+    (
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        Html(html),
+    )
+}
 
 #[derive(Embed)]
 #[folder = "frontend/dist/"]
@@ -190,6 +204,7 @@ async fn main() {
         .route("/api/workspace/git-diff", get(workspace::workspace_git_diff))
         .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
         .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
+        .route("/api/workspace/syntax-check", post(workspace::workspace_syntax_check))
         .route("/ws/history", get(history::ws_history_handler))
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/proxy", any(proxy::external_proxy_handler))
@@ -198,7 +213,7 @@ async fn main() {
         .route("/preview/:port/", any(proxy::proxy_handler_root))
         .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))
         .route("/assets/*path", get(static_handler))
-        .route("/", get(routes::index))
+        .route("/", get(index))
         .layer(middleware::from_fn(move |req, next| {
             let token = auth_token.clone();
             async move { auth::auth_middleware(req, next, &token).await }
