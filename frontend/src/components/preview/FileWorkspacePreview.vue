@@ -37,6 +37,7 @@
             @context-menu="onTreeContextMenu"
             @long-press="onTreeLongPress"
             @move-entry="onMoveEntry"
+            @swipe-action="onSwipeAction"
           />
         </div>
       </div>
@@ -93,6 +94,7 @@
         @update:html-show-preview="htmlShowPreview = $event"
         @update:editor-text="editorText = $event"
         @save-editor="saveEditor"
+        @selection-change="onEditorSelectionChange"
       />
     </div>
   </div>
@@ -172,6 +174,7 @@
               @context-menu="onTreeContextMenu"
               @long-press="onTreeLongPress"
               @move-entry="onMoveEntry"
+              @swipe-action="onSwipeAction"
             />
           </div>
         </div>
@@ -228,6 +231,7 @@
           @update:html-show-preview="htmlShowPreview = $event"
           @save-editor="saveEditor"
           @update:editor-text="editorText = $event"
+          @selection-change="onEditorSelectionChange"
         />
       </div>
     </div>
@@ -269,6 +273,23 @@
         <div class="tree-ctx-sep" />
         <button
           type="button"
+          class="tree-ctx-item"
+          role="menuitem"
+          @click="ctxCopyPath"
+        >
+          <span class="tree-ctx-label">{{ t('filePreview.ctxCopyPath') }}</span>
+        </button>
+        <button
+          type="button"
+          class="tree-ctx-item"
+          role="menuitem"
+          @click="ctxInsertToTerminal"
+        >
+          <span class="tree-ctx-label">{{ t('filePreview.ctxInsertToTerminal') }}</span>
+        </button>
+        <div class="tree-ctx-sep" />
+        <button
+          type="button"
           class="tree-ctx-item tree-ctx-item-danger"
           role="menuitem"
           :disabled="!contextMenu?.rel && !selectedRel"
@@ -290,6 +311,11 @@
     @confirm="onMoveConfirm"
     @cancel="onMoveCancel"
   />
+  <SelectionToolbar
+    :selected-text="editorSelection?.text ?? ''"
+    :anchor-rect="editorSelection?.rect ?? null"
+    @dismiss="onSelectionDismiss"
+  />
 </template>
 
 <script setup lang="ts">
@@ -304,8 +330,10 @@ import { useFileWatch } from '../../composables/useFileWatch'
 import { TreeRows } from '../workspace/TreeRows'
 import type { DirEntry } from '../workspace/TreeRows'
 import FilePreviewContent from '../workspace/FilePreviewContent.vue'
+import SelectionToolbar from '../workspace/SelectionToolbar.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
 import { useSelectedPath } from '../../composables/useFileNavigation'
+import { copyToClipboard } from '../../utils/clipboard'
 
 // Lazy-loaded heavy libraries (promise-cache avoids concurrent-init races)
 let _markedPromise: Promise<typeof import('marked')> | null = null
@@ -389,6 +417,7 @@ const addMenuOpen = ref(false)
 const moveConfirm = ref<{ src: string; destDir: string } | null>(null)
 const fileWorkspaceBodyRef = ref<HTMLElement | null>(null)
 const cacheBustTs = ref<number | null>(null)
+const editorSelection = ref<{ text: string; rect: DOMRect | null } | null>(null)
 
 // --- File Watch ---
 const fileWatch = useFileWatch({
@@ -858,6 +887,51 @@ async function ctxDelete() {
   }
 }
 
+function ctxCopyPath() {
+  if (!contextMenu.value) return
+  const { rel } = contextMenu.value
+  closeContextMenu()
+  const targetRel = rel || selectedRel.value
+  if (!targetRel) return
+  void copyToClipboard(absolutePath(targetRel))
+}
+
+function ctxInsertToTerminal() {
+  if (!contextMenu.value) return
+  const { rel } = contextMenu.value
+  closeContextMenu()
+  const targetRel = rel || selectedRel.value
+  if (!targetRel) return
+  window.dispatchEvent(new CustomEvent('terminal-insert-path', {
+    detail: { path: absolutePath(targetRel) },
+  }))
+}
+
+function onSwipeAction(payload: { rel: string; action: string }) {
+  const { rel, action } = payload
+  const absPath = absolutePath(rel)
+  if (action === 'copy-path') {
+    void copyToClipboard(absPath)
+  } else if (action === 'insert-to-terminal') {
+    window.dispatchEvent(new CustomEvent('terminal-insert-path', {
+      detail: { path: absPath },
+    }))
+  }
+}
+
+// --- Selection Toolbar ---
+function onEditorSelectionChange(payload: { text: string; rect: DOMRect | null }) {
+  if (payload.text && payload.rect) {
+    editorSelection.value = payload
+  } else {
+    editorSelection.value = null
+  }
+}
+
+function onSelectionDismiss() {
+  editorSelection.value = null
+}
+
 // --- Editor ---
 async function saveEditor() {
   if (!canSaveEditor.value || !selectedRel.value) return
@@ -1195,7 +1269,7 @@ watch(
   },
 )
 
-watch(selectedRel, () => { mdShowPreview.value = false; htmlShowPreview.value = false })
+watch(selectedRel, () => { mdShowPreview.value = false; htmlShowPreview.value = false; editorSelection.value = null })
 
 watch(
   () => [props.visible, props.paneId, props.embedded],
