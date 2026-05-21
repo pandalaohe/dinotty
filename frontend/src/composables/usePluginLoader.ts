@@ -248,14 +248,21 @@ export function usePluginLoader() {
     // 3. Load optional CSS (fetch via authFetch then inject as style element)
     if (manifest.styles) {
       const cssUrl = apiUrl(`/api/plugins/${id}/${manifest.styles.replace('./', '')}`)
+      console.log(`[plugin] loadPlugin(${id}): loading CSS from ${cssUrl}`)
       const cssRes = await authFetch(cssUrl)
+      console.log(`[plugin] loadPlugin(${id}): CSS response status=${cssRes.status}`)
       if (cssRes.ok) {
         const cssText = await cssRes.text()
+        console.log(`[plugin] loadPlugin(${id}): CSS loaded, ${cssText.length} bytes`)
         const styleEl = document.createElement('style')
         styleEl.textContent = cssText
         styleEl.dataset.pluginId = id
         document.head.appendChild(styleEl)
+      } else {
+        console.error(`[plugin] loadPlugin(${id}): CSS fetch failed, status=${cssRes.status}`)
       }
+    } else {
+      console.log(`[plugin] loadPlugin(${id}): no styles defined in manifest`)
     }
 
     // 4. Activate
