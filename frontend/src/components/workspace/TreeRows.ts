@@ -1,6 +1,7 @@
 import { defineComponent, ref, h, onMounted, nextTick } from 'vue'
 import type { VNode } from 'vue'
 import { isTauri } from '../../composables/useTransport'
+import { useI18n } from '../../composables/useI18n'
 
 export interface DirEntry {
   name: string
@@ -109,8 +110,11 @@ export const TreeRows = defineComponent({
     inlineRename: { type: Object, default: undefined },
     gitStatus: { type: Object, default: () => ({}) },
   },
-  emits: ['toggle', 'select-file', 'select-dir', 'inline-create-commit', 'inline-create-cancel', 'inline-rename-commit', 'inline-rename-cancel', 'context-menu', 'long-press', 'move-entry'],
+  emits: ['toggle', 'select-file', 'select-dir', 'inline-create-commit', 'inline-create-cancel', 'inline-rename-commit', 'inline-rename-cancel', 'context-menu', 'long-press', 'move-entry', 'swipe-action'],
   setup(p, { emit }) {
+    const { t } = useI18n()
+    const swipedRel = ref<string | null>(null)
+
     function getGitBadge(rel: string, isDir: boolean): { badge: string; cls: string } | null {
       const gs = p.gitStatus as Record<string, string>
       if (!gs || Object.keys(gs).length === 0) return null
@@ -169,6 +173,40 @@ export const TreeRows = defineComponent({
       }
     }
 
+    function makeSwipeHandlers(rel: string) {
+      let startX = 0
+      let startY = 0
+      let swiping = false
+      const SWIPE_THRESHOLD = 30
+      return {
+        onTouchstart: (e: TouchEvent) => {
+          if (e.touches.length !== 1) return
+          const touch = e.touches[0]
+          startX = touch.clientX
+          startY = touch.clientY
+          swiping = false
+        },
+        onTouchmove: (e: TouchEvent) => {
+          if (e.touches.length !== 1) return
+          const touch = e.touches[0]
+          const dx = startX - touch.clientX
+          const dy = Math.abs(touch.clientY - startY)
+          if (!swiping && swipedRel.value === rel) return
+          if (!swiping && dx > SWIPE_THRESHOLD && dy < dx * 0.5) {
+            swiping = true
+            swipedRel.value = rel
+            e.preventDefault()
+          }
+          if (swiping) e.preventDefault()
+        },
+        onTouchend: (e: TouchEvent) => {
+          if (swiping) e.preventDefault()
+          swiping = false
+        },
+        onTouchcancel: () => { swiping = false },
+      }
+    }
+
     return () => {
       const entries = (p.cache as Record<string, DirEntry[]>)[p.relPath]
       if (entries === undefined) return null
@@ -215,10 +253,11 @@ export const TreeRows = defineComponent({
             h(
               'div',
               {
-                class: 'tree-row dir',
+                class: ['tree-row', 'dir', { 'tree-row-swipe': !isRenaming && swipedRel.value === rel }],
                 key: rel,
                 style: rowPad,
                 draggable: true,
+                ...makeSwipeHandlers(rel),
                 onContextmenu: (ev: MouseEvent) => {
                   ev.preventDefault()
                   ev.stopPropagation()
@@ -280,6 +319,10 @@ export const TreeRows = defineComponent({
                     labelContent,
                   ],
                 ),
+                !isRenaming ? h('div', { class: 'tree-swipe-actions' }, [
+                  h('button', { type: 'button', class: 'tree-swipe-btn', onClick: (ev: Event) => { ev.stopPropagation(); emit('swipe-action', { rel, action: 'copy-path' }) } }, t('filePreview.copyPath')),
+                  h('button', { type: 'button', class: 'tree-swipe-btn tree-swipe-btn-accent', onClick: (ev: Event) => { ev.stopPropagation(); emit('swipe-action', { rel, action: 'insert-to-terminal' }) } }, t('filePreview.insertToTerminal')),
+                ]) : null,
               ],
             ),
           )
@@ -310,6 +353,8 @@ export const TreeRows = defineComponent({
                   emit('long-press', pos, rel, isDir),
                 onMoveEntry: (payload: { src: string; destDir: string }) =>
                   emit('move-entry', payload),
+                onSwipeAction: (payload: { rel: string; action: string }) =>
+                  emit('swipe-action', payload),
               }),
             )
           }
@@ -337,10 +382,11 @@ export const TreeRows = defineComponent({
             h(
               'div',
               {
-                class: 'tree-row file',
+                class: ['tree-row', 'file', { 'tree-row-swipe': !isRenaming && swipedRel.value === rel }],
                 key: rel,
                 style: rowPad,
                 draggable: true,
+                ...makeSwipeHandlers(rel),
                 onContextmenu: (ev: MouseEvent) => {
                   ev.preventDefault()
                   ev.stopPropagation()
@@ -366,6 +412,10 @@ export const TreeRows = defineComponent({
                 }),
                 treeFileIcon(),
                 fileLabelContent,
+                !isRenaming ? h('div', { class: 'tree-swipe-actions' }, [
+                  h('button', { type: 'button', class: 'tree-swipe-btn', onClick: (ev: Event) => { ev.stopPropagation(); emit('swipe-action', { rel, action: 'copy-path' }) } }, t('filePreview.copyPath')),
+                  h('button', { type: 'button', class: 'tree-swipe-btn tree-swipe-btn-accent', onClick: (ev: Event) => { ev.stopPropagation(); emit('swipe-action', { rel, action: 'insert-to-terminal' }) } }, t('filePreview.insertToTerminal')),
+                ]) : null,
               ],
             ),
           )

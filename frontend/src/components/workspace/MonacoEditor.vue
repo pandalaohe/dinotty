@@ -35,6 +35,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   save: []
+  'selection-change': [payload: { text: string; rect: DOMRect | null }]
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -45,6 +46,7 @@ let gitDiffData: GitDiffData | null = null
 let activeDiffWidget: { dispose: () => void } | null = null
 let scheduleCheck: (paneId: string | undefined, filePath: string | undefined, language: string) => void = () => {}
 let disposeSyntaxCheck: () => void = () => {}
+let lastSelectionText = ''
 
 function getTheme(): string {
   const root = document.documentElement
@@ -107,6 +109,30 @@ onMounted(() => {
       const line = e.target.position.lineNumber
       const change = findChangeAtLine(gitDiffData.changes, line)
       if (change) openDiffWidget(change)
+    }
+  })
+
+  editor.onDidChangeCursorSelection((e) => {
+    const sel = e.selection
+    if (!sel.isEmpty()) {
+      const model = editor!.getModel()
+      if (!model) { if (lastSelectionText) { lastSelectionText = ''; emit('selection-change', { text: '', rect: null }) } return }
+      const text = model.getValueInRange(sel)
+      if (!text) { if (lastSelectionText) { lastSelectionText = ''; emit('selection-change', { text: '', rect: null }) } return }
+      if (text === lastSelectionText) return
+      lastSelectionText = text
+      const endLine = sel.endLineNumber
+      const endCol = sel.endColumn
+      const visiblePos = editor!.getScrolledVisiblePosition({ lineNumber: endLine, column: endCol })
+      if (!visiblePos) { emit('selection-change', { text, rect: null }); return }
+      const editorDom = editor!.getDomNode()
+      if (!editorDom) { emit('selection-change', { text, rect: null }); return }
+      const editorRect = editorDom.getBoundingClientRect()
+      const x = editorRect.left + visiblePos.left
+      const y = editorRect.top + visiblePos.top + visiblePos.height
+      emit('selection-change', { text, rect: new DOMRect(x, y, 0, 0) })
+    } else {
+      if (lastSelectionText) { lastSelectionText = ''; emit('selection-change', { text: '', rect: null }) }
     }
   })
 

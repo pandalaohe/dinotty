@@ -360,6 +360,26 @@ function getSendFn(): ((data: string) => void) | null {
   return (data: string) => termRefs[activePaneId.value!]?.sendData(data)
 }
 
+function shellEscapePath(path: string): string {
+  return /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(path)
+    ? `'${path.replace(/'/g, "'\\''")}'`
+    : path
+}
+
+function onTerminalInsertPath(e: Event) {
+  const path = (e as CustomEvent<{ path: string }>).detail?.path
+  if (!path) return
+  const send = getSendFn()
+  if (send) send(shellEscapePath(path) + ' ')
+}
+
+function onTerminalInsertText(e: Event) {
+  const text = (e as CustomEvent<{ text: string }>).detail?.text
+  if (!text) return
+  const send = getSendFn()
+  if (send) send(text)
+}
+
 function onLinkActivate() {
   linkJustActivated = true
 }
@@ -539,6 +559,8 @@ function onOrientationChange() {
 onMounted(() => {
   document.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('resize', onOrientationChange)
+  window.addEventListener('terminal-insert-path', onTerminalInsertPath)
+  window.addEventListener('terminal-insert-text', onTerminalInsertText)
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', onViewportResize)
   }
@@ -549,6 +571,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('resize', onOrientationChange)
+  window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
+  window.removeEventListener('terminal-insert-text', onTerminalInsertText)
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', onViewportResize)
   }
