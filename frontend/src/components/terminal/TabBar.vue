@@ -28,8 +28,8 @@
           v-for="p in plugins"
           :key="p.id"
           class="plugin-dropdown-item"
-          @click="onOpenPlugin(p.id); pluginMenuOpen = false"
-          @touchend.prevent="onOpenPlugin(p.id); pluginMenuOpen = false"
+          @click="$emit('open-plugin', p.id); pluginMenuOpen = false"
+          @touchend.prevent="$emit('open-plugin', p.id); pluginMenuOpen = false"
         >{{ p.name }}</div>
       </div>
     </div>
@@ -58,11 +58,9 @@ withDefaults(defineProps<{
   activePaneId: string | null
   indicators?: Record<string, string>
   plugins?: PluginInfo[]
-  onOpenPlugin?: (pluginId: string) => void
 }>(), {
   indicators: () => ({}),
   plugins: () => ([]),
-  onOpenPlugin: () => {},
 })
 
 const emit = defineEmits<{
@@ -70,6 +68,7 @@ const emit = defineEmits<{
   close: [paneId: string]
   new: []
   reorder: [fromId: string, toId: string]
+  'open-plugin': [pluginId: string]
 }>()
 
 const pluginMenuOpen = ref(false)
