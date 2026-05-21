@@ -5,6 +5,7 @@
   "description": "快速切换 Claude Code API Provider",
   "icon": "repeat",
   "entry": "./main.js",
+  "styles": "./styles.css",
   "bin": {
     "mode": "cli",
     "entry": "./bin/cc-switch"
