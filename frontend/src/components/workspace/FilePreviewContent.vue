@@ -99,6 +99,7 @@
           :pane-id="paneId"
           @update:model-value="$emit('update:editorText', $event)"
           @save="$emit('saveEditor')"
+          @selection-change="(p) => $emit('selection-change', p)"
         />
         </div>
       </template>
@@ -138,6 +139,7 @@
           :pane-id="paneId"
           @update:model-value="$emit('update:editorText', $event)"
           @save="$emit('saveEditor')"
+          @selection-change="(p) => $emit('selection-change', p)"
         />
         </div>
       </template>
@@ -203,6 +205,7 @@ defineEmits<{
   'update:htmlShowPreview': [value: boolean]
   saveEditor: []
   'update:editorText': [value: string]
+  'selection-change': [payload: { text: string; rect: DOMRect | null }]
 }>()
 </script>
 

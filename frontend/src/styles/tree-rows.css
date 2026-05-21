@@ -109,3 +109,32 @@
   outline: none;
   font-family: var(--font-mono);
 }
+
+/* Swipe-to-reveal */
+.tree-host .tree-row { position: relative; overflow: hidden; }
+.tree-host .tree-swipe-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: stretch;
+  opacity: 0;
+  pointer-events: none;
+  background: var(--bg, #1a1a1a);
+}
+.tree-host .tree-row-swipe .tree-swipe-actions { opacity: 1; pointer-events: auto; }
+.tree-host .tree-swipe-btn {
+  border: none;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 0 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  background: var(--accent, #89b4fa);
+}
+.tree-host .tree-swipe-btn-accent { background: #4caf50; }
+.tree-host .tree-swipe-btn:active { opacity: 0.85; }
