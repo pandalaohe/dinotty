@@ -111,7 +111,7 @@ import { isWebPreviewInput } from './utils/previewRouting'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useNotification } from './composables/useNotification'
-import { usePluginLoader } from './composables/usePluginLoader'
+import { usePluginLoader, handlePluginChanged } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import { Settings, Bell, PanelRight, Plus, X, Star, AppWindow } from 'lucide-vue-next'
 
@@ -704,6 +704,9 @@ async function connectSyncWS() {
         activePaneId.value = msg.pane_id
         suppressSync = false
       }
+    } else if (msg.type === 'plugin_changed') {
+      console.log('[plugin_changed] plugin_id:', msg.plugin_id, 'change:', msg.change)
+      handlePluginChanged(msg.plugin_id, msg.change)
     }
   }
 
