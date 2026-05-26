@@ -24,6 +24,11 @@ export interface SettingsData {
   port?: number | null
   monitor: MonitorConfig
   notification: NotificationConfig
+  open_api: OpenApiConfig
+}
+
+export interface OpenApiConfig {
+  enabled: boolean
 }
 
 export interface NotificationConfig {
@@ -158,6 +163,9 @@ export const settings = reactive<SettingsData>({
       urgent: { source: 'builtin', value: 'alarm', volume: 1.0 },
     },
     hooks: [],
+  },
+  open_api: {
+    enabled: false,
   },
 })
 
