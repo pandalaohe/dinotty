@@ -393,6 +393,7 @@ export function usePluginLoader() {
     return Array.from(loadedPlugins.values()).map(p => ({
       id: p.id,
       name: p.manifest.name,
+      description: p.manifest.description,
       icon: p.manifest.icon,
       state: p.state,
     }))
