@@ -40,6 +40,14 @@ pub struct Settings {
     pub monitor: MonitorConfig,
     #[serde(default)]
     pub notification: NotificationConfig,
+    #[serde(default)]
+    pub open_api: OpenApiConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct OpenApiConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -360,6 +368,7 @@ impl Default for Settings {
             panel_position: PanelPosition::default(),
             monitor: MonitorConfig::default(),
             notification: NotificationConfig::default(),
+            open_api: OpenApiConfig::default(),
         }
     }
 }

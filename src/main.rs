@@ -201,6 +201,7 @@ async fn main() {
         .route("/ws/monitor", get(monitor::ws_monitor_handler))
         .route("/ws/notify", get(ws::notification_ws_handler))
         .route("/api/notify", post(notification::post_notify))
+        .route("/api/input", post(ws::post_input))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))
