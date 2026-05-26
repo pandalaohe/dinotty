@@ -90,6 +90,16 @@ export class TerminalInstance {
       lineHeight: settings.text.line_height,
       letterSpacing: settings.text.letter_spacing,
       allowProposedApi: true,
+      linkHandler: {
+        activate: (_event, text) => {
+          const uri = text.startsWith('http') ? text : `http://${text}`
+          if (this.onPreviewLink) {
+            this.onPreviewLink(uri)
+          } else {
+            window.open(uri, '_blank')
+          }
+        },
+      },
       theme: {
         background: v('--bg') || '#1A1A1A',
         foreground: v('--fg') || '#C7C7C7',
