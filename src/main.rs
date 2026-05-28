@@ -198,6 +198,11 @@ struct UpdateTokenRequest {
     token: String,
 }
 
+async fn check_auth(State(state): State<AppState>) -> impl IntoResponse {
+    let _ = state;
+    StatusCode::OK
+}
+
 async fn update_token(
     State(state): State<AppState>,
     Json(body): Json<UpdateTokenRequest>,
@@ -279,6 +284,7 @@ async fn main() {
         .route("/ws/notify", get(ws::notification_ws_handler))
         .route("/api/notify", post(notification::post_notify))
         .route("/api/input", post(ws::post_input))
+        .route("/api/auth", post(check_auth))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))

@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { getThemeByName, applyThemeToDOM, getXtermTheme } from '../themes'
-import { getApiBase, apiUrl, authFetch } from './apiBase'
+import { getApiBase, apiUrl, authFetch, hasAuthToken } from './apiBase'
 export interface SettingsData {
   theme: {
     preset: string
@@ -183,6 +183,7 @@ export function useSettings() {
 }
 
 async function loadSettings() {
+  if (!hasAuthToken()) return
   try {
     await getApiBase()
     const res = await authFetch(apiUrl('/api/settings'))

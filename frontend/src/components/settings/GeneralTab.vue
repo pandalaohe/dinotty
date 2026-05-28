@@ -125,7 +125,7 @@ import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { themes } from '../../themes'
 import { copyToClipboard } from '../../utils/clipboard'
-import { apiUrl, authFetch, getAuthToken, clearAuthToken } from '../../composables/apiBase'
+import { apiUrl, authFetch, getAuthToken, setAuthToken } from '../../composables/apiBase'
 
 const { settings, applyCurrentTheme } = useSettings()
 const { t, themeLabel } = useI18n()
@@ -212,7 +212,7 @@ async function applyNewToken(token: string) {
       body: JSON.stringify({ token }),
     })
     if (res.ok) {
-      clearAuthToken()
+      setAuthToken(token)
       window.location.reload()
     } else {
       tokenError.value = t('settings.token.saveFailed')
