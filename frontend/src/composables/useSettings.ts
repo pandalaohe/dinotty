@@ -25,6 +25,8 @@ export interface SettingsData {
   monitor: MonitorConfig
   notification: NotificationConfig
   open_api: OpenApiConfig
+  auth_token?: string
+  ip_whitelist: string[]
 }
 
 export interface OpenApiConfig {
@@ -167,6 +169,7 @@ export const settings = reactive<SettingsData>({
   open_api: {
     enabled: false,
   },
+  ip_whitelist: ['127.0.0.1', '::1'],
 })
 
 let loaded = false
