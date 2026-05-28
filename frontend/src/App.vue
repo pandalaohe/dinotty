@@ -417,6 +417,9 @@ function getSendFn(): ((data: string) => void) | null {
 
 function onLoginSuccess() {
   authenticated.value = true
+  void loadAll()
+  void connectSyncWS()
+  initMonitorHistory()
 }
 
 function shellEscapePath(path: string): string {
@@ -752,9 +755,11 @@ onMounted(() => {
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', onViewportResize)
   }
-  void connectSyncWS()
-  initMonitorHistory()
-  void loadAll()
+  if (authenticated.value) {
+    void connectSyncWS()
+    initMonitorHistory()
+    void loadAll()
+  }
 })
 
 onBeforeUnmount(() => {
