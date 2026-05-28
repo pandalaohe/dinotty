@@ -38,7 +38,8 @@ export function hasAuthToken(): boolean {
 export async function validateToken(token: string): Promise<boolean> {
   try {
     await getApiBase()
-    const res = await fetch(apiUrl('/api/settings'), {
+    const res = await fetch(apiUrl('/api/auth'), {
+      method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     })
     return res.ok

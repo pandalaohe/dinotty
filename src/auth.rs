@@ -42,12 +42,14 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // IP whitelist check
-    {
+    // IP whitelist check — drop the lock before calling next.run() to avoid
+    // deadlocking when a write lock is requested later in the same task chain.
+    let whitelisted = {
         let s = settings.read().await;
-        if is_ip_whitelisted(client_ip, &s.ip_whitelist) {
-            return next.run(request).await;
-        }
+        is_ip_whitelisted(client_ip, &s.ip_whitelist)
+    };
+    if whitelisted {
+        return next.run(request).await;
     }
 
     // Brute-force lockout check
@@ -74,10 +76,14 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // Record failure
-    let mut rec = map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
-    rec.count += 1;
-    rec.last_fail = Instant::now();
+    // Only count failures from the login endpoint — other endpoints return 401
+    // without incrementing the counter, so normal pre-auth API calls (settings,
+    // plugins, etc.) don't accidentally trigger the lockout.
+    if path == "/api/auth" {
+        let mut rec = map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
+        rec.count += 1;
+        rec.last_fail = Instant::now();
+    }
 
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
