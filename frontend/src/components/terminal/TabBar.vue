@@ -21,7 +21,7 @@
       </div>
     </div>
     <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')" @touchend.prevent="$emit('new')"><Terminal :size="16" /></button>
-    <div v-if="plugins.length > 0" class="tab-bar-plugin-wrap">
+    <div v-if="plugins.length > 0" class="tab-bar-plugin-wrap" ref="pluginWrapRef">
       <button type="button" class="tab-bar-icon-btn" title="Plugins" @click="pluginMenuOpen = !pluginMenuOpen" @touchend.prevent="pluginMenuOpen = !pluginMenuOpen"><Blocks :size="16" /></button>
       <div v-if="pluginMenuOpen" class="plugin-dropdown" @mouseleave="pluginMenuOpen = false">
         <div
@@ -41,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, onBeforeUnmount } from 'vue'
 import { X, Terminal, Blocks } from 'lucide-vue-next'
 
 export interface TabInfo {
@@ -76,6 +76,26 @@ const emit = defineEmits<{
 }>()
 
 const pluginMenuOpen = ref(false)
+const pluginWrapRef = ref<HTMLElement>()
+
+function onDocTouchStart(e: TouchEvent) {
+  if (pluginWrapRef.value && !pluginWrapRef.value.contains(e.target as Node)) {
+    pluginMenuOpen.value = false
+  }
+}
+
+watch(pluginMenuOpen, (open) => {
+  if (open) {
+    document.addEventListener('touchstart', onDocTouchStart, { passive: true })
+  } else {
+    document.removeEventListener('touchstart', onDocTouchStart)
+  }
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('touchstart', onDocTouchStart)
+})
+
 const dragFromId = ref<string | null>(null)
 const dragOverId = ref<string | null>(null)
 
