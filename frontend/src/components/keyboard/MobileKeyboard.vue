@@ -235,7 +235,7 @@ function onSwipeEnd() {
   }
   swipeDeltaX.value = 0
   swiping.value = false
-  nextTick(() => updateHeight())
+  nextTick(applyHeight)
 }
 
 function switchMode(mode: 'default' | 'action') {
@@ -243,7 +243,7 @@ function switchMode(mode: 'default' | 'action') {
   swipeTransition.value = true
   kbMode.value = mode
   if (mode === 'default') fetchSuggestions()
-  nextTick(() => updateHeight())
+  nextTick(applyHeight)
 }
 
 const modState = reactive<ModState>({
@@ -396,7 +396,7 @@ function onSpecial(sp: string) {
     swipeTransition.value = true
     kbMode.value = kbMode.value === 'action' ? 'default' : 'action'
     if (kbMode.value === 'default') fetchSuggestions()
-    nextTick(() => updateHeight())
+    nextTick(applyHeight)
   }
 }
 
@@ -466,9 +466,9 @@ function onFilePickerSelect(path: string) {
   showFilePicker.value = false
 }
 
-function updateHeight() {
+let updateHeightRaf = 0
+function applyHeight() {
   if (!barRef.value) return
-  // Sync swipe container height to main panel so action panel doesn't exceed it
   const mainPanel = barRef.value.querySelector('#mkb-main-panel') as HTMLElement | null
   const actionPanel = barRef.value.querySelector('#mkb-action-panel') as HTMLElement | null
   if (swipeContainerRef.value) {
@@ -478,6 +478,14 @@ function updateHeight() {
   }
   const h = props.visible ? barRef.value.getBoundingClientRect().height : 0
   document.documentElement.style.setProperty('--mkb-height', `${h}px`)
+}
+function updateHeight() {
+  // Debounce via rAF: visualViewport fires both 'resize' and 'scroll' in rapid
+  // succession on Windows when the keyboard opens/closes, which would otherwise
+  // trigger multiple --mkb-height changes → multiple terminal resizes → chaotic
+  // redraws in TUI apps like Codex.
+  cancelAnimationFrame(updateHeightRaf)
+  updateHeightRaf = requestAnimationFrame(applyHeight)
 }
 
 // Viewport listener for system keyboard detection
@@ -506,8 +514,8 @@ function onViewportChange() {
   updateHeight()
 }
 
-watch(() => props.visible, (v) => {
-  nextTick(() => updateHeight())
+watch(() => props.visible, () => {
+  nextTick(applyHeight)
 })
 
 watch(globalSelectedPath, () => {
