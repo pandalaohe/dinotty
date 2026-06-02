@@ -444,8 +444,14 @@ export class TerminalInstance {
     const rows = this.xterm.rows
     if (cols < 2 || rows < 2) return
     if (!force && cols === this._lastCols && rows === this._lastRows) return
+    const heightChanged = rows !== this._lastRows
     this._lastCols = cols
     this._lastRows = rows
+    // When container height decreases (e.g. mobile keyboard opens), scroll to
+    // bottom so the current input line stays visible.
+    if (heightChanged && !this._isMouseModeEnabled()) {
+      this.xterm.scrollToBottom()
+    }
     const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
     if (this._transport) {
       this._transport.send(resizeMsg)
@@ -544,22 +550,35 @@ export class TerminalInstance {
       const viewport = wrapper.querySelector('.xterm-viewport') as HTMLElement
       if (!screen || !viewport) return
 
+      // Prevent native browser scroll on the viewport from conflicting with our
+      // custom touch-to-wheel translation.  Without this, both the browser's
+      // overflow-y:scroll and our JS handler fire simultaneously → chaotic scroll.
+      wrapper.style.touchAction = 'none'
+
       let startX = 0
       let startY = 0
       let lastY = 0
       let lastTime = 0
       let accumulatedDeltaY = 0
+      let velocity = 0
+      let momentumId = 0
       let mode: 'undecided' | 'scroll' | 'select' = 'undecided'
       const THRESHOLD = 10
-      const SCROLL_THRESHOLD = 20 // Minimum delta to trigger scroll event
+      const SCROLL_THRESHOLD = 12 // Lower threshold for more responsive feel
+
+      const clearMomentum = () => {
+        if (momentumId) { cancelAnimationFrame(momentumId); momentumId = 0 }
+      }
 
       const onTouchStart = (e: TouchEvent) => {
+        clearMomentum()
         this.touchMoved = false
         startX = e.touches[0].clientX
         startY = e.touches[0].clientY
         lastY = startY
         lastTime = Date.now()
         accumulatedDeltaY = 0
+        velocity = 0
         mode = 'undecided'
       }
       const onTouchMove = (e: TouchEvent) => {
@@ -577,11 +596,12 @@ export class TerminalInstance {
           }
         }
         if (mode === 'scroll') {
+          e.preventDefault() // suppress native scroll — safe because passive: false
           const deltaY = lastY - cy
+          const dt = now - lastTime || 1
+          velocity = deltaY / dt // px/ms
           accumulatedDeltaY += deltaY
 
-          // Always try to send wheel events - let xterm.js handle it
-          // This works for both mouse mode and normal mode
           if (this.xterm && Math.abs(accumulatedDeltaY) >= SCROLL_THRESHOLD) {
             this._sendWheelEvent(screen, accumulatedDeltaY, cx, cy)
             accumulatedDeltaY = 0
@@ -592,20 +612,34 @@ export class TerminalInstance {
       }
 
       const onTouchEnd = () => {
-        // Send any remaining accumulated delta
-        if (mode === 'scroll' && this.xterm && Math.abs(accumulatedDeltaY) > 5) {
-          const screen = wrapper.querySelector('.xterm-screen') as HTMLElement
-          if (screen) {
-            this._sendWheelEvent(screen, accumulatedDeltaY, lastY, lastY)
-          }
+        if (mode !== 'scroll') return
+        // Flush remaining delta
+        if (this.xterm && Math.abs(accumulatedDeltaY) > 2) {
+          this._sendWheelEvent(screen, accumulatedDeltaY, lastY, lastY)
         }
         accumulatedDeltaY = 0
+
+        // Momentum: keep sending wheel events with decaying velocity
+        if (this.xterm && Math.abs(velocity) > 0.15) {
+          const friction = 0.92
+          let v = velocity
+          const step = () => {
+            v *= friction
+            if (Math.abs(v) < 0.05) return
+            const delta = v * 16 // ~1 frame at 60fps
+            this._sendWheelEvent(screen, delta, lastY, lastY)
+            momentumId = requestAnimationFrame(step)
+          }
+          momentumId = requestAnimationFrame(step)
+        }
       }
 
+      // passive: false so we can preventDefault() in touchmove
       wrapper.addEventListener('touchstart', onTouchStart, { passive: true })
-      screen.addEventListener('touchmove', onTouchMove, { passive: true })
+      screen.addEventListener('touchmove', onTouchMove, { passive: false })
       screen.addEventListener('touchend', onTouchEnd, { passive: true })
       this._touchCleanup = () => {
+        clearMomentum()
         wrapper.removeEventListener('touchstart', onTouchStart)
         screen.removeEventListener('touchmove', onTouchMove)
         screen.removeEventListener('touchend', onTouchEnd)
@@ -616,62 +650,48 @@ export class TerminalInstance {
   private _sendWheelEvent(target: HTMLElement, deltaY: number, clientX: number, clientY: number) {
     if (!this.xterm || deltaY === 0) return
 
-    console.log('[TouchScroll] Sending wheel event:', { deltaY, clientX, clientY })
-
-    // Try multiple dispatch targets to ensure xterm receives the event
-    const elementsToTry = [
-      // Primary target (xterm-screen where mouse events are captured)
-      target,
-      // Viewport element
-      this._wrapper?.querySelector('.xterm-viewport'),
-      // Xterm helper textarea
-      this._wrapper?.querySelector('.xterm-helper-textarea'),
-      // Main xterm element
-      this._wrapper?.querySelector('.xterm'),
-      // Finally the wrapper itself
-      this._wrapper,
-    ].filter(Boolean) as HTMLElement[]
-
-    // Create event once and dispatch to all targets
-    const wheelEvent = new WheelEvent('wheel', {
-      deltaY: deltaY,
-      deltaX: 0,
-      deltaZ: 0,
-      deltaMode: 0,
-      bubbles: true,
-      cancelable: true,
-      clientX: clientX,
-      clientY: clientY,
-    })
-
-    for (const el of elementsToTry) {
-      el.dispatchEvent(wheelEvent)
-    }
-
-    // Also use xterm's built-in scroll as fallback
-    const lineHeight = this.xterm?.rows ? (target.clientHeight / this.xterm.rows) : 20
-    const lines = Math.round(deltaY / lineHeight)
-    if (lines !== 0 && this.xterm) {
-      console.log('[TouchScroll] Calling scrollLines:', lines)
-      this.xterm.scrollLines(lines)
+    if (this._isMouseModeEnabled()) {
+      // App has mouse tracking active (e.g. Codex, Claude Code TUI):
+      // let xterm convert the wheel event into escape sequences for the app.
+      // Do NOT call scrollLines() — that shifts xterm's viewport into the main-screen
+      // scrollback while the app is rendering on the alternate screen, causing a
+      // garbled display when both effects are applied simultaneously.
+      target.dispatchEvent(new WheelEvent('wheel', {
+        deltaY,
+        deltaX: 0,
+        deltaZ: 0,
+        deltaMode: 0,
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+      }))
+    } else {
+      // No mouse tracking: scroll xterm's viewport directly (normal shell / less / man).
+      const lineHeight = (this.xterm.rows && target.clientHeight)
+        ? (target.clientHeight / this.xterm.rows) : 20
+      const lines = Math.round(deltaY / lineHeight)
+      if (lines !== 0) this.xterm.scrollLines(lines)
     }
   }
 
   private _isMouseModeEnabled(): boolean {
-    // Check if xterm has any mouse tracking mode enabled
-    // This is indicated by DECSET modes 1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016
-    // xterm.js stores this in the core service
+    // Detects DECSET mouse tracking modes (1000/1002/1003/…) via xterm.js internal API.
+    // Both paths access _core which is private — if xterm.js is upgraded and the structure
+    // changes, we warn once so the breakage is visible rather than silently falling back.
     if (!this.xterm) return false
     try {
       const core = (this.xterm as any)._core
       const mouseService = core?.mouseService
       if (mouseService) {
-        // Check if any mouse tracking is active
         return mouseService.areMouseEventsActive?.() ?? false
       }
-      // Alternative: check the modes directly
       const modes = core?.services?.coreMouseService?._activeProtocol
-      return modes !== 'NONE' && modes !== undefined
+      if (modes !== undefined) {
+        return modes !== 'NONE'
+      }
+      console.warn('[useTerminal] _isMouseModeEnabled: xterm internal API unavailable — touch scroll may misbehave in mouse-tracking TUIs after an xterm.js upgrade')
+      return false
     } catch {
       return false
     }
