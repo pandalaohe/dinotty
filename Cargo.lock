@@ -933,6 +933,7 @@ version = "0.8.2"
 dependencies = [
  "axum 0.7.9",
  "dinotty-server",
+ "local-ip-address",
  "mime_guess",
  "portable-pty",
  "rust-embed",

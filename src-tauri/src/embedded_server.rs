@@ -10,6 +10,8 @@ use rust_embed::Embed;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use axum::extract::State as AxumState;
+use axum::Json;
 
 use dinotty_server::file_watcher::{self, FileWatcherState};
 use dinotty_server::history;
@@ -27,6 +29,12 @@ use dinotty_server::workspace;
 #[folder = "../frontend/dist/"]
 struct StaticFiles;
 
+#[derive(Clone, serde::Serialize)]
+pub struct GitInfo {
+    pub version: String,
+    pub repo_url: String,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub manager: Arc<SessionManager>,
@@ -36,6 +44,8 @@ pub struct AppState {
     pub notifier: Arc<NotificationBroadcast>,
     pub history: HistoryState,
     pub plugins: PluginManagerState,
+    pub port: u16,
+    pub git_info: GitInfo,
 }
 
 impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
@@ -80,6 +90,12 @@ impl axum::extract::FromRef<AppState> for PluginManagerState {
     }
 }
 
+impl axum::extract::FromRef<AppState> for (PluginManagerState, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.plugins.clone(), state.manager.clone())
+    }
+}
+
 async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
     let lookup = format!("assets/{}", path);
     match StaticFiles::get(&lookup) {
@@ -106,6 +122,44 @@ async fn index() -> impl IntoResponse {
     )
 }
 
+fn read_git_info() -> GitInfo {
+    let version = option_env!("DINOTTY_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+
+    let repo_url = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            let url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if url.starts_with("git@") {
+                url.replace(":", "/")
+                   .replace("git@", "https://")
+                   .trim_end_matches(".git")
+                   .to_string()
+            } else {
+                url.trim_end_matches(".git").to_string()
+            }
+        })
+        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string());
+
+    GitInfo { version, repo_url }
+}
+
+async fn server_info(AxumState(state): AxumState<AppState>) -> Json<serde_json::Value> {
+    let lan_ip = local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    Json(serde_json::json!({
+        "lan_ip": lan_ip,
+        "port": state.port,
+        "version": state.git_info.version,
+        "repo_url": state.git_info.repo_url,
+    }))
+}
+
 pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
@@ -115,6 +169,8 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let plugins = Arc::new(PluginManager::new());
     plugins.scan();
 
+    let git_info = read_git_info();
+
     let state = AppState {
         manager: manager.clone(),
         settings: settings::create_settings_state(),
@@ -123,6 +179,8 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         notifier,
         history: history_state,
         plugins,
+        port,
+        git_info,
     };
 
     state.plugins.watch_changes(manager);
@@ -147,6 +205,7 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/workspace/rename", post(workspace::workspace_rename))
         .route("/api/notify", post(notification::post_notify))
         .route("/api/history", get(history::get_history).delete(history::delete_history))
+        .route("/api/info", get(server_info))
         .route("/api/plugins", get(plugin::list_plugins))
         .route("/api/plugins/dev-link", post(plugin::dev_link_plugin))
         .route("/api/plugins/install", post(plugin::install_plugin))
