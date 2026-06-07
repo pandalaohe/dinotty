@@ -36,6 +36,11 @@ pub async fn auth_middleware(
 ) -> Response {
     let path = request.uri().path();
 
+    // No token configured — first-time setup, allow all requests
+    if token.is_empty() {
+        return next.run(request).await;
+    }
+
     if path == "/" || path == "/api/notify" || path == "/manifest.json" || path == "/logo.png"
         || path.starts_with("/assets/") || path.starts_with("/preview/") || path.starts_with("/icons/")
     {
