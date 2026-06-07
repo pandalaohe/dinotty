@@ -776,8 +776,13 @@ function onOrientationChange() {
   isLandscape.value = window.innerWidth > window.innerHeight
 }
 
+const _focusHandler = () => {
+  nextTick(() => focusActive())
+}
+
 onMounted(async () => {
   document.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('focus', _focusHandler)
   window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
   window.addEventListener('terminal-insert-text', onTerminalInsertText)
@@ -804,6 +809,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('focus', _focusHandler)
   window.removeEventListener('resize', onOrientationChange)
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
   window.removeEventListener('terminal-insert-text', onTerminalInsertText)
