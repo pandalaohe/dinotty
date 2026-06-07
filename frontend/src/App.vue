@@ -105,7 +105,7 @@ import ServerList from './components/ServerList.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
 import type { SyncServerMsg, SyncClientMsg } from './types/protocol'
 import { useSettings } from './composables/useSettings'
-import { getApiBase, wsUrlWithToken, hasAuthToken } from './composables/apiBase'
+import { getApiBase, wsUrlWithToken, hasAuthToken, checkTokenConfigured, setAuthToken } from './composables/apiBase'
 import { isTauri } from './composables/useTransport'
 import { isTouchDevice } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
@@ -789,6 +789,16 @@ onMounted(async () => {
     void connectSyncWS()
     initMonitorHistory()
     void loadAll()
+  } else {
+    // No local token — check if server has one configured
+    await getApiBase()
+    const configured = await checkTokenConfigured()
+    if (!configured) {
+      // First-time setup: skip login, open settings
+      authenticated.value = true
+      settingsOpen.value = true
+      void loadAll()
+    }
   }
 })
 
