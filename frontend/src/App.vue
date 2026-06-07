@@ -105,7 +105,7 @@ import ServerList from './components/ServerList.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
 import type { SyncServerMsg, SyncClientMsg } from './types/protocol'
 import { useSettings } from './composables/useSettings'
-import { getApiBase, wsUrlWithToken, hasAuthToken } from './composables/apiBase'
+import { getApiBase, wsUrlWithToken, hasAuthToken, checkTokenConfigured, setAuthToken } from './composables/apiBase'
 import { isTauri } from './composables/useTransport'
 import { isTouchDevice } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
@@ -776,8 +776,13 @@ function onOrientationChange() {
   isLandscape.value = window.innerWidth > window.innerHeight
 }
 
+const _focusHandler = () => {
+  nextTick(() => focusActive())
+}
+
 onMounted(async () => {
   document.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('focus', _focusHandler)
   window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
   window.addEventListener('terminal-insert-text', onTerminalInsertText)
@@ -789,11 +794,22 @@ onMounted(async () => {
     void connectSyncWS()
     initMonitorHistory()
     void loadAll()
+  } else {
+    // No local token — check if server has one configured
+    await getApiBase()
+    const configured = await checkTokenConfigured()
+    if (!configured) {
+      // First-time setup: skip login, open settings
+      authenticated.value = true
+      settingsOpen.value = true
+      void loadAll()
+    }
   }
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('focus', _focusHandler)
   window.removeEventListener('resize', onOrientationChange)
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
   window.removeEventListener('terminal-insert-text', onTerminalInsertText)

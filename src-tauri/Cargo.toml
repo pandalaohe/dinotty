@@ -1,6 +1,6 @@
 [package]
 name = "dinotty-desktop"
-version = "0.8.2"
+version = "0.9.0"
 edition = "2021"
 
 [dependencies]
@@ -20,6 +20,7 @@ tower-http = { version = "0.5", features = ["fs", "cors"] }
 rust-embed = { version = "8", features = ["axum"] }
 mime_guess = "2"
 local-ip-address = "0.6"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
