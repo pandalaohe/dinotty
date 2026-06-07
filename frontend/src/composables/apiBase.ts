@@ -48,6 +48,18 @@ export async function validateToken(token: string): Promise<boolean> {
   }
 }
 
+export async function checkTokenConfigured(): Promise<boolean> {
+  try {
+    await getApiBase()
+    const res = await fetch(apiUrl('/api/token-configured'))
+    if (!res.ok) return true // assume configured on error
+    const data = await res.json()
+    return !!data.configured
+  } catch {
+    return true // assume configured on error
+  }
+}
+
 export async function getApiBase(): Promise<string> {
   if (!isTauri()) {
     cached = ''
@@ -73,7 +85,26 @@ export function apiUrl(path: string): string {
   return cached ? `${cached}${p}` : p
 }
 
-export function authFetch(url: string, init?: RequestInit): Promise<Response> {
+export async function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  if (isTauri()) {
+    const token = getAuthToken()
+    const headers: [string, string][] = []
+    if (token) headers.push(['Authorization', `Bearer ${token}`])
+    if (init?.headers) {
+      const h = new Headers(init.headers)
+      h.forEach((v, k) => headers.push([k, v]))
+    }
+    const resp = (await tauriInvoke('tauri_fetch', {
+      url,
+      method: init?.method || 'GET',
+      headers,
+      body: typeof init?.body === 'string' ? init.body : null,
+    })) as { status: number; headers: [string, string][]; body: string }
+    return new Response(resp.body, {
+      status: resp.status,
+      headers: resp.headers,
+    })
+  }
   const token = getAuthToken()
   const headers = new Headers(init?.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)

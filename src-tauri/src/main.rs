@@ -3,6 +3,7 @@ use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, State};
 use dinotty_server::pty;
 use dinotty_server::session::{SessionManager, SessionStatus, SyncMsg};
+use reqwest::Method;
 
 mod embedded_server;
 
@@ -146,6 +147,40 @@ fn embedded_http_origin() -> String {
     format!("http://127.0.0.1:{port}")
 }
 
+#[derive(Serialize)]
+struct FetchResponse {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+#[tauri::command]
+async fn tauri_fetch(
+    url: String,
+    method: String,
+    headers: Vec<(String, String)>,
+    body: Option<String>,
+) -> Result<FetchResponse, String> {
+    let client = reqwest::Client::new();
+    let method: Method = method.parse().map_err(|_| "invalid method")?;
+    let mut req = client.request(method, &url);
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    if let Some(b) = body {
+        req = req.body(b);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    Ok(FetchResponse { status, headers, body })
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -200,6 +235,7 @@ fn main() {
             pty_resize,
             pty_kill,
             embedded_http_origin,
+            tauri_fetch,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

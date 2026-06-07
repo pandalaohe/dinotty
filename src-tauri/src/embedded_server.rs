@@ -191,6 +191,19 @@ async fn server_info(AxumState(state): AxumState<AppState>) -> Json<serde_json::
     }))
 }
 
+// Desktop client doesn't need auth — stubs for frontend compatibility
+async fn check_auth() -> StatusCode {
+    StatusCode::OK
+}
+
+async fn token_configured() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "configured": false }))
+}
+
+async fn update_token(Json(_body): Json<serde_json::Value>) -> StatusCode {
+    StatusCode::OK
+}
+
 pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
@@ -243,6 +256,9 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/notify", post(notification::post_notify))
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/info", get(server_info))
+        .route("/api/auth", post(check_auth))
+        .route("/api/token-configured", get(token_configured))
+        .route("/api/token", put(update_token))
         .route("/api/plugins", get(plugin::list_plugins))
         .route("/api/plugins/market", get(plugin::get_market_registry))
         .route("/api/plugins/market/:id/readme", get(plugin::get_market_readme))

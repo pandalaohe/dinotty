@@ -302,6 +302,11 @@ async fn check_auth(State(state): State<AppState>) -> impl IntoResponse {
     StatusCode::OK
 }
 
+async fn token_configured(State(state): State<AppState>) -> impl IntoResponse {
+    let token = state.auth_token.read().await;
+    Json(serde_json::json!({ "configured": !token.is_empty() }))
+}
+
 async fn update_token(
     State(state): State<AppState>,
     Json(body): Json<UpdateTokenRequest>,
@@ -341,20 +346,15 @@ async fn main() {
     notifier.set_settings(settings_state.clone());
     let history_state = HistoryState::new();
 
-    // Load token from dedicated file, fall back to env var, then generate
+    // Load token from dedicated file or env var; empty means first-time setup
     let initial_token = settings::load_token()
         .or_else(|| std::env::var("DINOTTY_TOKEN").ok())
-        .unwrap_or_else(|| {
-            let mut buf = [0u8; 32];
-            rand::fill(&mut buf);
-            buf.iter().map(|b| format!("{:02x}", b)).collect()
-        });
-    if settings::load_token().is_none() {
-        if let Err(e) = settings::save_token(&initial_token) {
-            tracing::warn!("Failed to persist auth token: {}", e);
-        }
+        .unwrap_or_default();
+    if initial_token.is_empty() {
+        tracing::info!("No auth token configured — first-time setup required");
+    } else {
+        tracing::info!("Auth token loaded (length={})", initial_token.len());
     }
-    tracing::info!("Auth token loaded (length={})", initial_token.len());
     let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
 
     let plugins = Arc::new(plugin::PluginManager::new());
@@ -411,6 +411,7 @@ async fn main() {
         .route("/api/notify", post(notification::post_notify))
         .route("/api/input", post(ws::post_input))
         .route("/api/auth", post(check_auth))
+        .route("/api/token-configured", get(token_configured))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))
