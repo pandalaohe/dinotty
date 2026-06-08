@@ -1,23 +1,17 @@
 <template>
   <div
     class="pane-header"
-    :class="[direction ? `direction-${direction}` : '', { active: isActive, dragging: isDragging, 'drag-over': dragOverPosition }]"
-    draggable="true"
-    @dragstart="onDragStart"
-    @dragend="onDragEnd"
-    @dragover.prevent="onDragOver"
-    @dragleave="onDragLeave"
-    @drop.prevent="onDrop"
+    :class="[direction ? `direction-${direction}` : '', { active: isActive, dragging: isDragging }]"
+    @mousedown.prevent="onMouseDown"
   >
     <span class="pane-header-drag-handle">&#x2630;</span>
     <span class="pane-header-title">{{ title }}</span>
-    <!-- Drop position indicator -->
-    <div v-if="dragOverPosition" :class="['drop-indicator', dragOverPosition]" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onBeforeUnmount } from 'vue'
+import type { DropPosition } from '../../types/pane'
 
 const props = defineProps<{
   paneId: string
@@ -27,77 +21,178 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  reorder: [sourcePaneId: string, targetPaneId: string, position: 'before' | 'after']
+  reorder: [sourcePaneId: string, targetPaneId: string, position: DropPosition]
 }>()
 
 const isDragging = ref(false)
-const dragOverPosition = ref<'before' | 'after' | null>(null)
 
-function onDragStart(e: DragEvent) {
+let overlay: HTMLDivElement | null = null
+let preview: HTMLDivElement | null = null
+let currentTargetId: string | null = null
+let currentZone: DropPosition | null = null
+let dragStarted = false
+let startX = 0
+let startY = 0
+const DRAG_THRESHOLD = 5
+
+function onMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return
+  startX = e.clientX
+  startY = e.clientY
+  dragStarted = false
+
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+}
+
+function ensureDragStarted() {
+  if (dragStarted) return
+  dragStarted = true
   isDragging.value = true
-  e.dataTransfer!.effectAllowed = 'move'
-  e.dataTransfer!.setData('text/plain', props.paneId)
+
+  // Create full-viewport overlay to capture mouse events
+  overlay = document.createElement('div')
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:grabbing;'
+  document.body.appendChild(overlay)
+
+  // Create red preview div (hidden initially)
+  preview = document.createElement('div')
+  preview.style.cssText = 'position:fixed;z-index:10000;background:rgba(239,68,68,0.3);pointer-events:none;display:none;border-radius:2px;'
+  document.body.appendChild(preview)
 }
 
-function onDragEnd() {
+function onMouseMove(e: MouseEvent) {
+  // Wait for movement threshold before starting drag
+  if (!dragStarted) {
+    if (Math.abs(e.clientX - startX) < DRAG_THRESHOLD && Math.abs(e.clientY - startY) < DRAG_THRESHOLD) {
+      return
+    }
+    ensureDragStarted()
+  }
+
+  if (!overlay || !preview) return
+
+  // Find target pane under cursor
+  const elements = document.elementsFromPoint(e.clientX, e.clientY)
+  let targetEl: HTMLElement | null = null
+  for (const el of elements) {
+    const htmlEl = el as HTMLElement
+    // Skip overlay and preview
+    if (htmlEl === overlay || htmlEl === preview) continue
+    // Find nearest .split-leaf with data-pane-id
+    const leaf = htmlEl.closest('.split-leaf[data-pane-id]') as HTMLElement | null
+    if (leaf) {
+      const paneId = leaf.dataset.paneId
+      // Skip self
+      if (paneId && paneId !== props.paneId) {
+        targetEl = leaf
+        break
+      }
+    }
+  }
+
+  if (!targetEl) {
+    // No valid target — hide preview
+    preview.style.display = 'none'
+    currentTargetId = null
+    currentZone = null
+    return
+  }
+
+  const targetId = targetEl.dataset.paneId!
+  const rect = targetEl.getBoundingClientRect()
+
+  // Detect zone: each edge quarter
+  const relX = (e.clientX - rect.left) / rect.width
+  const relY = (e.clientY - rect.top) / rect.height
+
+  let zone: DropPosition
+  if (relY < 0.25) zone = 'top'
+  else if (relY > 0.75) zone = 'bottom'
+  else if (relX < 0.25) zone = 'left'
+  else if (relX > 0.75) zone = 'right'
+  else {
+    // Center area — pick closest edge
+    const distTop = relY
+    const distBottom = 1 - relY
+    const distLeft = relX
+    const distRight = 1 - relX
+    const minDist = Math.min(distTop, distBottom, distLeft, distRight)
+    if (minDist === distTop) zone = 'top'
+    else if (minDist === distBottom) zone = 'bottom'
+    else if (minDist === distLeft) zone = 'left'
+    else zone = 'right'
+  }
+
+  currentTargetId = targetId
+  currentZone = zone
+
+  // Position preview to cover half the target pane
+  const halfW = rect.width / 2
+  const halfH = rect.height / 2
+  let left: number, top: number, w: number, h: number
+
+  switch (zone) {
+    case 'left':
+      left = rect.left
+      top = rect.top
+      w = halfW
+      h = rect.height
+      break
+    case 'right':
+      left = rect.left + halfW
+      top = rect.top
+      w = halfW
+      h = rect.height
+      break
+    case 'top':
+      left = rect.left
+      top = rect.top
+      w = rect.width
+      h = halfH
+      break
+    case 'bottom':
+      left = rect.left
+      top = rect.top + halfH
+      w = rect.width
+      h = halfH
+      break
+  }
+
+  preview.style.display = 'block'
+  preview.style.left = `${left}px`
+  preview.style.top = `${top}px`
+  preview.style.width = `${w}px`
+  preview.style.height = `${h}px`
+}
+
+function onMouseUp() {
+  // Only emit reorder if drag actually started and we have a valid target
+  if (dragStarted && currentTargetId && currentZone) {
+    emit('reorder', props.paneId, currentTargetId, currentZone)
+  }
+
+  cleanup()
+}
+
+function cleanup() {
   isDragging.value = false
-  clearAllDropIndicators()
+  dragStarted = false
+  currentTargetId = null
+  currentZone = null
+
+  overlay?.remove()
+  overlay = null
+  preview?.remove()
+  preview = null
+
+  window.removeEventListener('mousemove', onMouseMove)
+  window.removeEventListener('mouseup', onMouseUp)
 }
 
-function onDragOver(e: DragEvent) {
-  const sourceId = e.dataTransfer!.types.includes('text/plain') ? 'text/plain' : null
-  if (!sourceId) return
-
-  // Don't show indicator when dragging over self
-  const draggedId = e.dataTransfer!.getData('text/plain')
-  if (draggedId === props.paneId) {
-    dragOverPosition.value = null
-    return
-  }
-
-  e.dataTransfer!.dropEffect = 'move'
-
-  // Determine if cursor is in top/left half or bottom/right half
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  const midX = rect.left + rect.width / 2
-  const midY = rect.top + rect.height / 2
-
-  // Use both axes to determine position
-  const inTopHalf = e.clientY < midY
-  const inLeftHalf = e.clientX < midX
-
-  // Prefer vertical ordering when cursor is clearly in top/bottom half
-  const verticalDist = Math.abs(e.clientY - midY) / rect.height
-  const horizontalDist = Math.abs(e.clientX - midX) / rect.width
-
-  if (verticalDist > horizontalDist) {
-    dragOverPosition.value = inTopHalf ? 'before' : 'after'
-  } else {
-    dragOverPosition.value = inLeftHalf ? 'before' : 'after'
-  }
-}
-
-function onDragLeave() {
-  dragOverPosition.value = null
-}
-
-function onDrop(e: DragEvent) {
-  const sourceId = e.dataTransfer!.getData('text/plain')
-  if (!sourceId || sourceId === props.paneId) {
-    dragOverPosition.value = null
-    return
-  }
-
-  const position = dragOverPosition.value ?? 'after'
-  emit('reorder', sourceId, props.paneId, position)
-  dragOverPosition.value = null
-}
-
-function clearAllDropIndicators() {
-  document.querySelectorAll('.pane-header.drag-over').forEach(el => {
-    (el as HTMLElement).classList.remove('drag-over')
-  })
-}
+onBeforeUnmount(() => {
+  cleanup()
+})
 </script>
 
 <style scoped>
@@ -132,10 +227,6 @@ function clearAllDropIndicators() {
   opacity: 0.5;
 }
 
-.pane-header.drag-over {
-  background: var(--accent-color-alpha, rgba(77, 128, 255, 0.1));
-}
-
 .pane-header-drag-handle {
   font-size: 12px;
   color: var(--text-tertiary, #666);
@@ -153,24 +244,5 @@ function clearAllDropIndicators() {
 
 .pane-header.active .pane-header-title {
   color: var(--text-primary, #fff);
-}
-
-/* Drop position indicator line */
-.drop-indicator {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--accent-color, #4d80ff);
-  z-index: 10;
-  pointer-events: none;
-}
-
-.drop-indicator.before {
-  top: -1px;
-}
-
-.drop-indicator.after {
-  bottom: -1px;
 }
 </style>
