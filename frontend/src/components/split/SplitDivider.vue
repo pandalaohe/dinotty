@@ -17,6 +17,10 @@ const props = defineProps<{
   containerEl: HTMLElement
 }>()
 
+const emit = defineEmits<{
+  'drag-end': []
+}>()
+
 function getPointerPos(e: MouseEvent | TouchEvent): { clientX: number; clientY: number } {
   if ('touches' in e) {
     const t = e.touches[0]
@@ -67,6 +71,7 @@ function startDrag(e: MouseEvent | TouchEvent) {
     window.removeEventListener(moveEvent, onMove as EventListener)
     window.removeEventListener(endEvent, onEnd)
     window.dispatchEvent(new Event('resize'))
+    emit('drag-end')
   }
 
   window.addEventListener(moveEvent, onMove as EventListener, { passive: !isTouch } as AddEventListenerOptions)

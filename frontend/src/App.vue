@@ -47,7 +47,8 @@
             @file-click="onFileClick"
             @preview-link="onPreviewLink"
             @link-activate="onLinkActivate"
-            @reorder="(src: string, tgt: string, pos: 'before' | 'after') => splitPane.reorderPane(src, tgt, pos)"
+            @reorder="(src: string, tgt: string, pos: 'left' | 'right' | 'top' | 'bottom') => splitPane.reorderPane(src, tgt, pos)"
+            @divider-drag-end="onDividerDragEnd(tab)"
           />
           <PreviewPanel
             v-if="tab.paneId === activePaneId"
@@ -194,6 +195,7 @@ const splitPane = useSplitPane({
   termRefs,
   genPaneId,
   sendSync,
+  sendLayoutSync,
   persist,
 })
 
@@ -262,6 +264,17 @@ function genPaneId(): string {
 function sendSync(msg: SyncClientMsg) {
   if (syncWs && syncWs.readyState === WebSocket.OPEN && !suppressSync) {
     syncWs.send(JSON.stringify(msg))
+  }
+}
+
+function sendLayoutSync(tabPaneId: string, layout: any, activePaneIdVal: string) {
+  sendSync({ type: 'update_layout', pane_id: tabPaneId, layout, active_pane_id: activePaneIdVal })
+}
+
+function onDividerDragEnd(tab: Tab) {
+  if (tab.type === 'terminal') {
+    persist()
+    sendLayoutSync(tab.paneId, tab.layout, tab.activePaneId)
   }
 }
 
@@ -846,16 +859,18 @@ async function connectSyncWS() {
       // Create tabs for any server paneIds we don't have locally
       for (const tab of msg.tabs) {
         if (!localLeafIds.has(tab.pane_id)) {
-          const saved = getSavedTab(tab.pane_id)
+          // Prefer server layout, then localStorage, then default single leaf
+          const serverLayout = tab.layout ?? null
+          const saved = !serverLayout ? getSavedTab(tab.pane_id) : null
           const migrated = saved ? migrateTab(saved) : null
           const tabId = genPaneId()
           tabs.value.push({
             type: 'terminal',
             paneId: tabId,
-            layout: migrated?.layout ?? { type: 'leaf', paneId: tab.pane_id, title: 'Terminal', ratio: 1, zoomed: false },
-            activePaneId: migrated?.activePaneId ?? tab.pane_id,
+            layout: serverLayout ?? migrated?.layout ?? { type: 'leaf', paneId: tab.pane_id, title: 'Terminal', ratio: 1, zoomed: false },
+            activePaneId: tab.active_pane_id ?? migrated?.activePaneId ?? tab.pane_id,
             broadcastMode: false,
-      broadcastActivity: 0,
+            broadcastActivity: 0,
             previewVisible: migrated?.previewVisible ?? false,
             previewAddress: migrated?.previewAddress ?? '',
             previewUrl: migrated?.previewUrl ?? '',
@@ -883,11 +898,12 @@ async function connectSyncWS() {
       } catch { /* noop */ }
 
       // Remove terminal tabs whose leaf paneIds are no longer on the server
-      const serverIds = new Set(msg.tabs.map((t) => t.pane_id))
+      const serverTabIds = new Set(msg.tabs.map((t) => t.pane_id))
+      const serverLeafIds = new Set(msg.tabs.flatMap((t) => t.layout ? getAllLeaves(t.layout).map(l => l.paneId) : []))
       tabs.value = tabs.value.filter((t) => {
         if (t.type === 'plugin') return true
-        // Keep tab if at least one leaf is still on the server
-        return getAllLeaves(t.layout).some(l => serverIds.has(l.paneId))
+        // Keep tab if it matches a server tab by tabId, or if at least one leaf is in a server layout
+        return serverTabIds.has(t.paneId) || getAllLeaves(t.layout).some(l => serverLeafIds.has(l.paneId))
       })
 
       if (msg.active_pane_id) {
@@ -969,6 +985,29 @@ async function connectSyncWS() {
           activePaneId.value = targetTab.paneId
           suppressSync = false
         }
+      }
+    } else if (msg.type === 'layout_updated') {
+      // Find the tab by its pane_id (tab-level id)
+      const targetTab = tabs.value.find(t => t.paneId === msg.pane_id) as TerminalTab | undefined
+      if (targetTab) {
+        suppressSync = true
+        targetTab.layout = msg.layout
+        targetTab.activePaneId = msg.active_pane_id
+        suppressSync = false
+
+        // Remove orphaned tabs whose sole leaf paneId is now inside this layout
+        const updatedLeafIds = new Set(getAllLeaves(targetTab.layout).map(l => l.paneId))
+        tabs.value = tabs.value.filter(t => {
+          if (t.type !== 'terminal') return true
+          if (t.paneId === targetTab.paneId) return true
+          const leaves = getAllLeaves(t.layout)
+          return !leaves.every(l => updatedLeafIds.has(l.paneId))
+        })
+
+        persist()
+        nextTick(() => {
+          getAllLeaves(targetTab.layout).forEach(l => termRefs[l.paneId]?.fit())
+        })
       }
     } else if (msg.type === 'plugin_changed') {
       console.log('[plugin_changed] plugin_id:', msg.plugin_id, 'change:', msg.change)

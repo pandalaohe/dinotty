@@ -3,6 +3,7 @@
   <div
     v-if="leaf"
     :class="['split-leaf', { active: leaf.paneId === activePaneId, zoomed: leaf.zoomed, 'broadcast-active': broadcastActive, 'broadcast-receiving': broadcastReceiving }]"
+    :data-pane-id="leaf.paneId"
     @mousedown="onLeafClick(leaf.paneId)"
   >
     <PaneHeader
@@ -60,7 +61,8 @@
         @file-click="(path: string) => emit('fileClick', path)"
         @preview-link="(id: string, url: string) => emit('previewLink', id, url)"
         @link-activate="emit('linkActivate')"
-        @reorder="(src: string, tgt: string, pos: 'before' | 'after') => emit('reorder', src, tgt, pos)"
+        @reorder="(src: string, tgt: string, pos: DropPosition) => emit('reorder', src, tgt, pos)"
+        @divider-drag-end="emit('dividerDragEnd')"
       />
       <SplitDivider
         v-if="idx < split.children.length - 1"
@@ -68,6 +70,7 @@
         :left-ratio-ref="makeRatioRef(idx)"
         :right-ratio-ref="makeRatioRef(idx + 1)"
         :container-el="containerRef!"
+        @drag-end="emit('dividerDragEnd')"
       />
     </template>
   </div>
@@ -75,7 +78,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { PaneLayout, LeafPane } from '../../types/pane'
+import type { PaneLayout, LeafPane, DropPosition } from '../../types/pane'
 import TerminalPane from '../terminal/TerminalPane.vue'
 import SplitDivider from './SplitDivider.vue'
 import PaneHeader from './PaneHeader.vue'
@@ -100,7 +103,8 @@ const emit = defineEmits<{
   fileClick: [path: string]
   previewLink: [paneId: string, url: string]
   linkActivate: []
-  reorder: [sourcePaneId: string, targetPaneId: string, position: 'before' | 'after']
+  reorder: [sourcePaneId: string, targetPaneId: string, position: DropPosition]
+  dividerDragEnd: []
 }>()
 
 const { t } = useI18n()
