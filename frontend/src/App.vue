@@ -1005,8 +1005,15 @@ async function connectSyncWS() {
         }
       }
     } else if (msg.type === 'layout_updated') {
-      // Find the tab by its pane_id (tab-level id)
-      const targetTab = tabs.value.find(t => t.paneId === msg.pane_id) as TerminalTab | undefined
+      // Find the tab by tab-level paneId OR by shared leaf paneIds
+      // (tab-level paneIds are client-local, so fall back to leaf matching)
+      const targetTab = tabs.value.find(t => {
+        if (t.type !== 'terminal') return false
+        if (t.paneId === msg.pane_id) return true
+        const incomingLeafIds = getAllLeaves(msg.layout).map((l: any) => l.paneId)
+        const localLeafIds = getAllLeaves(t.layout).map(l => l.paneId)
+        return incomingLeafIds.some((id: string) => localLeafIds.includes(id))
+      }) as TerminalTab | undefined
       if (targetTab) {
         suppressSync = true
         targetTab.layout = ensureSplitRoot(msg.layout)
