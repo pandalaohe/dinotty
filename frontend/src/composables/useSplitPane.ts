@@ -75,7 +75,6 @@ export function useSplitPane(opts: {
     }
 
     tab.activePaneId = newPaneId
-    sendSync({ type: 'create_tab', pane_id: newPaneId })
     persist()
     syncTabLayout(tab)
     nextTick(() => termRefs[newPaneId]?.focus())
@@ -113,7 +112,11 @@ export function useSplitPane(opts: {
         if (remaining.type === 'split') {
           tab.layout = remaining
         }
-      } else if (remaining.type === 'split') {
+      } else {
+        // Nested split: always collapse regardless of remaining child type.
+        // A single-child non-root split is degenerate — leaving it causes
+        // findParentSplit to return the degenerate split on next closePane,
+        // which then returns false and triggers closeTab (closing the whole tab).
         replaceNode(tab.layout, parent, remaining)
       }
     }
