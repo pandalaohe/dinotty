@@ -175,6 +175,16 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
             }
         });
 
+        // Input channel: replaces old channel so only this connection writes to PTY
+        let mut input_rx = session.replace_input_channel();
+        let write_session = Arc::clone(&session);
+        tokio::spawn(async move {
+            while let Some(data) = input_rx.recv().await {
+                let mut w = write_session.writer.lock().unwrap();
+                let _ = w.write_all(data.as_bytes());
+            }
+        });
+
         // Read loop
         while let Some(Ok(msg)) = ws_rx.next().await {
             match msg {
@@ -197,8 +207,10 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                                     input_buffer.push(ch);
                                 }
                             }
-                            let mut w = session.writer.lock().unwrap();
-                            let _ = w.write_all(data.as_bytes());
+                            let tx = session.input_tx.lock().unwrap();
+                            if let Some(tx) = tx.as_ref() {
+                                let _ = tx.send(data);
+                            }
                         }
                         Ok(ClientMsg::Resize { cols, rows }) => {
                             let m = session.master.lock().unwrap();
@@ -247,6 +259,16 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         }
     });
 
+    // Input channel: dedicated write task reads from channel → PTY writer
+    let mut input_rx = session.replace_input_channel();
+    let write_session = Arc::clone(&session);
+    tokio::spawn(async move {
+        while let Some(data) = input_rx.recv().await {
+            let mut w = write_session.writer.lock().unwrap();
+            let _ = w.write_all(data.as_bytes());
+        }
+    });
+
     // WS read loop
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
@@ -269,8 +291,10 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                                 input_buffer.push(ch);
                             }
                         }
-                        let mut w = session.writer.lock().unwrap();
-                        let _ = w.write_all(data.as_bytes());
+                        let tx = session.input_tx.lock().unwrap();
+                        if let Some(tx) = tx.as_ref() {
+                            let _ = tx.send(data);
+                        }
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
                         let m = session.master.lock().unwrap();
