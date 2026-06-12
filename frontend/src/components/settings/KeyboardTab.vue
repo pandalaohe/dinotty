@@ -299,6 +299,7 @@ async function sendOpenApiTest() {
         return
       }
     }
+    await getApiBase()
     const res = await authFetch(apiUrl('/api/input'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -60,6 +60,18 @@ export async function checkTokenConfigured(): Promise<boolean> {
   }
 }
 
+export async function fetchServerToken(): Promise<string> {
+  try {
+    await getApiBase()
+    const res = await authFetch(apiUrl('/api/token'))
+    if (!res.ok) return ''
+    const data = await res.json()
+    return data.token || ''
+  } catch {
+    return ''
+  }
+}
+
 export async function getApiBase(): Promise<string> {
   if (!isTauri()) {
     cached = ''
