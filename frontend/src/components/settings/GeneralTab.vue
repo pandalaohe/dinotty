@@ -129,7 +129,7 @@ import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { themes } from '../../themes'
 import { copyToClipboard } from '../../utils/clipboard'
-import { apiUrl, authFetch, getAuthToken, setAuthToken, getApiBase } from '../../composables/apiBase'
+import { apiUrl, authFetch, getAuthToken, setAuthToken, getApiBase, fetchServerToken } from '../../composables/apiBase'
 
 const { settings, applyCurrentTheme } = useSettings()
 const { t, themeLabel } = useI18n()
@@ -166,7 +166,7 @@ onMounted(async () => {
     const port = window.location.port
     accessUrl.value = `http://${host}${port ? ':' + port : ''}`
   }
-  currentToken.value = getAuthToken()
+  currentToken.value = await fetchServerToken() || getAuthToken()
 })
 
 async function copyAccessUrl() {
