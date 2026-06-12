@@ -2,17 +2,20 @@ use axum::{
     body::Body,
     extract::Path,
     http::{header, Response, StatusCode},
+    middleware,
     response::IntoResponse,
     routing::{any, delete, get, post, put},
     Router,
 };
 use rust_embed::Embed;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use axum::extract::State as AxumState;
 use axum::Json;
 
+use dinotty_server::auth;
 use dinotty_server::file_watcher::{self, FileWatcherState};
 use dinotty_server::history;
 use dinotty_server::monitor::{self, MonitorState};
@@ -43,6 +46,7 @@ pub struct AppState {
     pub monitor: MonitorState,
     pub notifier: Arc<NotificationBroadcast>,
     pub history: HistoryState,
+    pub auth_token: Arc<tokio::sync::RwLock<String>>,
     pub plugins: PluginManagerState,
     pub port: u16,
     pub git_info: GitInfo,
@@ -113,12 +117,30 @@ async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
     }
 }
 
-async fn index() -> impl IntoResponse {
+async fn index(
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+    AxumState(state): AxumState<AppState>,
+) -> impl IntoResponse {
     let content = StaticFiles::get("index.html")
         .expect("index.html must exist in frontend/dist/");
+    let html = String::from_utf8_lossy(&content.data);
+
+    let stored_token = state.auth_token.read().await.clone();
+    let token_value = params.get("token")
+        .filter(|t| {
+            urlencoding::decode(t).map(|d| d == stored_token).unwrap_or(false)
+        })
+        .map(|_| stored_token)
+        .unwrap_or_default();
+
+    let tag = format!(
+        "<meta name=\"auth-token\" content=\"{}\">\n</head>",
+        token_value
+    );
+    let html = html.replace("</head>", &tag);
     (
         [(header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"))],
-        axum::response::Html(String::from_utf8_lossy(&content.data).into_owned()),
+        axum::response::Html(html),
     )
 }
 
@@ -191,17 +213,39 @@ async fn server_info(AxumState(state): AxumState<AppState>) -> Json<serde_json::
     }))
 }
 
-// Desktop client doesn't need auth — stubs for frontend compatibility
-async fn check_auth() -> StatusCode {
+async fn check_auth(AxumState(_state): AxumState<AppState>) -> StatusCode {
     StatusCode::OK
 }
 
-async fn token_configured() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "configured": false }))
+async fn get_token(AxumState(state): AxumState<AppState>) -> impl IntoResponse {
+    let token = state.auth_token.read().await;
+    Json(serde_json::json!({ "token": *token }))
 }
 
-async fn update_token(Json(_body): Json<serde_json::Value>) -> StatusCode {
-    StatusCode::OK
+async fn token_configured(AxumState(state): AxumState<AppState>) -> impl IntoResponse {
+    let token = state.auth_token.read().await;
+    Json(serde_json::json!({ "configured": !token.is_empty() }))
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateTokenRequest {
+    token: String,
+}
+
+async fn update_token(
+    AxumState(state): AxumState<AppState>,
+    Json(body): Json<UpdateTokenRequest>,
+) -> impl IntoResponse {
+    let new_token = body.token.trim().to_string();
+    if new_token.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "token cannot be empty"}))).into_response();
+    }
+    *state.auth_token.write().await = new_token.clone();
+    if let Err(e) = settings::save_token(&new_token) {
+        tracing::error!("Failed to persist token: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "failed to save"}))).into_response();
+    }
+    StatusCode::OK.into_response()
 }
 
 pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
@@ -209,19 +253,32 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     monitor_state.clone().start_collector();
 
     let notifier = Arc::new(NotificationBroadcast::new());
+    let settings_state = settings::create_settings_state();
+    notifier.set_settings(settings_state.clone());
     let history_state = HistoryState::new();
     let plugins = Arc::new(PluginManager::new());
     plugins.scan();
+
+    let initial_token = settings::load_token()
+        .or_else(|| std::env::var("DINOTTY_TOKEN").ok())
+        .unwrap_or_default();
+    if initial_token.is_empty() {
+        tracing::info!("No auth token configured — first-time setup required");
+    } else {
+        tracing::info!("Auth token loaded (length={})", initial_token.len());
+    }
+    let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
 
     let git_info = read_git_info();
 
     let state = AppState {
         manager: manager.clone(),
-        settings: settings::create_settings_state(),
+        settings: settings_state,
         file_watcher: Arc::new(FileWatcherState::new()),
         monitor: monitor_state,
         notifier,
         history: history_state,
+        auth_token,
         plugins,
         port,
         git_info,
@@ -258,7 +315,7 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/info", get(server_info))
         .route("/api/auth", post(check_auth))
         .route("/api/token-configured", get(token_configured))
-        .route("/api/token", put(update_token))
+        .route("/api/token", get(get_token).put(update_token))
         .route("/api/plugins", get(plugin::list_plugins))
         .route("/api/plugins/market", get(plugin::get_market_registry))
         .route("/api/plugins/market/:id/readme", get(plugin::get_market_readme))
@@ -302,6 +359,13 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
             }
         }))
         .route("/", get(index))
+        .layer(middleware::from_fn_with_state(state.clone(), |AxumState(s): AxumState<AppState>, req: axum::extract::Request, next: middleware::Next| async move {
+            let token = s.auth_token.read().await.clone();
+            let client_ip = req.extensions().get::<axum::extract::ConnectInfo<SocketAddr>>()
+                .map(|ci| ci.ip())
+                .unwrap_or_else(|| "127.0.0.1".parse().unwrap());
+            auth::auth_middleware(req, next, &token, &s.settings, client_ip).await
+        }))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -309,5 +373,5 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     tracing::info!("Embedded server listening on http://0.0.0.0:{}", port);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }

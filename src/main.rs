@@ -302,6 +302,11 @@ async fn check_auth(State(state): State<AppState>) -> impl IntoResponse {
     StatusCode::OK
 }
 
+async fn get_token(State(state): State<AppState>) -> impl IntoResponse {
+    let token = state.auth_token.read().await;
+    Json(serde_json::json!({ "token": *token }))
+}
+
 async fn token_configured(State(state): State<AppState>) -> impl IntoResponse {
     let token = state.auth_token.read().await;
     Json(serde_json::json!({ "configured": !token.is_empty() }))
@@ -437,7 +442,7 @@ async fn main() {
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/api/info", get(server_info))
-        .route("/api/token", put(update_token))
+        .route("/api/token", get(get_token).put(update_token))
         // Plugin management
         .route("/api/plugins", get(plugin::list_plugins))
         .route("/api/plugins/market", get(plugin::get_market_registry))
