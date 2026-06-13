@@ -263,6 +263,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.about.upToDate': 'Up to date',
     'settings.about.updateAvailable': 'Update available',
     'settings.about.download': 'Download',
+    'settings.about.checkForUpdates': 'Check for updates',
+    'settings.about.checking': 'Checking...',
   },
   zh: {
     'app.settings': '设置',
@@ -523,6 +525,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.about.upToDate': '已是最新版本',
     'settings.about.updateAvailable': '有新版本可用',
     'settings.about.download': '下载',
+    'settings.about.checkForUpdates': '检查更新',
+    'settings.about.checking': '检查中...',
   },
 }
 
