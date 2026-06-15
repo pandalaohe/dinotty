@@ -1,6 +1,7 @@
 <template>
   <div class="terminal-pane-container" @contextmenu.prevent>
     <div ref="wrapperRef" class="terminal-pane"></div>
+    <SearchBar v-if="searchVisible && terminal" :terminal="terminal" @close="searchVisible = false" />
   </div>
   <ConfirmModal
     :visible="confirmVisible"
@@ -19,6 +20,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { TerminalInstance } from '../../composables/useTerminal'
 import { useI18n } from '../../composables/useI18n'
 import ConfirmModal from '../ui/ConfirmModal.vue'
+import SearchBar from './SearchBar.vue'
 
 const props = defineProps<{
   paneId: string
@@ -38,6 +40,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const wrapperRef = ref<HTMLElement>()
 let terminal: TerminalInstance | null = null
+const searchVisible = ref(false)
 
 const confirmVisible = ref(false)
 const confirmTitle = ref('')
@@ -66,6 +69,10 @@ function sendData(data: string) {
 
 function setOutputListener(cb: ((data: string) => void) | null) {
   if (terminal) terminal.onRawOutput = cb
+}
+
+function toggleSearch() {
+  searchVisible.value = !searchVisible.value
 }
 
 function onConfirm() {
@@ -117,7 +124,7 @@ onBeforeUnmount(() => {
   terminal = null
 })
 
-defineExpose({ getTerminal, focus, fit, sendData, setOutputListener })
+defineExpose({ getTerminal, focus, fit, sendData, setOutputListener, toggleSearch })
 </script>
 
 <style scoped>
