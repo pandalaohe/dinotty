@@ -12,3 +12,4 @@ pub mod notification;
 pub mod history;
 pub mod plugin;
 pub mod tabs;
+pub mod openapi;
