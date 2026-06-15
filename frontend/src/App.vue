@@ -811,6 +811,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
     equalizePanes: () => splitPane.equalizePanes(),
     focusNextPane: () => splitPane.focusNext(),
     focusPrevPane: () => splitPane.focusPrev(),
+    searchTerminal: () => {
+      if (!activePaneId.value) return
+      const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+      if (!tab || tab.type !== 'terminal') return
+      termRefs[tab.activePaneId]?.toggleSearch()
+    },
   }
 
   for (const [id, action] of Object.entries(keyActions)) {
