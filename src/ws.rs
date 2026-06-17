@@ -102,6 +102,10 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
         }
     });
 
+    // Register as sync client BEFORE sending tab_list so we don't miss any
+    // broadcasts that happen between tab_list and registration.
+    let (client_id, mut rx) = manager.add_sync_client();
+
     // Send current tab list with active tab
     let (tabs, active_pane_id) = manager.tab_list();
     let tab_list = SyncMsg::TabList { tabs, active_pane_id };
@@ -109,7 +113,6 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
     if ws_out_tx.send(Message::Text(msg.into())).is_err() { return; }
 
     // Use mpsc channel to bridge broadcast messages and direct responses to the WebSocket
-    let (client_id, mut rx) = manager.add_sync_client();
     let (msg_tx, mut msg_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Forward broadcast messages into the shared channel
