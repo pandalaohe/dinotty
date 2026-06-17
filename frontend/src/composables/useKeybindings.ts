@@ -24,6 +24,7 @@ const defs: KeyBindingDef[] = [
   { id: 'equalizePanes', defaultBinding: { key: '=', shift: false }, icon: '⊞', titleKey: 'keybinding.equalizePanes' },
   { id: 'focusNextPane', defaultBinding: { key: ']', shift: false }, icon: '→', titleKey: 'keybinding.focusNextPane' },
   { id: 'focusPrevPane', defaultBinding: { key: '[', shift: false }, icon: '←', titleKey: 'keybinding.focusPrevPane' },
+  { id: 'searchTerminal', defaultBinding: { key: 'f', shift: false }, icon: '🔍', titleKey: 'keybinding.searchTerminal' },
 ]
 
 export function useKeybindings() {

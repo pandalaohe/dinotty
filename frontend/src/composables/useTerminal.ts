@@ -2,6 +2,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { SearchAddon } from '@xterm/addon-search'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, settings, onTextChange } from './useSettings'
@@ -37,6 +38,7 @@ export class TerminalInstance {
   paneId: string
   xterm: XTerm | null = null
   fitAddon: FitAddon | null = null
+  searchAddon: SearchAddon | null = null
   ws: WebSocket | null = null
   private _transport: Transport | null = null
 
@@ -141,6 +143,9 @@ export class TerminalInstance {
       webgl.onContextLoss(() => webgl.dispose())
       this.xterm.loadAddon(webgl)
     } catch { /* DOM renderer fallback */ }
+
+    this.searchAddon = new SearchAddon()
+    this.xterm.loadAddon(this.searchAddon)
 
     const textarea = wrapper.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
     if (textarea && isTouchDevice()) {

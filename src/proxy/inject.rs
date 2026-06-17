@@ -17,6 +17,11 @@ var real='http://'+h+':'+pt+path+location.search+location.hash;
 window.parent.postMessage({type:'proxy-navigate',url:real},'*');
 }
 notifyNav();
+try{
+var pp=location.pathname;
+var pm=pp.match(/^\/preview\/(([^\/]+\/)?[^\/]+)(\/.*)?$/);
+if(pm){var raw=pm[3]||'/';history.replaceState(history.state,'',raw+location.search+location.hash);}
+}catch(e){}
 function rewrite(u){
 try{var p=new URL(u,location.href);
 var h=p.hostname;

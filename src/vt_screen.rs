@@ -292,6 +292,67 @@ impl VirtualScreen {
 
         out
     }
+
+    pub fn snapshot_plain(&self) -> String {
+        let buf = if self.using_alternate { &self.alternate } else { &self.primary };
+        let mut lines = Vec::with_capacity(buf.rows);
+
+        for row in &buf.cells {
+            let mut line = String::with_capacity(self.cols);
+            let last_content = row.iter().rposition(|c| c.ch != ' ' && c.ch != '\0')
+                .map(|i| i + 1).unwrap_or(0);
+            for cell in &row[..last_content] {
+                if cell.ch == '\0' {
+                    line.push(' ');
+                } else {
+                    line.push(cell.ch);
+                }
+            }
+            lines.push(line);
+        }
+        lines.join("\n")
+    }
+
+    pub fn snapshot_scrollback_plain(&self, max_lines: Option<usize>) -> Vec<String> {
+        if self.using_alternate || self.scrollback.is_empty() {
+            return Vec::new();
+        }
+        let skip = if let Some(max) = max_lines {
+            self.scrollback.len().saturating_sub(max)
+        } else {
+            0
+        };
+
+        self.scrollback.iter().skip(skip).map(|row| {
+            let mut line = String::with_capacity(self.cols);
+            let last_content = row.iter().rposition(|c| c.ch != ' ' && c.ch != '\0')
+                .map(|i| i + 1).unwrap_or(0);
+            for cell in &row[..last_content] {
+                if cell.ch == '\0' {
+                    line.push(' ');
+                } else {
+                    line.push(cell.ch);
+                }
+            }
+            line
+        }).collect()
+    }
+
+    pub fn scrollback_len(&self) -> usize {
+        self.scrollback.len()
+    }
+
+    pub fn is_using_alternate(&self) -> bool {
+        self.using_alternate
+    }
+
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
+
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
 }
 
 fn has_attrs(a: &CellAttrs) -> bool {
