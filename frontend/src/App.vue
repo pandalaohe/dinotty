@@ -86,6 +86,16 @@
 
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
 
+    <ConfirmModal
+      :visible="confirmCloseVisible"
+      :title="t('confirm.closeTabTitle')"
+      :message="pendingCloseMessage"
+      :confirm-text="t('confirm.closeTabConfirm')"
+      :cancel-text="t('confirm.closeTabCancel')"
+      @confirm="onConfirmClose"
+      @cancel="onCancelClose"
+    />
+
     <CommandBookmarks ref="bookmarksRef" :get-send-fn="getSendFn" :create-tab="newTab" />
 
     <ServerList ref="serverListRef" @connect="onServerConnect" />
@@ -117,6 +127,7 @@ import type { Command } from './components/command/CommandPalette.vue'
 import MobileKeyboard from './components/keyboard/MobileKeyboard.vue'
 import KbToggleButton from './components/keyboard/KbToggleButton.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
+import ConfirmModal from './components/ui/ConfirmModal.vue'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
@@ -139,6 +150,7 @@ import { usePluginLoader, handlePluginChanged } from './composables/usePluginLoa
 import PluginView from './components/plugin/PluginView.vue'
 import { apiCreateTab, apiCloseTab, apiClosePane, apiActivatePane, apiListTabs } from './composables/useTabApi'
 import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar } from 'lucide-vue-next'
+import { formatCloseTabMessage } from './composables/formatCloseTabMessage'
 import LoginPage from './components/LoginPage.vue'
 import SetupPage from './components/SetupPage.vue'
 
@@ -420,6 +432,64 @@ async function onClosePane(tabId: string, paneId: string) {
   if (!closed) {
     closeTab(tabId)
   }
+}
+
+async function requestCloseTab(tabId: string) {
+  const tab = tabs.value.find(t => t.paneId === tabId)
+  if (!tab) return
+
+  // Bypass 1: non-terminal tabs (plugins) — close immediately, no prompt
+  if (tab.type !== 'terminal') {
+    await closeTab(tabId)
+    return
+  }
+
+  // Bypass 2: user disabled confirmation in settings
+  if (appSettings.confirm_before_close_tab === false) {
+    await closeTab(tabId)
+    return
+  }
+
+  // Otherwise: show confirmation
+  pendingCloseTabId.value = tabId
+  confirmCloseVisible.value = true
+}
+
+const pendingCloseTabId = ref<string | null>(null)
+const confirmCloseVisible = ref(false)
+
+const pendingCloseTabTitle = computed(() => {
+  const id = pendingCloseTabId.value
+  if (!id) return ''
+  const tab = tabs.value.find(t => t.paneId === id)
+  if (!tab) return ''
+  if (tab.type === 'terminal') {
+    const leaf = findFirstLeaf(tab.layout)
+    return leaf?.title ?? 'Terminal'
+  }
+  return tab.title
+})
+
+const pendingCloseMessage = computed(() => {
+  if (!pendingCloseTabTitle.value) return t('confirm.closeTabMessage')
+  // t() does not support {var} interpolation; use extracted helper (Design Doc E9 fallback)
+  return formatCloseTabMessage(
+    t('confirm.closeTabMessage'),
+    pendingCloseTabTitle.value,
+    appSettings.locale === 'en' ? 'en' : 'zh',
+  )
+})
+
+async function onConfirmClose() {
+  const id = pendingCloseTabId.value
+  pendingCloseTabId.value = null
+  confirmCloseVisible.value = false
+  if (id) await closeTab(id)
+}
+
+function onCancelClose() {
+  pendingCloseTabId.value = null
+  confirmCloseVisible.value = false
 }
 
 async function closeTab(tabId: string) {
