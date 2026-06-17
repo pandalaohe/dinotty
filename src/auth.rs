@@ -58,6 +58,42 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
+    // /api/auth is exempt from the IP whitelist so that users on non-whitelisted
+    // IPs (e.g. LAN) can still authenticate. The token is still validated below.
+    if path == "/api/auth" {
+        let map = fail_map();
+        if let Some(rec) = map.get(&client_ip) {
+            if rec.count >= MAX_FAILURES {
+                let elapsed = rec.last_fail.elapsed().as_secs();
+                if elapsed < LOCKOUT_SECS {
+                    return Response::builder()
+                        .status(StatusCode::TOO_MANY_REQUESTS)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header("Retry-After", (LOCKOUT_SECS - elapsed).to_string())
+                        .body(Body::from(r#"{"error":"too many failed attempts, please try again later"}"#))
+                        .unwrap();
+                } else {
+                    drop(rec);
+                    map.remove(&client_ip);
+                }
+            }
+        }
+        if check_token(&request, token) {
+            map.remove(&client_ip);
+            return next.run(request).await;
+        }
+        {
+            let mut rec = map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
+            rec.count += 1;
+            rec.last_fail = Instant::now();
+        }
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"error":"unauthorized"}"#))
+            .unwrap();
+    }
+
     // Brute-force lockout check
     let map = fail_map();
     if let Some(rec) = map.get(&client_ip) {

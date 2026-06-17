@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::pty;
-use crate::session::{self, SessionManager};
+use crate::session::{self, SessionManager, SyncMsg};
 
 // ─── Request/Response types ────────────────────────────────────────
 
@@ -82,6 +82,13 @@ pub async fn create_tab(
     // Set as active tab
     *manager.active_pane_id.lock().unwrap() = Some(pane_id.clone());
 
+    // Broadcast to all sync clients
+    manager.broadcast_sync(&SyncMsg::TabCreated {
+        tab_id: tab_id.clone(),
+        pane_id: pane_id.clone(),
+        layout: Some(layout.clone()),
+    });
+
     Json(serde_json::json!({
         "tab_id": tab_id,
         "pane_id": pane_id,
@@ -111,6 +118,9 @@ pub async fn close_tab(
 
     // Remove tab
     manager.remove_tab(&tab_id);
+
+    // Broadcast to all sync clients
+    manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_id });
 
     Json(serde_json::json!({ "ok": true })).into_response()
 }
@@ -207,10 +217,17 @@ pub async fn split_pane(
     manager.insert_tab(
         tab_id.clone(),
         serde_json::json!({
-            "layout": new_layout,
-            "active_pane_id": active_pane_id,
+            "layout": new_layout.clone(),
+            "active_pane_id": active_pane_id.clone(),
         }),
     );
+
+    // Broadcast to all sync clients
+    manager.broadcast_sync(&SyncMsg::LayoutUpdated {
+        pane_id: tab_id,
+        layout: new_layout.clone(),
+        active_pane_id,
+    });
 
     Json(serde_json::json!({
         "new_pane_id": new_pane_id,
@@ -266,6 +283,9 @@ pub async fn close_pane(
         // Last pane - remove entire tab
         manager.remove_tab(&tab_id);
 
+        // Broadcast tab closed
+        manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_id });
+
         Json(serde_json::json!({ "ok": true, "tab_closed": true }))
     } else {
         // Remove pane from layout
@@ -285,10 +305,17 @@ pub async fn close_pane(
         manager.insert_tab(
             tab_id.clone(),
             serde_json::json!({
-                "layout": new_layout,
-                "active_pane_id": active_pane_id,
+                "layout": new_layout.clone(),
+                "active_pane_id": active_pane_id.clone(),
             }),
         );
+
+        // Broadcast layout updated
+        manager.broadcast_sync(&SyncMsg::LayoutUpdated {
+            pane_id: tab_id,
+            layout: new_layout.clone(),
+            active_pane_id: active_pane_id.clone(),
+        });
 
         Json(serde_json::json!({ "ok": true, "tab_closed": false, "layout": new_layout, "active_pane_id": active_pane_id }))
     }
@@ -336,6 +363,9 @@ pub async fn activate_pane(
     // Update global active pane
     *manager.active_pane_id.lock().unwrap() = Some(pane_id.clone());
 
+    // Broadcast to all sync clients
+    manager.broadcast_sync(&SyncMsg::TabActivated { pane_id });
+
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
@@ -359,10 +389,17 @@ pub async fn update_layout(
     manager.insert_tab(
         tab_id.clone(),
         serde_json::json!({
-            "layout": req.layout,
-            "active_pane_id": req.active_pane_id,
+            "layout": req.layout.clone(),
+            "active_pane_id": req.active_pane_id.clone(),
         }),
     );
+
+    // Broadcast to all sync clients
+    manager.broadcast_sync(&SyncMsg::LayoutUpdated {
+        pane_id: tab_id,
+        layout: req.layout,
+        active_pane_id: req.active_pane_id,
+    });
 
     Json(serde_json::json!({ "ok": true })).into_response()
 }
