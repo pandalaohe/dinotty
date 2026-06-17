@@ -6,14 +6,11 @@
         :key="tab.paneId"
         class="tab"
         :class="{ active: tab.paneId === activePaneId, 'drag-over': dragOverId === tab.paneId }"
-        draggable="true"
-        @dragstart="onDragStart($event, tab.paneId)"
-        @dragover.prevent="onDragOver(tab.paneId)"
-        @dragleave="onDragLeave(tab.paneId)"
-        @drop.prevent="onDrop(tab.paneId)"
-        @dragend="onDragEnd"
-        @click="$emit('activate', tab.paneId)"
-        @touchend.prevent="$emit('activate', tab.paneId)"
+        :data-pane-id="tab.paneId"
+        @mousedown.prevent="onTabMouseDown($event, tab.paneId)"
+        @touchstart.prevent="onTabTouchStart($event, tab.paneId)"
+        @click="onTabClick($event, tab.paneId)"
+        @touchend.prevent="onTabTouchEnd($event, tab.paneId)"
       >
         <span class="tab-title">{{ tab.title }}</span>
         <span v-if="indicators[tab.paneId]" class="tab-notif-dot" :class="'dot-' + indicators[tab.paneId]"></span>
@@ -145,49 +142,126 @@ watch([pluginMenuOpen, newMenuOpen], ([pluginOpen, newOpen]) => {
   }
 })
 
-onBeforeUnmount(() => {
-  document.removeEventListener('touchstart', onDocTouchStart)
-})
-
-const dragFromId = ref<string | null>(null)
 const dragOverId = ref<string | null>(null)
 
-function onDragStart(e: DragEvent, paneId: string) {
-  dragFromId.value = paneId
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'move'
+let dragFromId: string | null = null
+let dragStarted = false
+let startX = 0
+let startY = 0
+let isTouchDrag = false
+let suppressClick = false
+const DRAG_THRESHOLD = 5
+
+function getPointerPos(e: MouseEvent | TouchEvent): { clientX: number; clientY: number } {
+  if ('touches' in e) {
+    const t = e.touches[0]
+    return { clientX: t.clientX, clientY: t.clientY }
   }
+  return { clientX: e.clientX, clientY: e.clientY }
 }
 
-function onDragOver(paneId: string) {
-  if (dragFromId.value && dragFromId.value !== paneId) {
-    dragOverId.value = paneId
-  }
+function onTabMouseDown(e: MouseEvent, paneId: string) {
+  if (e.button !== 0) return
+  suppressClick = false
+  startDrag(e, paneId, false)
 }
 
-function onDragLeave(paneId: string) {
-  if (dragOverId.value === paneId) {
-    dragOverId.value = null
-  }
+function onTabTouchStart(e: TouchEvent, paneId: string) {
+  if (e.touches.length !== 1) return
+  suppressClick = false
+  startDrag(e, paneId, true)
 }
 
-function onDrop(paneId: string) {
-  if (dragFromId.value && dragFromId.value !== paneId) {
-    emit('reorder', dragFromId.value, paneId)
+function onTabClick(e: MouseEvent, paneId: string) {
+  if (suppressClick) {
+    e.preventDefault()
+    e.stopPropagation()
+    suppressClick = false
+    return
   }
-  dragFromId.value = null
+  emit('activate', paneId)
+}
+
+function onTabTouchEnd(e: TouchEvent, paneId: string) {
+  if (suppressClick) {
+    suppressClick = false
+    return
+  }
+  emit('activate', paneId)
+}
+
+function startDrag(e: MouseEvent | TouchEvent, paneId: string, isTouch: boolean) {
+  const pos = getPointerPos(e)
+  startX = pos.clientX
+  startY = pos.clientY
+  dragStarted = false
+  isTouchDrag = isTouch
+  dragFromId = paneId
+
+  const moveEvent = isTouch ? 'touchmove' : 'mousemove'
+  const endEvent = isTouch ? 'touchend' : 'mouseup'
+
+  window.addEventListener(moveEvent, onPointerMove as EventListener, { passive: !isTouch } as AddEventListenerOptions)
+  window.addEventListener(endEvent, onPointerEnd)
+}
+
+function onPointerMove(e: MouseEvent | TouchEvent) {
+  const pos = getPointerPos(e)
+  if (!dragStarted) {
+    if (Math.abs(pos.clientX - startX) < DRAG_THRESHOLD && Math.abs(pos.clientY - startY) < DRAG_THRESHOLD) {
+      return
+    }
+    dragStarted = true
+  }
+
+  // Find tab element under cursor
+  const el = document.elementFromPoint(pos.clientX, pos.clientY)
+  let targetId: string | null = null
+  if (el) {
+    const tabEl = el.closest('.tab[data-pane-id]') as HTMLElement | null
+    if (tabEl) {
+      const pid = tabEl.dataset.paneId
+      if (pid && pid !== dragFromId) {
+        targetId = pid
+      }
+    }
+  }
+
+  dragOverId.value = targetId
+}
+
+function onPointerEnd() {
+  if (dragStarted && dragFromId && dragOverId.value && dragFromId !== dragOverId.value) {
+    suppressClick = true
+    emit('reorder', dragFromId, dragOverId.value)
+  }
+
+  cleanup()
+}
+
+function cleanup() {
+  dragStarted = false
+  dragFromId = null
   dragOverId.value = null
+
+  window.removeEventListener('mousemove', onPointerMove as EventListener)
+  window.removeEventListener('mouseup', onPointerEnd)
+  window.removeEventListener('touchmove', onPointerMove as EventListener)
+  window.removeEventListener('touchend', onPointerEnd)
 }
 
-function onDragEnd() {
-  dragFromId.value = null
-  dragOverId.value = null
-}
+onBeforeUnmount(() => {
+  cleanup()
+  document.removeEventListener('touchstart', onDocTouchStart)
+})
 </script>
 
 <style scoped>
-.tab[draggable="true"] {
+.tab {
   cursor: grab;
+}
+.tab:active {
+  cursor: grabbing;
 }
 .tab.drag-over {
   border-left: 2px solid var(--accent, #8A8A8A);

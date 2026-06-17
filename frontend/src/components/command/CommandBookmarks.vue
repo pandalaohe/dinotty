@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="bookmarks-backdrop" @click.self="close">
+    <div v-if="visible" class="bookmarks-backdrop" @click.self="close" @keydown.escape="close">
       <div class="bookmarks-panel">
         <div class="bookmarks-header">
           <h2>Saved Commands</h2>
@@ -50,6 +50,7 @@ import { useSettings } from '../../composables/useSettings'
 
 const props = defineProps<{
   getSendFn: () => ((data: string) => void) | null
+  createTab?: () => Promise<void>
 }>()
 
 const visible = ref(false)
@@ -76,8 +77,14 @@ const filteredBookmarks = computed(() => {
 function open() { visible.value = true }
 function close() { visible.value = false }
 
-function sendBookmark(bm: { command: string }) {
-  const send = props.getSendFn()
+async function sendBookmark(bm: { command: string }) {
+  let send = props.getSendFn()
+  if (!send && props.createTab) {
+    await props.createTab()
+    // Wait for terminal component to mount and register its ref
+    await new Promise(r => setTimeout(r, 100))
+    send = props.getSendFn()
+  }
   if (send) {
     send(bm.command + '\r')
   }

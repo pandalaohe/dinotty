@@ -18,6 +18,17 @@ export interface ClosePaneResult {
   active_pane_id?: string
 }
 
+export interface ListTabsResult {
+  tabs: Array<{ tab_id: string; pane_id: string; layout?: any; active_pane_id?: string }>
+  active_pane_id: string | null
+}
+
+export async function apiListTabs(): Promise<ListTabsResult> {
+  const res = await authFetch(apiUrl('/api/tabs'))
+  if (!res.ok) throw new Error(`list tabs failed: ${res.status}`)
+  return res.json()
+}
+
 export async function apiCreateTab(): Promise<CreateTabResult> {
   const res = await authFetch(apiUrl('/api/tabs'), { method: 'POST' })
   if (!res.ok) throw new Error(`create tab failed: ${res.status}`)

@@ -86,7 +86,7 @@
 
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
 
-    <CommandBookmarks ref="bookmarksRef" :get-send-fn="getSendFn" />
+    <CommandBookmarks ref="bookmarksRef" :get-send-fn="getSendFn" :create-tab="newTab" />
 
     <ServerList ref="serverListRef" @connect="onServerConnect" />
 
@@ -137,13 +137,14 @@ import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useNotification } from './composables/useNotification'
 import { usePluginLoader, handlePluginChanged } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
-import { apiCreateTab, apiCloseTab, apiClosePane, apiActivatePane } from './composables/useTabApi'
+import { apiCreateTab, apiCloseTab, apiClosePane, apiActivatePane, apiListTabs } from './composables/useTabApi'
 import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar } from 'lucide-vue-next'
 import LoginPage from './components/LoginPage.vue'
 import SetupPage from './components/SetupPage.vue'
 
 const tabs = ref<Tab[]>([])
 const activePaneId = ref<string | null>(null)
+const syncConnected = ref(false)
 const kbVisible = ref(false)
 let linkJustActivated = false
 const settingsOpen = ref(false)
@@ -158,7 +159,7 @@ function setPreviewPanelRef(el: any) {
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
 const serverListRef = ref<InstanceType<typeof ServerList>>()
 
-const { settings: appSettings } = useSettings()
+const { settings: appSettings, loadSettings } = useSettings()
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
@@ -351,6 +352,15 @@ const DEFAULT_PREVIEW_URL = ''
 async function newTab() {
   try {
     const result = await apiCreateTab()
+    // Dedup: broadcast_sync echoes back to sender — tab_created handler may
+    // have already added this tab if the sync message arrived before the
+    // REST response.
+    if (tabs.value.some(t => t.type === 'terminal' && t.paneId === result.tab_id)) {
+      activePaneId.value = result.tab_id
+      persist()
+      nextTick(() => focusActive())
+      return
+    }
     const layout = ensureSplitRoot(result.layout)
     tabs.value.push({
       type: 'terminal',
@@ -366,8 +376,6 @@ async function newTab() {
     })
     activePaneId.value = result.tab_id
     persist()
-    // Notify other sync clients
-    sendSync({ type: 'create_tab', layout: result.layout, tab_id: result.tab_id, pane_id: result.pane_id })
     nextTick(() => focusActive())
   } catch (e) {
     console.error('Failed to create tab:', e)
@@ -393,7 +401,6 @@ async function activateTab(tabId: string) {
     } catch (e) {
       console.error('Failed to activate pane:', e)
     }
-    sendSync({ type: 'activate_tab', pane_id: tab.activePaneId })
   }
   persist()
   nextTick(() => focusActive())
@@ -431,8 +438,6 @@ async function closeTab(tabId: string) {
       console.error('Failed to close tab:', e)
       return
     }
-    // Notify other sync clients
-    sendSync({ type: 'close_tab', pane_id: tabId })
   }
 
   // Remove tab from local array
@@ -548,6 +553,7 @@ function getSendFn(): ((data: string) => void) | null {
 async function onLoginSuccess() {
   authenticated.value = true
   await getApiBase()
+  await loadSettings()
   void loadAll()
   void connectSyncWS()
   initMonitorHistory()
@@ -810,6 +816,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
     equalizePanes: () => splitPane.equalizePanes(),
     focusNextPane: () => splitPane.focusNext(),
     focusPrevPane: () => splitPane.focusPrev(),
+    searchTerminal: () => {
+      if (!activePaneId.value) return
+      const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+      if (!tab || tab.type !== 'terminal') return
+      termRefs[tab.activePaneId]?.toggleSearch()
+    },
   }
 
   for (const [id, action] of Object.entries(keyActions)) {
@@ -855,6 +867,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
 }
 
+let syncReconnectDelay = 1000
+
 async function connectSyncWS() {
   let url: string
   if (isTauri()) {
@@ -864,7 +878,18 @@ async function connectSyncWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     url = `${proto}//${location.host}/ws/sync`
   }
-  syncWs = new WebSocket(wsUrlWithToken(url))
+  const wsUrl = wsUrlWithToken(url)
+  if (wsUrl === url && hasAuthToken()) {
+    // Token exists in localStorage but wsUrlWithToken didn't append it — should not happen
+    console.warn('[sync] token available but not appended to WS URL')
+  }
+  syncWs = new WebSocket(wsUrl)
+
+  syncWs.onopen = () => {
+    console.log('[sync] connected')
+    syncConnected.value = true
+    syncReconnectDelay = 1000
+  }
 
   syncWs.onmessage = (e) => {
     let msg: SyncServerMsg
@@ -965,6 +990,7 @@ async function connectSyncWS() {
       }
 
       persist()
+      nextTick(() => focusActive())
     } else if (msg.type === 'tab_created') {
       // Check if this tab already exists locally (either our own or from tab_list)
       const exists = tabs.value.some(t => {
@@ -972,7 +998,6 @@ async function connectSyncWS() {
         return t.paneId === msg.tab_id || !!findLeaf(t.layout, msg.pane_id)
       })
       if (!exists) {
-        // Broadcast from another client — create the tab
         const layout = msg.layout ? ensureSplitRoot(msg.layout) : ensureSplitRoot({ type: 'leaf', paneId: msg.pane_id, title: 'Terminal', ratio: 1, zoomed: false })
         tabs.value.push({
           type: 'terminal',
@@ -986,9 +1011,10 @@ async function connectSyncWS() {
           previewUrl: '',
           previewKind: 'web',
         })
-        suppressSync = true
+        // Activate the new tab so it becomes visible immediately.
+        // broadcast_sync echoes to the sender — without this, the sender's
+        // own tab stays hidden until the REST response arrives.
         activePaneId.value = msg.tab_id
-        suppressSync = false
         persist()
         nextTick(() => focusActive())
       }
@@ -1075,12 +1101,17 @@ async function connectSyncWS() {
     }
   }
 
-  syncWs.onclose = () => {
+  syncWs.onclose = (e) => {
+    console.warn('[sync] disconnected', e.code, e.reason)
     syncWs = null
-    setTimeout(connectSyncWS, 2000)
+    syncConnected.value = false
+    setTimeout(connectSyncWS, syncReconnectDelay)
+    syncReconnectDelay = Math.min(syncReconnectDelay * 2, 30000)
   }
 
-  syncWs.onerror = () => {}
+  syncWs.onerror = (e) => {
+    console.error('[sync] error', e)
+  }
 }
 
 function onOrientationChange() {
@@ -1105,6 +1136,46 @@ onMounted(async () => {
     void connectSyncWS()
     initMonitorHistory()
     void loadAll()
+    // Fallback: if sync WS hasn't delivered tabs within 3s, load via REST
+    setTimeout(async () => {
+      if (tabs.value.length === 0 && (!syncWs || syncWs.readyState !== WebSocket.OPEN)) {
+        try {
+          const data = await apiListTabs()
+          for (const tab of data.tabs) {
+            if (tabs.value.some(t => t.paneId === tab.tab_id)) continue
+            const layout = tab.layout ? ensureSplitRoot(tab.layout) : ensureSplitRoot({ type: 'leaf', paneId: tab.pane_id, title: 'Terminal', ratio: 1, zoomed: false })
+            tabs.value.push({
+              type: 'terminal',
+              paneId: tab.tab_id,
+              layout,
+              activePaneId: tab.active_pane_id ?? tab.pane_id,
+              broadcastMode: false,
+              broadcastActivity: 0,
+              previewVisible: false,
+              previewAddress: '',
+              previewUrl: '',
+              previewKind: 'web',
+            })
+          }
+          if (data.active_pane_id) {
+            const targetTab = tabs.value.find(t => {
+              if (t.type !== 'terminal') return false
+              return !!findLeaf(t.layout, data.active_pane_id!)
+            }) as TerminalTab | undefined
+            if (targetTab) {
+              activePaneId.value = targetTab.paneId
+            }
+          }
+          if (tabs.value.length > 0 && !activePaneId.value) {
+            activePaneId.value = tabs.value[0].paneId
+          }
+          persist()
+          nextTick(() => focusActive())
+        } catch (e) {
+          console.warn('[sync] REST fallback failed:', e)
+        }
+      }
+    }, 3000)
   } else {
     // No local token — check if server has one configured
     await getApiBase()
