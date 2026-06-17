@@ -10,7 +10,7 @@
       :can-broadcast="canBroadcast"
       :broadcast-active="isBroadcastActive"
       @activate="activateTab"
-      @close="closeTab"
+      @close="requestCloseTab"
       @action="onNewMenuAction"
       @reorder="reorderTab"
       @open-plugin="openPlugin"
@@ -430,7 +430,7 @@ function reorderTab(fromId: string, toId: string) {
 async function onClosePane(tabId: string, paneId: string) {
   const closed = await splitPane.closePane(paneId)
   if (!closed) {
-    closeTab(tabId)
+    requestCloseTab(tabId)
   }
 }
 
@@ -770,10 +770,10 @@ const paletteCommands = computed<Command[]>(() => {
           const tab = tabs.value.find(t => t.paneId === activePaneId.value)
           if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
             if (!await splitPane.closePane(tab.activePaneId)) {
-              closeTab(activePaneId.value)
+              requestCloseTab(activePaneId.value)
             }
           } else {
-            closeTab(activePaneId.value)
+            requestCloseTab(activePaneId.value)
           }
         }
       },
@@ -873,10 +873,10 @@ function onGlobalKeydown(e: KeyboardEvent) {
       if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
         // Multi-pane: close current pane
         if (!await splitPane.closePane(tab.activePaneId)) {
-          closeTab(activePaneId.value)
+          requestCloseTab(activePaneId.value)
         }
       } else {
-        closeTab(activePaneId.value)
+        requestCloseTab(activePaneId.value)
       }
     },
     splitHorizontal: () => splitPane.splitPane('horizontal'),
