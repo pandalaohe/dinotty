@@ -81,6 +81,7 @@ import { Copy, ClipboardPaste, Bookmark, TextSelect } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { copyToClipboard } from '../../utils/clipboard'
+import { randomId } from '../../utils/id'
 
 const props = defineProps<{
   visible: boolean
@@ -161,7 +162,7 @@ function saveBookmark() {
   const cmd = bookmarkCommand.value.trim()
   if (!cmd) return
   settings.bookmarks.push({
-    id: crypto.randomUUID(),
+    id: randomId(),
     name: bookmarkName.value.trim() || cmd.slice(0, 30),
     command: cmd,
     group: null,

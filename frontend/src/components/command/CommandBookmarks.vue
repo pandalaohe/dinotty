@@ -84,6 +84,7 @@
 import { ref, computed, nextTick } from 'vue'
 import { Plus, X, Check, GripVertical } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
+import { randomId } from '../../utils/id'
 import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
@@ -153,7 +154,7 @@ async function sendBookmark(bm: { command: string }) {
 function addBookmark() {
   if (!newCommand.value.trim()) return
   settings.bookmarks.push({
-    id: crypto.randomUUID(),
+    id: randomId(),
     name: newName.value.trim() || newCommand.value.trim(),
     command: newCommand.value.trim(),
     group: newGroup.value.trim() || null,
