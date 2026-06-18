@@ -774,18 +774,22 @@ async function openQuickPicks() {
 
   const commands: Command[] = []
   for (const pick of picks) {
-    const items = await pick.options.items()
-    for (const item of items) {
-      commands.push({
-        icon: item.icon || '★',
-        title: item.label,
-        subtitle: item.detail,
-        action: item.action,
-      })
-    }
+    try {
+      const items = await pick.options.items()
+      for (const item of items) {
+        commands.push({
+          icon: item.icon || '★',
+          title: item.label,
+          subtitle: item.detail,
+          action: item.action,
+        })
+      }
+    } catch { /* skip broken quick pick */ }
   }
   if (commands.length > 0) {
     paletteRef.value?.openWithItems(commands)
+  } else {
+    bookmarksRef.value?.open()
   }
 }
 
