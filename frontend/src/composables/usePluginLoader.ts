@@ -125,8 +125,8 @@ export interface LoadedPlugin {
 // ─── Module Scope State ───────────────────────────────────────────────────────
 
 export const loadedPlugins = reactive(new Map<string, LoadedPlugin>())
-const pluginCommands = new Map<string, { pluginId: string; handler: () => void }>()
-const pluginQuickPicks = new Map<string, { pluginId: string; options: QuickPickOptions }>()
+const pluginCommands = reactive(new Map<string, { pluginId: string; handler: () => void }>())
+const pluginQuickPicks = reactive(new Map<string, { pluginId: string; options: QuickPickOptions }>())
 
 // ─── Window API Injection Points ──────────────────────────────────────────────
 
