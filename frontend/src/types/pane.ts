@@ -1,3 +1,5 @@
+import { randomId } from '../utils/id'
+
 /** 叶子节点：一个终端 Pane */
 export interface LeafPane {
   type: 'leaf'
@@ -195,7 +197,7 @@ export function removeLeaf(root: PaneLayout, paneId: string): LeafPane | null {
 
 /** Generate a stable ID for a SplitPane */
 export function genSplitId(): string {
-  return 's-' + crypto.randomUUID()
+  return 's-' + randomId()
 }
 
 /** Ensure a SplitPane has an id (for deserialized/migrated data) */
