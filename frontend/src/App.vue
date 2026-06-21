@@ -138,7 +138,7 @@ import { migrateTab, getAllLeaves, findLeaf, findFirstLeaf, ensureSplitRoot } fr
 import { useSettings } from './composables/useSettings'
 import { getApiBase, wsUrlWithToken, hasAuthToken, checkTokenConfigured, setAuthToken } from './composables/apiBase'
 import { isTauri } from './composables/useTransport'
-import { isTouchDevice } from './composables/useTerminal'
+import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { useKeybindings } from './composables/useKeybindings'
 import { useSplitPane } from './composables/useSplitPane'
@@ -205,6 +205,17 @@ watch(
     document.title = title || 'Terminal'
   },
   { immediate: true },
+)
+
+// Track effective active pane for Tauri WKWebView input guard
+watch(
+  [activePaneId, tabs],
+  () => {
+    const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+    const paneId = (tab?.type === 'terminal') ? tab.activePaneId : null
+    setActivePaneId(paneId)
+  },
+  { immediate: true, deep: true },
 )
 
 const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
@@ -570,6 +581,12 @@ function focusActive() {
   if (tab.type === 'terminal') {
     const paneId = tab.activePaneId
     if (!(isTouchDevice() && kbVisible.value)) {
+      // Blur all other panes first to prevent duplicate input in Tauri WKWebView
+      for (const leaf of getAllLeaves(tab.layout)) {
+        if (leaf.paneId !== paneId) {
+          termRefs[leaf.paneId]?.blur()
+        }
+      }
       termRefs[paneId]?.focus()
     }
     termRefs[paneId]?.fit()
