@@ -818,11 +818,9 @@ const paletteCommands = computed<Command[]>(() => {
         if (activePaneId.value) {
           const tab = tabs.value.find(t => t.paneId === activePaneId.value)
           if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
-            if (!await splitPane.closePane(tab.activePaneId)) {
-              requestCloseTab(activePaneId.value)
-            }
+            await onClosePane(tab.paneId, tab.activePaneId)
           } else {
-            requestCloseTab(activePaneId.value)
+            await requestCloseTab(activePaneId.value)
           }
         }
       },
