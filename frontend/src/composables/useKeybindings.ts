@@ -95,7 +95,7 @@ const defs: KeyBindingDef[] = [
   },
   {
     id: 'missionControl',
-    defaultBinding: { key: 'e', shift: true },
+    defaultBinding: { key: 'm', shift: true },
     icon: '⊞',
     titleKey: 'keybinding.missionControl',
   },
