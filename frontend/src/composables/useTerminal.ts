@@ -36,6 +36,50 @@ export const DEDUP_WINDOW_MS = 2
  * it is a WKWebView multi-focus replay of the previous event. Exported
  * for unit testing.
  */
+/**
+ * Standalone composition guard for unit testing.
+ * Mirrors the logic inside TerminalInstance.setupCompositionGuard.
+ */
+export function createCompositionGuard(sendData: (data: string) => void) {
+  let isComposing = false
+  let compositionJustEnded = false
+  let compositionData = ''
+  let safetyTimer: ReturnType<typeof setTimeout> | null = null
+
+  return {
+    onCompositionStart() {
+      isComposing = true
+      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+      safetyTimer = setTimeout(() => {
+        isComposing = false
+        safetyTimer = null
+      }, 1000)
+    },
+    onCompositionEnd(event: CompositionEvent) {
+      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+      isComposing = false
+      compositionJustEnded = true
+      compositionData = ''
+      if (event.data) sendData(event.data)
+      setTimeout(() => {
+        compositionJustEnded = false
+        compositionData = ''
+      }, 50)
+    },
+    guard(): boolean {
+      if (isComposing) return false
+      if (!compositionJustEnded) return true
+      return false
+    },
+    cleanup() {
+      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+      isComposing = false
+      compositionJustEnded = false
+      compositionData = ''
+    },
+  }
+}
+
 export function isDuplicateOnData(
   data: string,
   prev: string,
@@ -195,10 +239,18 @@ export class TerminalInstance {
       let isComposing = false
       let compositionJustEnded = false
       let compositionData = ''
+      let safetyTimer: ReturnType<typeof setTimeout> | null = null
       const onCompositionStart = () => {
         isComposing = true
+        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+        // Safety: if compositionend never fires (WebKit Bug 224932), reset after 1s
+        safetyTimer = setTimeout(() => {
+          isComposing = false
+          safetyTimer = null
+        }, 1000)
       }
       const onCompositionEnd = () => {
+        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
         isComposing = false
         compositionJustEnded = true
         compositionData = ''
@@ -210,6 +262,7 @@ export class TerminalInstance {
       textarea.addEventListener('compositionstart', onCompositionStart)
       textarea.addEventListener('compositionend', onCompositionEnd)
       this._compositionCleanup = () => {
+        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
         textarea.removeEventListener('compositionstart', onCompositionStart)
         textarea.removeEventListener('compositionend', onCompositionEnd)
       }
