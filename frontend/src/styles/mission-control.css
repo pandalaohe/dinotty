@@ -37,6 +37,11 @@
   overflow: hidden;
   cursor: pointer;
   transition: border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.mc-card:active {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
 }
 .mc-card.active {
   border-color: var(--accent);
@@ -83,10 +88,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
+  -webkit-tap-highlight-color: transparent;
 }
-.mc-card-close:hover {
+.mc-card-close:hover,
+.mc-card-close:active {
   opacity: 1;
 }
 
@@ -132,88 +139,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Touch mode: simple button list */
-.mc-touch-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  max-width: 480px;
-  max-height: calc(80vh - env(safe-area-inset-top, 0px));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 8px;
-  scrollbar-width: none;
-}
-.mc-touch-list::-webkit-scrollbar { display: none; }
-
-.mc-touch-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 14px 16px;
-  background: var(--bg-surface, var(--tab-bg));
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--fg-bright);
-  font-size: 15px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-}
-.mc-touch-btn:active {
-  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
-}
-.mc-touch-btn.active {
-  border-color: var(--accent);
-  background: var(--bg-hover, rgba(255, 255, 255, 0.05));
-}
-
-.mc-touch-btn-index {
-  font-size: 12px;
-  color: var(--text-muted, #888);
-  min-width: 18px;
-  text-align: center;
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.mc-touch-btn-title {
-  flex: 1;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mc-touch-btn-tag {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--accent-bg, rgba(99, 102, 241, 0.15));
-  color: var(--accent, #6366f1);
-  flex-shrink: 0;
-}
-
-.mc-touch-btn-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  margin: -8px -8px -8px 0;
-  border-radius: 8px;
-  color: var(--fg-muted);
-  flex-shrink: 0;
-  -webkit-tap-highlight-color: transparent;
-}
-.mc-touch-btn-close:active {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
 }
 
 /* Split-pane preview layout */
