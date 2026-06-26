@@ -21,6 +21,32 @@ export function setActivePaneId(paneId: string | null) {
   _activePaneId = paneId
 }
 
+// Dedup window (ms) for WKWebView onData double-fire.
+// xterm.js + WKWebView on macOS can produce 2 onData events for one key
+// (modifier-prefixed sequence + actual char). The inter-event gap in
+// WKWebView multi-focus replay is sub-millisecond, while the gap between
+// the modifier-prefixed event and the real char in a Shift+key press is
+// typically > 2ms. A 2ms window rejects the multi-focus duplicate but
+// keeps the modifier sequence intact. (was 5ms — caused Shift+punct to
+// require a double press.)
+export const DEDUP_WINDOW_MS = 2
+
+/**
+ * Determine whether an incoming onData payload should be dropped because
+ * it is a WKWebView multi-focus replay of the previous event. Exported
+ * for unit testing.
+ */
+export function isDuplicateOnData(
+  data: string,
+  prev: string,
+  prevAt: number,
+  now: number,
+): boolean {
+  if (prev === '') return false
+  if (data !== prev) return false
+  return now - prevAt < DEDUP_WINDOW_MS
+}
+
 function setupGlobalTauriDragDrop() {
   if (tauriDragDropRegistered) return
   tauriDragDropRegistered = true
@@ -415,7 +441,7 @@ export class TerminalInstance {
         if (_activePaneId !== null && _activePaneId !== this.paneId) return
         // Deduplicate: WKWebView may fire onData twice for the same keystroke
         const now = performance.now()
-        if (data === this._lastInputData && now - this._lastInputTime < 5) return
+        if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
         this._lastInputData = data
         this._lastInputTime = now
         this.onInput?.(data)
@@ -486,7 +512,7 @@ export class TerminalInstance {
         if (_activePaneId !== null && _activePaneId !== this.paneId) return
         // Deduplicate: WKWebView may fire onData twice for the same keystroke
         const now = performance.now()
-        if (data === this._lastInputData && now - this._lastInputTime < 5) return
+        if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
         this._lastInputData = data
         this._lastInputTime = now
         this.onInput?.(data)
