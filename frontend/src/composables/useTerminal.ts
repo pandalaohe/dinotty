@@ -166,21 +166,29 @@ export class TerminalInstance {
       textarea.setAttribute('virtualkeyboardpolicy', 'manual')
     }
     if (textarea) {
+      let isComposing = false
       let compositionJustEnded = false
       let compositionData = ''
-      const onCompositionEnd = (e: Event) => {
+      const onCompositionStart = () => {
+        isComposing = true
+      }
+      const onCompositionEnd = () => {
+        isComposing = false
         compositionJustEnded = true
         compositionData = ''
         setTimeout(() => {
           compositionJustEnded = false
           compositionData = ''
-        }, 0)
+        }, 50)
       }
+      textarea.addEventListener('compositionstart', onCompositionStart)
       textarea.addEventListener('compositionend', onCompositionEnd)
       this._compositionCleanup = () => {
+        textarea.removeEventListener('compositionstart', onCompositionStart)
         textarea.removeEventListener('compositionend', onCompositionEnd)
       }
       this._compositionGuard = (data: string): boolean => {
+        if (isComposing) return false
         if (!compositionJustEnded) return true
         if (compositionData === '') {
           compositionData = data
