@@ -13,41 +13,7 @@
       @click.self="$emit('close')"
       @keydown="onKeydown"
     >
-      <!-- Touch mode: simple button list -->
       <Motion
-        v-if="isTouch"
-        key="touch-list"
-        class="mc-touch-list"
-        :initial="{ y: 40, opacity: 0 }"
-        :animate="{ y: 0, opacity: 1 }"
-        :exit="{ y: 40, opacity: 0 }"
-        :transition="{ type: 'spring', damping: 25, stiffness: 300 }"
-      >
-        <button
-          v-for="(card, i) in cards"
-          :key="card.paneId"
-          class="mc-touch-btn"
-          :class="{ active: card.paneId === activePaneId }"
-          @click="$emit('activate', card.paneId)"
-        >
-          <span class="mc-touch-btn-index">{{ card.index }}</span>
-          <span class="mc-touch-btn-title">{{ card.title }}</span>
-          <span
-            v-if="card.type === 'plugin'"
-            class="mc-touch-btn-tag"
-          >Plugin</span>
-          <span
-            class="mc-touch-btn-close"
-            @click.stop="$emit('close-tab', card.paneId)"
-          >
-            <X :size="16" />
-          </span>
-        </button>
-      </Motion>
-
-      <!-- Desktop mode: card grid with previews -->
-      <Motion
-        v-else
         key="card-grid"
         class="mc-grid"
         :style="gridStyle"
@@ -102,14 +68,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { Motion, AnimatePresence } from 'motion-v'
 import { X, Puzzle } from 'lucide-vue-next'
 import type { TabCard, PanePreviewNode } from '../../composables/useTabPreview'
-import { isTouchDevice } from '../../composables/useTerminal'
 import SplitPreviewNode from './SplitPreviewNode.vue'
 
 function isSplitPreview(content: string | PanePreviewNode): content is PanePreviewNode {
   return typeof content === 'object' && content !== null && 'direction' in content
 }
-
-const isTouch = isTouchDevice()
 
 const props = defineProps<{
   visible: boolean
