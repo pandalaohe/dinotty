@@ -618,21 +618,6 @@ impl SessionManager {
         tabs.sort_by_key(|t| order_index(&t.tab_id));
         drop(order);
 
-        // Include sessions that don't belong to any existing tab (neither as tab id nor as a leaf)
-        let leaf_ids: std::collections::HashSet<String> =
-            tabs.iter().filter_map(|t| t.layout.as_ref()).flat_map(collect_leaf_pane_ids).collect();
-        for entry in &self.sessions {
-            let pane_id = entry.key().clone();
-            if !tabs.iter().any(|t| t.pane_id == pane_id) && !leaf_ids.contains(&pane_id) {
-                tabs.push(TabInfo {
-                    tab_id: pane_id.clone(),
-                    pane_id,
-                    layout: None,
-                    active_pane_id: None,
-                });
-            }
-        }
-
         let active = self.active_pane_id.lock().expect("mutex poisoned").clone();
         (tabs, active)
     }
