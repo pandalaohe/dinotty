@@ -63,6 +63,7 @@ const emit = defineEmits<{
 
 const wrapperRef = ref<HTMLElement>()
 let terminal: TerminalInstance | null = null
+let pendingFocus = false
 const searchVisible = ref(false)
 
 // Context menu state
@@ -97,10 +98,16 @@ function getTerminal() {
 }
 
 function focus() {
-  terminal?.focus()
+  if (terminal?.xterm) {
+    pendingFocus = false
+    terminal.focus()
+    return
+  }
+  pendingFocus = true
 }
 
 function blur() {
+  pendingFocus = false
   terminal?.blur()
 }
 
@@ -504,6 +511,10 @@ onMounted(() => {
   requestAnimationFrame(() => {
     if (wrapperRef.value) {
       terminal!.attach(wrapperRef.value)
+      if (pendingFocus) {
+        pendingFocus = false
+        terminal!.focus()
+      }
     }
   })
 })
