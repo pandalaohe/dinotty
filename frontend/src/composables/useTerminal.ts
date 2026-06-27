@@ -390,7 +390,8 @@ export class TerminalInstance {
   }
 
   focus() {
-    this.xterm?.focus()
+    if (!this.xterm) return
+    this.xterm.focus()
   }
 
   blur() {
