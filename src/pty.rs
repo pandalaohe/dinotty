@@ -88,6 +88,8 @@ pub fn create_session(
             cwd: initial_cwd,
             sniff_buf: Vec::new(),
         }),
+        sync_active: std::sync::atomic::AtomicBool::new(false),
+        sync_buffer: std::sync::Mutex::new(Vec::new()),
     });
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
 
@@ -110,15 +112,38 @@ pub fn create_session(
                 Ok(n) => {
                     let data = &buf[..n];
                     // Feed to virtual screen and check for command completion
-                    let command_results = {
-                        let mut screen = session_clone.screen.lock().unwrap_or_else(|e| e.into_inner());
+                    let (command_results, sync_events) = {
+                        let mut screen = session_clone
+                            .screen
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         screen.feed(data);
                         let results = screen.drain_command_results();
                         // Collect stdout for each result while still holding the lock
                         let outputs: Vec<String> =
                             (0..results.len()).map(|_| screen.take_command_output()).collect();
-                        results.into_iter().zip(outputs).collect::<Vec<_>>()
+                        let sync = screen.drain_sync_events();
+                        (results.into_iter().zip(outputs).collect::<Vec<_>>(), sync)
                     };
+                    // Handle DEC mode 2026 synchronized output events
+                    for event in sync_events {
+                        match event {
+                            crate::vt_screen::SyncEvent::Start => {
+                                session_clone.set_sync_mode(true);
+                                // Start 1-second safety timeout
+                                let sc = Arc::clone(&session_clone);
+                                tokio::runtime::Handle::current().spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    if sc.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                                        sc.set_sync_mode(false);
+                                    }
+                                });
+                            }
+                            crate::vt_screen::SyncEvent::Stop => {
+                                session_clone.set_sync_mode(false);
+                            }
+                        }
+                    }
                     // Publish command_finished events
                     for (result, stdout) in command_results {
                         manager_clone.event_bus.publish(BusEvent::CommandFinished {
@@ -178,7 +203,11 @@ pub fn create_session(
             manager_clone.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_pane_id });
         }
         info!("PTY exited, session removed: pane={}", pane_id_clone);
-        let cb = session_clone.tauri_on_exit.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let cb = session_clone
+            .tauri_on_exit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         if let Some(f) = cb {
             f(pane_id_clone);
         }

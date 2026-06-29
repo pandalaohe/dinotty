@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -38,8 +37,6 @@ pub async fn list_tabs(State(manager): State<Arc<SessionManager>>) -> impl IntoR
 
 // ─── POST /api/tabs ────────────────────────────────────────────────
 
-/// # Panics
-/// Panics if the internal mutex is poisoned.
 #[allow(clippy::unused_async)]
 pub async fn create_tab(State(manager): State<Arc<SessionManager>>) -> impl IntoResponse {
     let tab_id = uuid::Uuid::new_v4().to_string();
@@ -74,7 +71,8 @@ pub async fn create_tab(State(manager): State<Arc<SessionManager>>) -> impl Into
     );
 
     // Set as active tab
-    *manager.active_pane_id.lock().expect("mutex poisoned") = Some(pane_id.clone());
+    *manager.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some(pane_id.clone());
 
     // Broadcast to all sync clients
     manager.broadcast_sync(&SyncMsg::TabCreated {
@@ -303,8 +301,6 @@ pub async fn close_pane(
 
 // ─── PUT /api/tabs/{tab_id}/pane/{pane_id}/activate ────────────────
 
-/// # Panics
-/// Panics if the internal mutex is poisoned.
 #[allow(clippy::unused_async)]
 pub async fn activate_pane(
     State(manager): State<Arc<SessionManager>>,
@@ -340,7 +336,8 @@ pub async fn activate_pane(
     );
 
     // Update global active pane
-    *manager.active_pane_id.lock().expect("mutex poisoned") = Some(pane_id.clone());
+    *manager.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some(pane_id.clone());
 
     // Broadcast to all sync clients
     manager.broadcast_sync(&SyncMsg::TabActivated { pane_id });

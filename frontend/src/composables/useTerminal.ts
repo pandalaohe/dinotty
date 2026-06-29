@@ -138,6 +138,8 @@ export class TerminalInstance {
   private _resizeDebounce: number = 0
   private _lastInputData = ''
   private _lastInputTime = 0
+  private _writeQueue: string[] = []
+  private _writing = false
   touchMoved = false
   inTouchSelection = false
   selStartRow = 0
@@ -217,16 +219,17 @@ export class TerminalInstance {
     this.xterm.open(wrapper)
 
     // Ctrl+Shift+C/V: Linux-style copy/paste (macOS uses Cmd+C/V natively)
-    this.xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+    const xt = this.xterm
+    xt.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.type === 'keydown') {
-        if (e.key === 'C' && this.xterm.hasSelection()) {
-          navigator.clipboard.writeText(this.xterm.getSelection())
+        if (e.key === 'C' && xt.hasSelection()) {
+          navigator.clipboard.writeText(xt.getSelection())
           e.preventDefault()
           return false
         }
         if (e.key === 'V') {
           navigator.clipboard.readText().then((text) => {
-            if (text) this.xterm.paste(text)
+            if (text) xt.paste(text)
           }).catch(() => {})
           e.preventDefault()
           return false
@@ -260,31 +263,67 @@ export class TerminalInstance {
       let compositionJustEnded = false
       let compositionData = ''
       let safetyTimer: ReturnType<typeof setTimeout> | null = null
+
+      // Preedit overlay for IME composition display
+      const preeditOverlay = document.createElement('div')
+      preeditOverlay.className = 'preedit-overlay'
+      preeditOverlay.style.display = 'none'
+      wrapper.appendChild(preeditOverlay)
+
+      const updatePreeditPosition = () => {
+        if (!this.xterm) return
+        const core = (this.xterm as any)._core
+        const dims = core?._renderService?.dimensions
+        if (!dims?.css?.cell?.width || !dims.css.cell.height) return
+        const buffer = this.xterm.buffer.active
+        const x = buffer.cursorX * dims.css.cell.width
+        const y = buffer.cursorY * dims.css.cell.height
+        preeditOverlay.style.left = `${x}px`
+        preeditOverlay.style.top = `${y}px`
+      }
+
       const onCompositionStart = () => {
         isComposing = true
+        preeditOverlay.textContent = ''
+        preeditOverlay.style.display = 'none'
         if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
         // Safety: if compositionend never fires (WebKit Bug 224932), reset after 1s
         safetyTimer = setTimeout(() => {
           isComposing = false
           safetyTimer = null
+          preeditOverlay.style.display = 'none'
         }, 1000)
+      }
+      const onCompositionUpdate = (e: CompositionEvent) => {
+        const text = e.data || ''
+        if (!text) {
+          preeditOverlay.style.display = 'none'
+          return
+        }
+        preeditOverlay.textContent = text
+        preeditOverlay.style.display = ''
+        updatePreeditPosition()
       }
       const onCompositionEnd = () => {
         if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
         isComposing = false
         compositionJustEnded = true
         compositionData = ''
+        preeditOverlay.style.display = 'none'
         setTimeout(() => {
           compositionJustEnded = false
           compositionData = ''
         }, 50)
       }
       textarea.addEventListener('compositionstart', onCompositionStart)
+      textarea.addEventListener('compositionupdate', onCompositionUpdate)
       textarea.addEventListener('compositionend', onCompositionEnd)
       this._compositionCleanup = () => {
         if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
         textarea.removeEventListener('compositionstart', onCompositionStart)
+        textarea.removeEventListener('compositionupdate', onCompositionUpdate)
         textarea.removeEventListener('compositionend', onCompositionEnd)
+        preeditOverlay.remove()
       }
       this._compositionGuard = (data: string): boolean => {
         if (isComposing) return false
@@ -423,9 +462,10 @@ export class TerminalInstance {
   }
 
   adjustFontSize(delta: number) {
-    if (!this.xterm) return
-    const newSize = Math.max(8, Math.min(72, this.xterm.options.fontSize + delta))
-    this.xterm.options.fontSize = newSize
+    const xt = this.xterm
+    if (!xt) return
+    const newSize = Math.max(8, Math.min(72, (xt.options.fontSize ?? 14) + delta))
+    xt.options.fontSize = newSize
     settings.text.font_size = newSize
     saveSettings()
     this._refit()
@@ -479,6 +519,8 @@ export class TerminalInstance {
     this._dragDropCleanup?.()
     this._themeUnsub?.()
     this._textUnsub?.()
+    this._writeQueue = []
+    this._writing = false
     if (this._transport) {
       this._transport.disconnect()
       this._transport = null
@@ -510,7 +552,7 @@ export class TerminalInstance {
     this._transport.onMessage((msg) => {
       if (this._destroyed || !this.xterm) return
       if (msg.type === 'output') {
-        this.xterm.write(msg.data)
+        this._enqueueWrite(msg.data)
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
@@ -518,6 +560,8 @@ export class TerminalInstance {
         this._suppressTitleChange = true
         this.xterm.reset()
         this._suppressTitleChange = false
+        this._writeQueue = []
+        this._writing = false
         this._doFitAndResize(true)
       }
     })
@@ -576,7 +620,7 @@ export class TerminalInstance {
         this._hideOverlay()
         this._doFitAndResize(true)
       } else if (msg.type === 'output') {
-        this.xterm.write(msg.data)
+        this._enqueueWrite(msg.data)
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
@@ -614,6 +658,22 @@ export class TerminalInstance {
         }
       })
     }
+  }
+
+  private _enqueueWrite(data: string) {
+    if (!this.xterm) return
+    this._writeQueue.push(data)
+    if (!this._writing) this._processWriteQueue()
+  }
+
+  private _processWriteQueue() {
+    if (!this.xterm || this._writeQueue.length === 0) {
+      this._writing = false
+      return
+    }
+    this._writing = true
+    const chunk = this._writeQueue.shift()!
+    this.xterm.write(chunk, () => this._processWriteQueue())
   }
 
   private _scheduleReconnect() {

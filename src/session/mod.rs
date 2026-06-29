@@ -7,7 +7,10 @@ use serde::Serialize;
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Instant,
 };
 use tokio::sync::mpsc;
@@ -38,6 +41,10 @@ pub struct Session {
     #[allow(clippy::type_complexity)]
     pub tauri_on_exit: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
     pub cwd_state: Mutex<CwdState>,
+    /// DEC mode 2026: synchronized output active flag
+    pub sync_active: AtomicBool,
+    /// Buffered output while synchronized output mode is active
+    pub sync_buffer: Mutex<Vec<String>>,
 }
 
 impl Session {
@@ -45,8 +52,21 @@ impl Session {
     /// After this, the PTY reader task's `reader.read()` will return Err/Ok(0),
     /// causing it to exit and drop its `Arc<Session>`, which triggers `Drop`.
     pub fn kill_child(&self) {
-        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        let mut child = self.child.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let pid = child.process_id();
+        // Kill the entire process group on Unix (child is session leader from setsid)
+        #[cfg(unix)]
+        if let Some(pid) = pid {
+            #[allow(clippy::cast_possible_wrap)]
+            let process_group = pid as i32;
+            unsafe {
+                libc::killpg(process_group, libc::SIGTERM);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            unsafe {
+                libc::killpg(process_group, libc::SIGKILL);
+            }
+        }
         let _ = child.kill();
         let _ = child.wait();
         self.mark_exited();
@@ -55,24 +75,30 @@ impl Session {
 
     /// Check if the child process has exited.
     pub fn is_exited(&self) -> bool {
-        *self.exited.lock().unwrap_or_else(|e| e.into_inner())
+        *self.exited.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Mark the session as exited.
     pub fn mark_exited(&self) {
-        *self.exited.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        *self.exited.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
     }
 
     /// Resize the PTY and virtual screen. Consolidates three mutex acquisitions
     /// that were previously duplicated across Tauri and WS call sites.
+    ///
+    /// # Errors
+    /// Returns an error if the PTY resize operation fails.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
         use portable_pty::PtySize;
-        let m = self.master.lock().unwrap_or_else(|e| e.into_inner());
+        let m = self.master.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| e.to_string())?;
         drop(m);
-        *self.size.lock().unwrap_or_else(|e| e.into_inner()) = (cols, rows);
-        self.screen.lock().unwrap_or_else(|e| e.into_inner()).resize(cols as usize, rows as usize);
+        *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (cols, rows);
+        self.screen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .resize(cols as usize, rows as usize);
         Ok(())
     }
 
@@ -80,7 +106,7 @@ impl Session {
         let Some(home) = dirs::home_dir() else {
             return;
         };
-        let mut state = self.cwd_state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let CwdState { ref mut cwd, ref mut sniff_buf } = *state;
         sniff_cwd_from_title_osc(sniff_buf, data, &home, cwd);
     }
@@ -90,14 +116,15 @@ impl Session {
     /// a write task on.
     pub fn replace_input_channel(&self) -> mpsc::UnboundedReceiver<String> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let old = self.input_tx.lock().unwrap_or_else(|e| e.into_inner()).replace(tx);
+        let old =
+            self.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).replace(tx);
         drop(old); // close old sender → old write task's recv() returns None
         rx
     }
 
     pub fn add_client(&self) -> mpsc::UnboundedReceiver<String> {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.clients.lock().unwrap_or_else(|e| e.into_inner()).push(tx);
+        self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(tx);
         rx
     }
 
@@ -105,19 +132,48 @@ impl Session {
     /// Must be called before `add_client` on reconnection to prevent
     /// duplicate output delivery.
     pub fn clear_clients(&self) {
-        self.clients.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
     }
 
     pub fn broadcast(&self, msg: &str) {
         if self.is_exited() {
             return;
         }
-        let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        if self.sync_active.load(Ordering::Relaxed) {
+            self.sync_buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(msg.to_string());
+            return;
+        }
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clients.retain(|tx| tx.send(msg.to_string()).is_ok());
     }
 
+    /// Enable or disable synchronized output mode (DEC mode 2026).
+    /// When disabling, flushes the buffered output.
+    pub fn set_sync_mode(&self, active: bool) {
+        self.sync_active.store(active, Ordering::Relaxed);
+        if !active {
+            self.flush_sync_buffer();
+        }
+    }
+
+    /// Flush buffered output accumulated during synchronized output mode.
+    pub fn flush_sync_buffer(&self) {
+        let data: Vec<String> = std::mem::take(
+            &mut self.sync_buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        if data.is_empty() {
+            return;
+        }
+        let combined = data.join("");
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        clients.retain(|tx| tx.send(combined.clone()).is_ok());
+    }
+
     pub fn has_clients(&self) -> bool {
-        let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clients.retain(|tx| !tx.is_closed());
         !clients.is_empty()
     }
@@ -125,11 +181,23 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        let mut child = self.child.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let pid = child.process_id();
+        #[cfg(unix)]
+        if let Some(pid) = pid {
+            #[allow(clippy::cast_possible_wrap)]
+            let process_group = pid as i32;
+            unsafe {
+                libc::killpg(process_group, libc::SIGTERM);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            unsafe {
+                libc::killpg(process_group, libc::SIGKILL);
+            }
+        }
         let _ = child.kill();
         let _ = child.wait();
-        *self.exited.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        *self.exited.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
         info!("Session dropped, child reaped: pid={:?}", pid);
     }
 }
@@ -207,13 +275,21 @@ pub fn remove_pane_from_layout(
                 }
                 1 => {
                     // Single-child split is degenerate — collapse by returning the child directly
-                    Some(new_children.into_iter().next().expect("checked len == 1"))
+                    Some(
+                        new_children
+                            .into_iter()
+                            .next()
+                            .unwrap_or_else(|| unreachable!("checked len == 1")),
+                    )
                 }
                 _ => {
                     let mut result = node.clone();
                     result["children"] = serde_json::Value::Array(new_children);
                     // Rebalance ratios evenly
-                    let n = result["children"].as_array().expect("just assigned as array").len();
+                    let n = result["children"]
+                        .as_array()
+                        .unwrap_or_else(|| unreachable!("just assigned as array"))
+                        .len();
                     #[allow(clippy::cast_precision_loss)]
                     let ratio = 1.0 / n as f64;
                     result["ratios"] = serde_json::Value::Array(
@@ -453,7 +529,7 @@ impl SessionManager {
 
     /// Insert a tab layout and record its order position.
     pub fn insert_tab(&self, tab_id: String, value: serde_json::Value) {
-        let mut order = self.tab_order.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if !order.contains(&tab_id) {
             order.push(tab_id.clone());
         }
@@ -464,20 +540,29 @@ impl SessionManager {
     /// Remove a tab layout and its order entry.
     pub fn remove_tab(&self, tab_id: &str) {
         self.tab_layouts.remove(tab_id);
-        let mut order = self.tab_order.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         order.retain(|id| id != tab_id);
     }
 
+    /// # Panics
+    /// Panics if `SyncMsg` serialization fails (should be infallible).
+    #[allow(clippy::expect_used)]
     pub fn broadcast_sync(&self, msg: &SyncMsg) {
         let json = serde_json::to_string(msg).expect("serialization is infallible");
-        let mut clients = self.sync_clients.lock().unwrap_or_else(|e| e.into_inner());
+        let mut clients =
+            self.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clients.retain(|c| c.tx.send(json.clone()).is_ok());
     }
 
     /// Broadcast to all sync clients except the one with the given ID.
+    ///
+    /// # Panics
+    /// Panics if `SyncMsg` serialization fails (should be infallible).
+    #[allow(clippy::expect_used)]
     pub fn broadcast_sync_others(&self, msg: &SyncMsg, exclude_id: &str) {
         let json = serde_json::to_string(msg).expect("serialization is infallible");
-        let mut clients = self.sync_clients.lock().unwrap_or_else(|e| e.into_inner());
+        let mut clients =
+            self.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clients.retain(|c| {
             if c.id == exclude_id {
                 true // keep in list but don't send
@@ -490,7 +575,10 @@ impl SessionManager {
     pub fn add_sync_client(&self) -> (String, mpsc::UnboundedReceiver<String>) {
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = mpsc::unbounded_channel();
-        self.sync_clients.lock().unwrap_or_else(|e| e.into_inner()).push(SyncClient { id: id.clone(), tx });
+        self.sync_clients
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(SyncClient { id: id.clone(), tx });
         (id, rx)
     }
 
@@ -510,7 +598,7 @@ impl SessionManager {
             session.kill_child();
             // Drop the input channel sender so the writer task's recv() returns
             // None and the task exits, releasing its Arc<Session>.
-            session.input_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
+            session.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
             true
         } else {
             false
@@ -585,11 +673,12 @@ impl SessionManager {
             self.tab_layouts.remove(key);
         }
         if !stale.is_empty() {
-            let mut order = self.tab_order.lock().unwrap_or_else(|e| e.into_inner());
+            let mut order =
+                self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             order.retain(|id| !stale.contains(id));
         }
 
-        let order = self.tab_order.lock().unwrap_or_else(|e| e.into_inner());
+        let order = self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let order_index = |tab_id: &str| -> usize {
             order.iter().position(|id| id == tab_id).unwrap_or(usize::MAX)
         };
@@ -612,7 +701,8 @@ impl SessionManager {
         tabs.sort_by_key(|t| order_index(&t.tab_id));
         drop(order);
 
-        let active = self.active_pane_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let active =
+            self.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         (tabs, active)
     }
 
@@ -687,7 +777,11 @@ impl SessionManager {
                     .sessions
                     .iter()
                     .filter_map(|entry| {
-                        let status = entry.value().status.lock().unwrap_or_else(|e| e.into_inner());
+                        let status = entry
+                            .value()
+                            .status
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         match *status {
                             SessionStatus::Detached { since } if since.elapsed() >= timeout => {
                                 Some(entry.key().clone())
@@ -700,7 +794,7 @@ impl SessionManager {
                     // Re-check status before killing — the session may have been
                     // reconnected between the collect pass and now.
                     let should_kill = manager.sessions.get(&pane_id).is_some_and(|entry| {
-                        let status = entry.value().status.lock().unwrap_or_else(|e| e.into_inner());
+                        let status = entry.value().status.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         matches!(*status, SessionStatus::Detached { since } if since.elapsed() >= timeout)
                     });
 

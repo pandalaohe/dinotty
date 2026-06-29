@@ -48,6 +48,7 @@ tempfile = "3"
 tar = "0.4"
 flate2 = "1"
 zip = "2"
+libc = "0.2"
 
 [package.metadata.deb]
 maintainer = "Dinotty Contributors <noreply@github.com>"

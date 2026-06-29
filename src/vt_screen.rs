@@ -33,6 +33,13 @@ struct PendingCommand {
     output_buf: String,
 }
 
+/// DEC mode 2026 synchronized output events
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncEvent {
+    Start,
+    Stop,
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct CellAttrs {
     pub fg: Option<Color>,
@@ -173,6 +180,8 @@ pub struct VirtualScreen {
     command_results: Vec<CommandResult>,
     // Prompt detection fallback
     last_output_time: Option<Instant>,
+    // DEC mode 2026 synchronized output events
+    sync_events: Vec<SyncEvent>,
 }
 
 impl VirtualScreen {
@@ -191,7 +200,13 @@ impl VirtualScreen {
             pending_command: None,
             command_results: Vec::new(),
             last_output_time: None,
+            sync_events: Vec::new(),
         }
+    }
+
+    /// Drain all pending sync events. Called by the PTY read loop after feeding output.
+    pub fn drain_sync_events(&mut self) -> Vec<SyncEvent> {
+        std::mem::take(&mut self.sync_events)
     }
 
     /// Drain all pending command results. Called by the WS handler after feeding output.
@@ -320,6 +335,7 @@ impl VirtualScreen {
             command_state: &mut self.command_state,
             pending_command: &mut self.pending_command,
             command_results: &mut self.command_results,
+            sync_events: &mut self.sync_events,
         };
 
         for &byte in data {
@@ -340,6 +356,7 @@ impl VirtualScreen {
                         command_state: &mut self.command_state,
                         pending_command: &mut self.pending_command,
                         command_results: &mut self.command_results,
+                        sync_events: &mut self.sync_events,
                     };
                 } else if !enter && performer.using_alternate {
                     let saved = self.saved_cursor.clone();
@@ -353,6 +370,7 @@ impl VirtualScreen {
                         command_state: &mut self.command_state,
                         pending_command: &mut self.pending_command,
                         command_results: &mut self.command_results,
+                        sync_events: &mut self.sync_events,
                     };
                     if let Some(ref s) = saved {
                         performer.screen.cursor = s.clone();
@@ -623,6 +641,7 @@ struct ScreenPerformer<'a> {
     command_state: &'a mut CommandState,
     pending_command: &'a mut Option<PendingCommand>,
     command_results: &'a mut Vec<CommandResult>,
+    sync_events: &'a mut Vec<SyncEvent>,
 }
 
 impl Perform for ScreenPerformer<'_> {
@@ -808,6 +827,8 @@ impl Perform for ScreenPerformer<'_> {
                     for &p in &ps {
                         if p == 1049 || p == 47 || p == 1047 {
                             self.pending_switch = Some(true);
+                        } else if p == 2026 {
+                            self.sync_events.push(SyncEvent::Start);
                         }
                     }
                     return;
@@ -816,6 +837,8 @@ impl Perform for ScreenPerformer<'_> {
                     for &p in &ps {
                         if p == 1049 || p == 47 || p == 1047 {
                             self.pending_switch = Some(false);
+                        } else if p == 2026 {
+                            self.sync_events.push(SyncEvent::Stop);
                         }
                     }
                     return;

@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::io::Write;
 use std::sync::Arc;
 
@@ -29,8 +28,6 @@ async fn check_open_api(
 
 // ─── GET /api/sessions ───
 
-/// # Panics
-/// Panics if the internal mutex is poisoned.
 pub async fn list_sessions(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
 ) -> impl IntoResponse {
@@ -43,12 +40,19 @@ pub async fn list_sessions(
         let pane_id = entry.key().clone();
         let session = entry.value();
 
-        let (cols, rows) = *session.size.lock().expect("mutex poisoned");
-        let status = match &*session.status.lock().expect("mutex poisoned") {
-            crate::session::SessionStatus::Connected => "connected",
-            crate::session::SessionStatus::Detached { .. } => "detached",
-        };
-        let cwd = session.cwd_state.lock().expect("mutex poisoned").cwd.display().to_string();
+        let (cols, rows) = *session.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let status =
+            match &*session.status.lock().unwrap_or_else(std::sync::PoisonError::into_inner) {
+                crate::session::SessionStatus::Connected => "connected",
+                crate::session::SessionStatus::Detached { .. } => "detached",
+            };
+        let cwd = session
+            .cwd_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cwd
+            .display()
+            .to_string();
 
         // Find which tab this pane belongs to
         let mut tab_id = None;
@@ -70,7 +74,8 @@ pub async fn list_sessions(
         }));
     }
 
-    let active_pane_id = manager.active_pane_id.lock().expect("mutex poisoned").clone();
+    let active_pane_id =
+        manager.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     Json(serde_json::json!({
         "sessions": sessions,
         "active_pane_id": active_pane_id,
@@ -90,8 +95,6 @@ fn default_format() -> String {
     "plain".to_string()
 }
 
-/// # Panics
-/// Panics if the internal mutex is poisoned.
 pub async fn get_screen(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
     Path(pane_id): Path<String>,
@@ -106,7 +109,7 @@ pub async fn get_screen(
             .into_response();
     };
 
-    let screen = session.screen.lock().expect("mutex poisoned");
+    let screen = session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (cols, rows) = (screen.cols(), screen.rows());
 
     let content = if q.format == "ansi" { screen.snapshot() } else { screen.snapshot_plain() };
@@ -128,8 +131,6 @@ pub struct ScrollbackQuery {
     format: String,
 }
 
-/// # Panics
-/// Panics if the internal mutex is poisoned.
 pub async fn get_scrollback(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
     Path(pane_id): Path<String>,
@@ -144,7 +145,7 @@ pub async fn get_scrollback(
             .into_response();
     };
 
-    let screen = session.screen.lock().expect("mutex poisoned");
+    let screen = session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let total = screen.scrollback_len();
 
     if q.format == "ansi" {
@@ -174,8 +175,6 @@ pub struct InputRequest {
     data: String,
 }
 
-/// # Panics
-/// Panics if the internal mutex is poisoned.
 pub async fn session_input(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
     Path(pane_id): Path<String>,
@@ -190,7 +189,7 @@ pub async fn session_input(
             .into_response();
     };
 
-    let mut w = session.writer.lock().expect("mutex poisoned");
+    let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if w.write_all(req.data.as_bytes()).is_err() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -210,8 +209,6 @@ pub struct ResizeRequest {
     rows: u16,
 }
 
-/// # Panics
-/// Panics if the internal mutex is poisoned.
 pub async fn session_resize(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
     Path(pane_id): Path<String>,
@@ -239,19 +236,19 @@ pub async fn session_resize(
 
     // Update size
     {
-        let mut s = session.size.lock().expect("mutex poisoned");
+        let mut s = session.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *s = (size, rows);
     }
 
     // Resize screen buffer
     {
-        let mut screen = session.screen.lock().expect("mutex poisoned");
+        let mut screen = session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         screen.resize(size as usize, rows as usize);
     }
 
     // Resize PTY
     {
-        let master = session.master.lock().expect("mutex poisoned");
+        let master = session.master.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let _ = master.resize(portable_pty::PtySize {
             cols: size,
             rows,
