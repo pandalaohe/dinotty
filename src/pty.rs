@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+#![allow(clippy::too_many_lines)]
 use crate::event_bus::BusEvent;
 use crate::session::{Session, SessionManager, SessionStatus, SyncMsg};
 use crate::vt_screen::VirtualScreen;
@@ -32,6 +32,7 @@ pub fn create_session(
     let mut cmd = CommandBuilder::new(&shell);
     cmd.args(get_shell_args(&shell));
     cmd.env("TERM", "xterm-256color");
+    configure_utf8_locale(&mut cmd);
 
     let home_path = std::env::var("HOME").map_or_else(
         |_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
@@ -80,12 +81,15 @@ pub fn create_session(
         input_tx: std::sync::Mutex::new(None),
         status: std::sync::Mutex::new(SessionStatus::Connected),
         size: std::sync::Mutex::new((80, 24)),
+        exited: std::sync::Mutex::new(false),
         shell_type: shell_type.clone(),
         tauri_on_exit: std::sync::Mutex::new(tauri_on_exit),
         cwd_state: std::sync::Mutex::new(crate::session::CwdState {
             cwd: initial_cwd,
             sniff_buf: Vec::new(),
         }),
+        sync_active: std::sync::atomic::AtomicBool::new(false),
+        sync_buffer: std::sync::Mutex::new(Vec::new()),
     });
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
 
@@ -108,15 +112,38 @@ pub fn create_session(
                 Ok(n) => {
                     let data = &buf[..n];
                     // Feed to virtual screen and check for command completion
-                    let command_results = {
-                        let mut screen = session_clone.screen.lock().expect("mutex poisoned");
+                    let (command_results, sync_events) = {
+                        let mut screen = session_clone
+                            .screen
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         screen.feed(data);
                         let results = screen.drain_command_results();
                         // Collect stdout for each result while still holding the lock
                         let outputs: Vec<String> =
                             (0..results.len()).map(|_| screen.take_command_output()).collect();
-                        results.into_iter().zip(outputs).collect::<Vec<_>>()
+                        let sync = screen.drain_sync_events();
+                        (results.into_iter().zip(outputs).collect::<Vec<_>>(), sync)
                     };
+                    // Handle DEC mode 2026 synchronized output events
+                    for event in sync_events {
+                        match event {
+                            crate::vt_screen::SyncEvent::Start => {
+                                session_clone.set_sync_mode(true);
+                                // Start 1-second safety timeout
+                                let sc = Arc::clone(&session_clone);
+                                tokio::runtime::Handle::current().spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    if sc.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                                        sc.set_sync_mode(false);
+                                    }
+                                });
+                            }
+                            crate::vt_screen::SyncEvent::Stop => {
+                                session_clone.set_sync_mode(false);
+                            }
+                        }
+                    }
                     // Publish command_finished events
                     for (result, stdout) in command_results {
                         manager_clone.event_bus.publish(BusEvent::CommandFinished {
@@ -161,6 +188,7 @@ pub fn create_session(
                 }
             }
         }
+        session_clone.mark_exited();
         if manager_clone.sessions.remove(&pane_id_clone).is_some() {
             // Publish session closed event
             manager_clone.event_bus.publish(BusEvent::SessionClosed {
@@ -175,7 +203,11 @@ pub fn create_session(
             manager_clone.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_pane_id });
         }
         info!("PTY exited, session removed: pane={}", pane_id_clone);
-        let cb = session_clone.tauri_on_exit.lock().expect("mutex poisoned").clone();
+        let cb = session_clone
+            .tauri_on_exit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         if let Some(f) = cb {
             f(pane_id_clone);
         }
@@ -237,6 +269,71 @@ fi
     Some(zdotdir)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum LocaleAdjustment {
+    Preserve,
+    SetCtype,
+    RemoveAllAndSetCtype,
+}
+
+fn is_utf8_locale(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_uppercase();
+    normalized.contains("UTF-8") || normalized.contains("UTF8")
+}
+
+fn is_default_locale(value: &str) -> bool {
+    matches!(value.trim().to_ascii_uppercase().as_str(), "" | "C" | "POSIX")
+}
+
+fn locale_adjustment(
+    lc_all: Option<&str>,
+    lc_ctype: Option<&str>,
+    lang: Option<&str>,
+) -> LocaleAdjustment {
+    if let Some(value) = lc_all.filter(|value| !value.trim().is_empty()) {
+        if is_utf8_locale(value) {
+            return LocaleAdjustment::Preserve;
+        }
+        return if is_default_locale(value) {
+            LocaleAdjustment::RemoveAllAndSetCtype
+        } else {
+            LocaleAdjustment::Preserve
+        };
+    }
+
+    if let Some(value) = lc_ctype.filter(|value| !value.trim().is_empty()) {
+        if is_utf8_locale(value) {
+            return LocaleAdjustment::Preserve;
+        }
+        return if is_default_locale(value) {
+            LocaleAdjustment::SetCtype
+        } else {
+            LocaleAdjustment::Preserve
+        };
+    }
+
+    match lang {
+        Some(value) if is_utf8_locale(value) => LocaleAdjustment::Preserve,
+        Some(value) if !is_default_locale(value) => LocaleAdjustment::Preserve,
+        _ => LocaleAdjustment::SetCtype,
+    }
+}
+
+fn configure_utf8_locale(cmd: &mut CommandBuilder) {
+    let lc_all = std::env::var("LC_ALL").ok();
+    let lc_ctype = std::env::var("LC_CTYPE").ok();
+    let lang = std::env::var("LANG").ok();
+
+    match locale_adjustment(lc_all.as_deref(), lc_ctype.as_deref(), lang.as_deref()) {
+        LocaleAdjustment::Preserve => {}
+        LocaleAdjustment::SetCtype => cmd.env("LC_CTYPE", "C.UTF-8"),
+        LocaleAdjustment::RemoveAllAndSetCtype => {
+            cmd.env_remove("LC_ALL");
+            cmd.env("LC_CTYPE", "C.UTF-8");
+        }
+    }
+}
+
 #[must_use]
 pub fn get_shell() -> String {
     // Non-interactive shells that should be skipped
@@ -279,5 +376,52 @@ pub fn get_shell_args(shell: &str) -> Vec<&'static str> {
         vec!["-i", "-l"]
     } else {
         vec!["-i"]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{locale_adjustment, LocaleAdjustment};
+
+    #[test]
+    fn locale_defaults_to_utf8_ctype_when_environment_is_missing() {
+        assert_eq!(locale_adjustment(None, None, None), LocaleAdjustment::SetCtype);
+    }
+
+    #[test]
+    fn locale_fixes_applications_launch_environment() {
+        assert_eq!(locale_adjustment(Some(""), Some("C"), Some("")), LocaleAdjustment::SetCtype);
+    }
+
+    #[test]
+    fn locale_removes_c_lc_all_override() {
+        assert_eq!(
+            locale_adjustment(Some("POSIX"), Some("C.UTF-8"), Some("")),
+            LocaleAdjustment::RemoveAllAndSetCtype
+        );
+    }
+
+    #[test]
+    fn locale_preserves_existing_utf8_environment() {
+        assert_eq!(
+            locale_adjustment(None, Some("zh_CN.UTF-8"), Some("C")),
+            LocaleAdjustment::Preserve
+        );
+        assert_eq!(
+            locale_adjustment(Some("C.UTF8"), Some("C"), Some("C")),
+            LocaleAdjustment::Preserve
+        );
+    }
+
+    #[test]
+    fn locale_preserves_explicit_non_utf8_environment() {
+        assert_eq!(
+            locale_adjustment(None, Some("zh_CN.GB2312"), Some("")),
+            LocaleAdjustment::Preserve
+        );
+        assert_eq!(
+            locale_adjustment(Some("en_US.ISO8859-1"), Some("C"), Some("")),
+            LocaleAdjustment::Preserve
+        );
     }
 }

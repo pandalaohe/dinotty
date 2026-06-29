@@ -63,6 +63,7 @@ const emit = defineEmits<{
 
 const wrapperRef = ref<HTMLElement>()
 let terminal: TerminalInstance | null = null
+let pendingFocus = false
 const searchVisible = ref(false)
 
 // Context menu state
@@ -97,10 +98,16 @@ function getTerminal() {
 }
 
 function focus() {
-  terminal?.focus()
+  if (terminal?.xterm) {
+    pendingFocus = false
+    terminal.focus()
+    return
+  }
+  pendingFocus = true
 }
 
 function blur() {
+  pendingFocus = false
   terminal?.blur()
 }
 
@@ -118,6 +125,14 @@ function setOutputListener(cb: ((data: string) => void) | null) {
 
 function toggleSearch() {
   searchVisible.value = !searchVisible.value
+}
+
+function adjustFontSize(delta: number) {
+  terminal?.adjustFontSize(delta)
+}
+
+function resetFontSize() {
+  terminal?.resetFontSize()
 }
 
 function onContextMenu(e: MouseEvent) {
@@ -504,6 +519,10 @@ onMounted(() => {
   requestAnimationFrame(() => {
     if (wrapperRef.value) {
       terminal!.attach(wrapperRef.value)
+      if (pendingFocus) {
+        pendingFocus = false
+        terminal!.focus()
+      }
     }
   })
 })
@@ -513,7 +532,7 @@ onBeforeUnmount(() => {
   terminal = null
 })
 
-defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggleSearch })
+defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggleSearch, adjustFontSize, resetFontSize })
 </script>
 
 <style scoped>

@@ -5,6 +5,7 @@
       key="backdrop"
       ref="backdropRef"
       class="mc-backdrop"
+      :class="{ 'mc-closing': closing }"
       :initial="{ opacity: 0 }"
       :animate="{ opacity: 1 }"
       :exit="{ opacity: 0 }"
@@ -93,6 +94,7 @@ const COLS_LG = 4
 const focusedIndex = ref(0)
 const cardRefs = ref<(HTMLElement | null)[]>([])
 const backdropRef = ref<any>(null)
+const closing = ref(false)
 
 function setCardRef(index: number, el: any) {
   cardRefs.value[index] = el?.$el ?? el ?? null
@@ -114,14 +116,17 @@ const gridStyle = computed(() => {
   }
 })
 
-// Reset focused index when overlay opens
+// Reset focused index when overlay opens; mark closing when overlay starts to dismiss
 watch(
   () => props.visible,
   (v) => {
     if (v) {
+      closing.value = false
       const idx = props.cards.findIndex((c) => c.paneId === props.activePaneId)
       focusedIndex.value = idx >= 0 ? idx : 0
       nextTick(() => backdropRef.value?.$el?.focus?.())
+    } else {
+      closing.value = true
     }
   },
 )

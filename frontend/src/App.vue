@@ -68,7 +68,7 @@
       </template>
     </TabBar>
 
-    <div id="tab-content" @touchend="onTerminalTouch" @terminal-scroll="onTerminalScroll">
+    <div id="tab-content" @touchend="onTerminalTouch">
       <div
         v-for="tab in tabs"
         :key="tabKey(tab)"
@@ -216,6 +216,7 @@ import ServerList from './components/ServerList.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
 import type { Tab, TerminalTab, PluginTab, PaneLayout } from './types/pane'
 import { getAllLeaves, findLeaf, findFirstLeaf, ensureSplitRoot } from './types/pane'
+import { initializePaneMru } from './types/paneMru'
 // useSettings replaced by useSettingsStore
 import {
   getApiBase,
@@ -305,6 +306,19 @@ const currentTabTitle = computed(() => {
 function openOverview() {
   overviewCards.value = tabPreview.captureAll(tabs.value, termRefs, notif.unreadByPane)
   overviewOpen.value = true
+}
+
+function adjustActiveTerminalFontSize(delta: number) {
+  if (!activePaneId.value) return
+  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+  if (!tab || tab.type !== 'terminal') return
+  const ref = termRefs[tab.activePaneId]
+  if (!ref) return
+  if (delta === 0) {
+    ref.resetFontSize()
+  } else {
+    ref.adjustFontSize(delta)
+  }
 }
 
 function onOverviewActivate(paneId: string) {
@@ -530,6 +544,7 @@ async function newTab() {
       paneId: result.tab_id,
       layout,
       activePaneId: result.pane_id,
+      paneMru: [result.pane_id],
       broadcastMode: false,
       broadcastActivity: 0,
       previewVisible: false,
@@ -1048,12 +1063,34 @@ function onGlobalKeydown(e: KeyboardEvent) {
       termRefs[tab.activePaneId]?.toggleSearch()
     },
     missionControl: () => openOverview(),
+    fontSizeUp: () => adjustActiveTerminalFontSize(1),
+    fontSizeDown: () => adjustActiveTerminalFontSize(-1),
+    fontSizeReset: () => adjustActiveTerminalFontSize(0),
   }
 
   for (const [id, action] of Object.entries(keyActions)) {
     const binding = getBinding(id)
-    const eventKey = binding.key.length === 1 ? e.key.toLowerCase() : e.key
-    if (eventKey === binding.key.toLowerCase() && e.shiftKey === binding.shift) {
+    let matched = false
+    if (binding.key.length === 1) {
+      // Single-char keys: prefer e.code (physical key) to handle Shift correctly.
+      // e.key reports the produced char ('+' for Shift+=), but binding stores '='.
+      const codeToKey: Record<string, string> = {
+        Equal: '=', Minus: '-',
+        BracketLeft: '[', BracketRight: ']', Backslash: '\\',
+        Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
+        Backquote: '`',
+      }
+      let physicalKey = ''
+      if (e.code.startsWith('Key')) physicalKey = e.code.slice(3).toLowerCase()
+      else if (e.code.startsWith('Digit')) physicalKey = e.code.slice(5)
+      else physicalKey = codeToKey[e.code] ?? ''
+      matched = physicalKey === binding.key.toLowerCase()
+        ? e.shiftKey === binding.shift
+        : e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift
+    } else {
+      matched = e.key === binding.key && e.shiftKey === binding.shift
+    }
+    if (matched) {
       e.preventDefault()
       action()
       return
@@ -1138,6 +1175,7 @@ function onWindowCloseCancel() {
 onMounted(async () => {
   setupTauriWindowClose()
   document.addEventListener('keydown', onGlobalKeydown)
+  document.addEventListener('terminal-scroll', onTerminalScroll)
   window.addEventListener('focus', _focusHandler)
   window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
@@ -1172,6 +1210,10 @@ onMounted(async () => {
               paneId: tab.tab_id,
               layout,
               activePaneId: tab.active_pane_id ?? tab.pane_id,
+              paneMru: initializePaneMru(
+                getAllLeaves(layout).map((leaf) => leaf.paneId),
+                tab.active_pane_id ?? tab.pane_id
+              ),
               broadcastMode: false,
               broadcastActivity: 0,
               previewVisible: false,
@@ -1213,6 +1255,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
+  document.removeEventListener('terminal-scroll', onTerminalScroll)
   window.removeEventListener('focus', _focusHandler)
   window.removeEventListener('resize', onOrientationChange)
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)

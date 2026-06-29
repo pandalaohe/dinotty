@@ -78,7 +78,8 @@ impl McpResources {
                 .map(|e| {
                     let pane_id = e.key();
                     let session = e.value();
-                    let (cols, rows) = *session.size.lock().expect("mutex poisoned");
+                    let (cols, rows) =
+                        *session.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     serde_json::json!({
                         "pane_id": pane_id,
                         "shell": session.shell_type,
@@ -98,7 +99,8 @@ impl McpResources {
                     .sessions
                     .get(pane_id)
                     .ok_or_else(|| format!("Pane not found: {pane_id}"))?;
-                let screen = session.screen.lock().expect("mutex poisoned");
+                let screen =
+                    session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 return Ok(screen.snapshot_plain());
             }
             if let Some(pane_id) = rest.strip_suffix("/scrollback") {
@@ -107,7 +109,8 @@ impl McpResources {
                     .sessions
                     .get(pane_id)
                     .ok_or_else(|| format!("Pane not found: {pane_id}"))?;
-                let screen = session.screen.lock().expect("mutex poisoned");
+                let screen =
+                    session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 let lines = screen.snapshot_scrollback_plain(Some(1000));
                 return Ok(lines.join("\n"));
             }

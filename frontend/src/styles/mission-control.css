@@ -13,6 +13,9 @@
   padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   outline: none;
 }
+.mc-backdrop.mc-closing {
+  pointer-events: none;
+}
 
 .mc-grid {
   display: grid;

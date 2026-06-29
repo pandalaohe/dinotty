@@ -189,7 +189,7 @@ async fn handle_watch_socket(
     };
 
     let root = {
-        let state = session.cwd_state.lock().expect("mutex poisoned");
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match state.cwd.canonicalize() {
             Ok(c) => c,
             Err(_) => state.cwd.clone(),
