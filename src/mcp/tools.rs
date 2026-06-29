@@ -184,7 +184,7 @@ impl McpTools {
             .manager
             .active_pane_id
             .lock()
-            .expect("mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .or_else(|| self.manager.sessions.iter().next().map(|e| e.key().clone()))
             .ok_or("No active terminal session")?;
@@ -193,8 +193,12 @@ impl McpTools {
 
         // Send command
         {
-            let mut w = session.writer.lock().expect("mutex poisoned");
-            session.screen.lock().expect("mutex poisoned").begin_command_tracking();
+            let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            session
+                .screen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .begin_command_tracking();
             let cmd = format!("{command}\n");
             w.write_all(cmd.as_bytes()).map_err(|e| format!("Write failed: {e}"))?;
         }
@@ -206,9 +210,17 @@ impl McpTools {
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-            let results = session.screen.lock().expect("mutex poisoned").drain_command_results();
+            let results = session
+                .screen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .drain_command_results();
             if let Some(result) = results.into_iter().next() {
-                let stdout = session.screen.lock().expect("mutex poisoned").take_command_output();
+                let stdout = session
+                    .screen
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take_command_output();
                 return Ok(serde_json::json!({
                     "exit_code": result.exit_code,
                     "stdout": stdout,
@@ -220,7 +232,8 @@ impl McpTools {
 
             // Prompt detection fallback
             {
-                let mut screen = session.screen.lock().expect("mutex poisoned");
+                let mut screen =
+                    session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 if screen.should_check_prompt() {
                     if let Some(result) = screen.detect_prompt() {
                         let stdout = screen.take_command_output();
@@ -236,8 +249,11 @@ impl McpTools {
             }
 
             if start.elapsed() >= timeout_dur {
-                let (stdout, result) =
-                    session.screen.lock().expect("mutex poisoned").finish_command_tracking(-1);
+                let (stdout, result) = session
+                    .screen
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .finish_command_tracking(-1);
                 return Ok(serde_json::json!({
                     "exit_code": -1,
                     "stdout": stdout,
@@ -254,7 +270,7 @@ impl McpTools {
         let pane_id = resolve_pane(pane_id_arg, &self.manager)?;
 
         let session = self.manager.sessions.get(&pane_id).ok_or("Pane not found")?;
-        let screen = session.screen.lock().expect("mutex poisoned");
+        let screen = session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let content = screen.snapshot_plain();
         Ok(content)
     }
@@ -265,7 +281,7 @@ impl McpTools {
         let pane_id = resolve_pane(pane_id_arg, &self.manager)?;
 
         let session = self.manager.sessions.get(&pane_id).ok_or("Pane not found")?;
-        let mut w = session.writer.lock().expect("mutex poisoned");
+        let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let cmd = format!("{command}\n");
         w.write_all(cmd.as_bytes()).map_err(|e| format!("Write failed: {e}"))?;
         Ok(r#"{"ok": true}"#.into())
@@ -279,11 +295,12 @@ impl McpTools {
             .map(|e| {
                 let pane_id = e.key();
                 let session = e.value();
-                let (cols, rows) = *session.size.lock().expect("mutex poisoned");
+                let (cols, rows) =
+                    *session.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 let cwd = session
                     .cwd_state
                     .lock()
-                    .expect("mutex poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .cwd
                     .to_str()
                     .unwrap_or("")
@@ -352,7 +369,7 @@ fn resolve_pane(requested: &str, manager: &Arc<SessionManager>) -> Result<String
         manager
             .active_pane_id
             .lock()
-            .expect("mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .filter(|id| manager.sessions.contains_key(id))
             .or_else(|| manager.sessions.iter().next().map(|e| e.key().clone()))

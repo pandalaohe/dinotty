@@ -144,7 +144,7 @@ fn resolve_pane_id(requested: Option<&str>, manager: &SessionManager) -> Option<
             manager
                 .active_pane_id
                 .lock()
-                .expect("mutex poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
                 .filter(|id| manager.sessions.contains_key(id))
                 .or_else(|| manager.sessions.iter().next().map(|e| e.key().clone()))
@@ -309,9 +309,13 @@ async fn execute_command(
 
     // Send command + newline
     {
-        let mut w = session.writer.lock().expect("mutex poisoned");
+        let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Clear any pending command tracking and start fresh
-        session.screen.lock().expect("mutex poisoned").begin_command_tracking();
+        session
+            .screen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .begin_command_tracking();
 
         let cmd = format!("{command}\n");
         w.write_all(cmd.as_bytes()).map_err(|e| {
@@ -335,9 +339,17 @@ async fn execute_command(
         tokio::time::sleep(poll_interval).await;
 
         // Check for command results from OSC 133
-        let results = session.screen.lock().expect("mutex poisoned").drain_command_results();
+        let results = session
+            .screen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .drain_command_results();
         if let Some(result) = results.into_iter().next() {
-            let stdout = session.screen.lock().expect("mutex poisoned").take_command_output();
+            let stdout = session
+                .screen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take_command_output();
             return Ok(AgentRunResponse {
                 exit_code: result.exit_code,
                 stdout,
@@ -350,7 +362,8 @@ async fn execute_command(
 
         // Check for prompt detection fallback (after 100ms silence)
         {
-            let mut screen = session.screen.lock().expect("mutex poisoned");
+            let mut screen =
+                session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if screen.should_check_prompt() {
                 if let Some(result) = screen.detect_prompt() {
                     let stdout = screen.take_command_output();
@@ -369,8 +382,11 @@ async fn execute_command(
         // Check timeout
         if start.elapsed() >= timeout {
             // Force-finish command tracking
-            let (stdout, result) =
-                session.screen.lock().expect("mutex poisoned").finish_command_tracking(-1);
+            let (stdout, result) = session
+                .screen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .finish_command_tracking(-1);
 
             return Ok(AgentRunResponse {
                 exit_code: -1,
@@ -419,7 +435,7 @@ pub async fn agent_send(
 
     match state.manager.sessions.get(&pane_id) {
         Some(session) => {
-            let mut w = session.writer.lock().expect("mutex poisoned");
+            let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let cmd = format!("{}\n", req.command);
             if let Err(e) = w.write_all(cmd.as_bytes()) {
                 return error_response(
@@ -476,7 +492,7 @@ pub async fn agent_read(
 
     match state.manager.sessions.get(&pane_id) {
         Some(session) => {
-            let screen = session.screen.lock().expect("mutex poisoned");
+            let screen = session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let lines_raw = screen.snapshot_plain();
             let lines = if q.strip_ansi { strip_ansi(&lines_raw) } else { lines_raw };
             let lines: Vec<String> = lines.split('\n').map(String::from).collect();
@@ -490,7 +506,8 @@ pub async fn agent_read(
                 }
             });
 
-            let (cols, rows) = *session.size.lock().expect("mutex poisoned");
+            let (cols, rows) =
+                *session.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let _ = (cols, rows);
 
             let cursor = {
@@ -498,8 +515,13 @@ pub async fn agent_read(
                 CursorInfo { row, col }
             };
 
-            let cwd =
-                session.cwd_state.lock().expect("mutex poisoned").cwd.to_str().map(String::from);
+            let cwd = session
+                .cwd_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .cwd
+                .to_str()
+                .map(String::from);
 
             (
                 StatusCode::OK,

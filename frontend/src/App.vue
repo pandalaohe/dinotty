@@ -1070,8 +1070,27 @@ function onGlobalKeydown(e: KeyboardEvent) {
 
   for (const [id, action] of Object.entries(keyActions)) {
     const binding = getBinding(id)
-    const eventKey = binding.key.length === 1 ? e.key.toLowerCase() : e.key
-    if (eventKey === binding.key.toLowerCase() && e.shiftKey === binding.shift) {
+    let matched = false
+    if (binding.key.length === 1) {
+      // Single-char keys: prefer e.code (physical key) to handle Shift correctly.
+      // e.key reports the produced char ('+' for Shift+=), but binding stores '='.
+      const codeToKey: Record<string, string> = {
+        Equal: '=', Minus: '-',
+        BracketLeft: '[', BracketRight: ']', Backslash: '\\',
+        Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
+        Backquote: '`',
+      }
+      let physicalKey = ''
+      if (e.code.startsWith('Key')) physicalKey = e.code.slice(3).toLowerCase()
+      else if (e.code.startsWith('Digit')) physicalKey = e.code.slice(5)
+      else physicalKey = codeToKey[e.code] ?? ''
+      matched = physicalKey === binding.key.toLowerCase()
+        ? e.shiftKey === binding.shift
+        : e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift
+    } else {
+      matched = e.key === binding.key && e.shiftKey === binding.shift
+    }
+    if (matched) {
       e.preventDefault()
       action()
       return

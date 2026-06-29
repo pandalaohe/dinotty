@@ -265,7 +265,7 @@ async function loadSettings() {
   }
 }
 
-async function saveSettings() {
+export async function saveSettings() {
   try {
     // Wait for initial load to complete before saving, to avoid overwriting server data with defaults
     if (loadPromise) await loadPromise

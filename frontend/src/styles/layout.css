@@ -379,3 +379,23 @@
 .reconnect-retry-btn:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+
+/* Hide xterm.js built-in composition view (has known positioning bugs) */
+.xterm .composition-view {
+  display: none !important;
+}
+
+/* Custom preedit overlay for IME composition */
+.preedit-overlay {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  white-space: nowrap;
+  background: var(--bg, #000);
+  color: var(--fg, #fff);
+  text-decoration: underline;
+  font-family: var(--font-mono, monospace);
+  font-size: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}

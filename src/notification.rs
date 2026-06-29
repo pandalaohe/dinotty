@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
 use axum::{extract::State, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -40,27 +39,22 @@ impl NotificationBroadcast {
         }
     }
 
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn set_settings(&self, state: SettingsState) {
-        *self.settings.lock().expect("mutex poisoned") = Some(state);
+        *self.settings.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state);
     }
 
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn set_debounce_ms(&self, ms: u32) {
-        *self.debounce_ms.lock().expect("mutex poisoned") = ms;
+        *self.debounce_ms.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = ms;
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<NotificationEvent> {
         self.tx.subscribe()
     }
 
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn send_bell(&self, pane_id: &str) {
-        let debounce_ms = *self.debounce_ms.lock().expect("mutex poisoned");
-        let mut map = self.bell_debounce.lock().expect("mutex poisoned");
+        let debounce_ms =
+            *self.debounce_ms.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = self.bell_debounce.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let now = Instant::now();
         if let Some(last) = map.get(pane_id) {
             if now.duration_since(*last).as_millis() < u128::from(debounce_ms) {
@@ -92,7 +86,7 @@ impl NotificationBroadcast {
 
     fn run_hooks(&self, notification_type: &str, pane_id: &str, title: Option<&str>, body: &str) {
         let hooks = {
-            let guard = self.settings.lock().expect("mutex poisoned");
+            let guard = self.settings.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let Some(state) = guard.as_ref() else { return };
             let Ok(settings) = state.try_read() else { return };
             if !settings.notification.enabled {
