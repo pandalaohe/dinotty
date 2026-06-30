@@ -160,9 +160,14 @@ export class TauriIpcTransport implements Transport {
 
   send(msg: ClientMsg) {
     if (msg.type === 'input') {
-      this._invoke('pty_write', { data: msg.data })
+      this._invoke('pty_write', { data: msg.data }).catch((err: unknown) => {
+        const errStr = typeof err === 'string' ? err : String(err)
+        if (errStr.includes('timeout') || errStr.includes('exited')) {
+          this._disconnectHandler?.()
+        }
+      })
     } else if (msg.type === 'resize') {
-      this._invoke('pty_resize', { cols: msg.cols, rows: msg.rows })
+      this._invoke('pty_resize', { cols: msg.cols, rows: msg.rows }).catch(() => {})
     }
   }
 

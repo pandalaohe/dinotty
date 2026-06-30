@@ -275,7 +275,6 @@ export class TerminalInstance {
     if (textarea) {
       let isComposing = false
       let compositionJustEnded = false
-      let compositionData = ''
       let safetyTimer: ReturnType<typeof setTimeout> | null = null
 
       // Preedit overlay for IME composition display
@@ -318,15 +317,24 @@ export class TerminalInstance {
         preeditOverlay.style.display = ''
         updatePreeditPosition()
       }
-      const onCompositionEnd = () => {
+      const onCompositionEnd = (e: CompositionEvent) => {
         if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
         isComposing = false
         compositionJustEnded = true
-        compositionData = ''
         preeditOverlay.style.display = 'none'
+        // Send committed text directly — xterm.js may fire onData before this
+        // handler (its compositionend listener was registered first), and the
+        // guard would block it because isComposing is still true at that point.
+        const text = e.data
+        if (text) {
+          this.onInput?.(text)
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: 'input', data: text } as ClientMsg))
+          }
+          this._transport?.send({ type: 'input', data: text })
+        }
         setTimeout(() => {
           compositionJustEnded = false
-          compositionData = ''
         }, 50)
       }
       textarea.addEventListener('compositionstart', onCompositionStart)
@@ -342,12 +350,9 @@ export class TerminalInstance {
       this._compositionGuard = (data: string): boolean => {
         if (isComposing) return false
         if (!compositionJustEnded) return true
-        if (compositionData === '') {
-          compositionData = data
-          return true
-        }
-        if (data === compositionData) return false
-        return true
+        // Block all onData during post-composition window — committed text
+        // was already sent directly in onCompositionEnd.
+        return false
       }
     }
 
@@ -676,7 +681,18 @@ export class TerminalInstance {
 
   private _enqueueWrite(data: string) {
     if (!this.xterm) return
-    this._writeQueue.push(data)
+    // Cap queue depth to prevent UI thread starvation on desktop (Tauri)
+    // where app.emit() has no backpressure. If the queue grows unbounded,
+    // xterm.write() callbacks monopolize the event loop and keyboard input
+    // is starved — the terminal appears frozen while output keeps flowing.
+    // Dropping intermediate chunks is safe: the terminal state is determined
+    // by the latest output.
+    const MAX_WRITE_QUEUE = 64
+    if (this._writeQueue.length >= MAX_WRITE_QUEUE) {
+      this._writeQueue = [this._writeQueue.join('') + data]
+    } else {
+      this._writeQueue.push(data)
+    }
     if (!this._writing) this._processWriteQueue()
   }
 
@@ -687,7 +703,15 @@ export class TerminalInstance {
     }
     this._writing = true
     const chunk = this._writeQueue.shift()!
-    this.xterm.write(chunk, () => this._processWriteQueue())
+    // Split large writes to prevent UI thread blocking.
+    // A single xterm.write() with hundreds of KB synchronously blocks rendering.
+    const MAX_CHUNK = 32 * 1024
+    if (chunk.length > MAX_CHUNK) {
+      this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
+      this.xterm.write(chunk.slice(0, MAX_CHUNK), () => this._processWriteQueue())
+    } else {
+      this.xterm.write(chunk, () => this._processWriteQueue())
+    }
   }
 
   private _scheduleReconnect() {

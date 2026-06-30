@@ -8,13 +8,19 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Instant,
 };
 use tokio::sync::mpsc;
 use tracing::info;
+
+/// Force-flush `sync_buffer` when accumulated data exceeds this limit (256KB).
+/// Prevents massive single payloads that freeze the frontend UI thread.
+const SYNC_BUFFER_LIMIT: usize = 256 * 1024;
+/// Maximum size of a single chunk sent to clients during flush.
+const FLUSH_CHUNK_SIZE: usize = 64 * 1024;
 
 pub enum SessionStatus {
     Connected,
@@ -45,6 +51,8 @@ pub struct Session {
     pub sync_active: AtomicBool,
     /// Buffered output while synchronized output mode is active
     pub sync_buffer: Mutex<Vec<String>>,
+    /// Running byte count of `sync_buffer` to avoid O(n) sum on every broadcast
+    pub sync_buffer_bytes: AtomicUsize,
 }
 
 impl Session {
@@ -140,10 +148,18 @@ impl Session {
             return;
         }
         if self.sync_active.load(Ordering::Relaxed) {
-            self.sync_buffer
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(msg.to_string());
+            let mut buf =
+                self.sync_buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let len = msg.len();
+            buf.push(msg.to_string());
+            let total = self.sync_buffer_bytes.fetch_add(len, Ordering::Relaxed) + len;
+            if total < SYNC_BUFFER_LIMIT {
+                return;
+            }
+            // Buffer exceeded limit — drop lock and force-flush to prevent
+            // massive single payloads that freeze the frontend UI thread.
+            drop(buf);
+            self.flush_sync_buffer();
             return;
         }
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -160,7 +176,9 @@ impl Session {
     }
 
     /// Flush buffered output accumulated during synchronized output mode.
+    /// Breaks large payloads into chunks to avoid freezing the frontend UI thread.
     pub fn flush_sync_buffer(&self) {
+        self.sync_buffer_bytes.store(0, Ordering::Relaxed);
         let data: Vec<String> = std::mem::take(
             &mut self.sync_buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
         );
@@ -169,7 +187,16 @@ impl Session {
         }
         let combined = data.join("");
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        clients.retain(|tx| tx.send(combined.clone()).is_ok());
+        if combined.len() <= FLUSH_CHUNK_SIZE {
+            clients.retain(|tx| tx.send(combined.clone()).is_ok());
+        } else {
+            for chunk in combined.as_bytes().chunks(FLUSH_CHUNK_SIZE) {
+                // SAFETY: chunks split on byte boundaries of valid UTF-8 may land
+                // mid-codepoint. Use from_utf8_lossy to avoid panics.
+                let s = String::from_utf8_lossy(chunk).into_owned();
+                clients.retain(|tx| tx.send(s.clone()).is_ok());
+            }
+        }
     }
 
     pub fn has_clients(&self) -> bool {

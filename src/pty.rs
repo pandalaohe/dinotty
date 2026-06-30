@@ -90,6 +90,7 @@ pub fn create_session(
         }),
         sync_active: std::sync::atomic::AtomicBool::new(false),
         sync_buffer: std::sync::Mutex::new(Vec::new()),
+        sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
     });
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
 
