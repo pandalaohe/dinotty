@@ -397,7 +397,7 @@ function onTouchMove(e: TouchEvent) {
     const dy = Math.abs(touch.clientY - longPressStartY)
     if (dy > dx && dy > 15) {
       touchScrolling = true
-      if (terminal) terminal.touchMoved = true
+      if (terminal) terminal.touchMoved = true;
       (e.currentTarget as HTMLElement).dispatchEvent(
         new CustomEvent('terminal-scroll', { bubbles: true })
       )
@@ -435,7 +435,7 @@ function onTouchEnd(e: TouchEvent) {
     longPressTimer = null
   }
   if (touchScrolling) {
-    touchScrolling = false
+    touchScrolling = false;
     (e.currentTarget as HTMLElement).dispatchEvent(
       new CustomEvent('terminal-scroll', { bubbles: true })
     )
