@@ -10,7 +10,13 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{io::Write, sync::Arc};
+use std::{
+    io::Write,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+};
 
 use tracing::{error, info};
 
@@ -102,13 +108,20 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
     });
 
     // Ping sender task: keep connection alive through NAT/proxy
+    // Tracks missed pongs — if 2 consecutive pings go unanswered (60s), close connection.
+    let missed_pongs = Arc::new(AtomicU32::new(0));
     let ping_tx = ws_out_tx.clone();
+    let pong_counter = Arc::clone(&missed_pongs);
     let ping_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         interval.tick().await; // skip first immediate tick
         loop {
             interval.tick().await;
             if ping_tx.send(Message::Ping(vec![])).is_err() {
+                break;
+            }
+            if pong_counter.fetch_add(1, Ordering::Relaxed) >= 2 {
+                let _ = ping_tx.send(Message::Close(None));
                 break;
             }
         }
@@ -282,8 +295,11 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
             Message::Ping(data) => {
                 let _ = ws_out_tx.send(Message::Pong(data));
             }
+            Message::Pong(_) => {
+                missed_pongs.store(0, Ordering::Relaxed);
+            }
             Message::Close(_) => break,
-            _ => {}
+            Message::Binary(_) => {}
         }
     }
     fwd.abort();
@@ -315,13 +331,20 @@ async fn handle_socket(
     });
 
     // Ping sender task: keep connection alive through NAT/proxy
+    // Tracks missed pongs — if 2 consecutive pings go unanswered (60s), close connection.
+    let missed_pongs = Arc::new(AtomicU32::new(0));
     let ping_tx = ws_out_tx.clone();
+    let pong_counter = Arc::clone(&missed_pongs);
     let ping_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         interval.tick().await; // skip first immediate tick
         loop {
             interval.tick().await;
             if ping_tx.send(Message::Ping(vec![])).is_err() {
+                break;
+            }
+            if pong_counter.fetch_add(1, Ordering::Relaxed) >= 2 {
+                let _ = ping_tx.send(Message::Close(None));
                 break;
             }
         }
@@ -454,8 +477,11 @@ async fn handle_socket(
                 Message::Ping(data) => {
                     let _ = ws_out_tx.send(Message::Pong(data));
                 }
+                Message::Pong(_) => {
+                    missed_pongs.store(0, Ordering::Relaxed);
+                }
                 Message::Close(_) => break,
-                _ => {}
+                Message::Binary(_) => {}
             }
         }
 
@@ -560,8 +586,11 @@ async fn handle_socket(
             Message::Ping(data) => {
                 let _ = ws_out_tx.send(Message::Pong(data));
             }
+            Message::Pong(_) => {
+                missed_pongs.store(0, Ordering::Relaxed);
+            }
             Message::Close(_) => break,
-            _ => {}
+            Message::Binary(_) => {}
         }
     }
 

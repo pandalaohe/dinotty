@@ -53,7 +53,7 @@ pub fn create_session(
             "bash" => {
                 cmd.env(
                     "PROMPT_COMMAND",
-                    r#"history -a; history -r; printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD/#$HOME/~}"; printf "\033]133;A\033\\"; printf "\033]133;D;%d\033\\" $?""#,
+                    r#"history -a; history -r; printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD/#$HOME/~}"; printf "\033]133;A\033\\"; printf "\033]133;D;%d\033\\" $?"#,
                 );
                 // Inject preexec-like trap for command start detection
                 cmd.env("BASH_ENV", r#"trap 'printf "\033]133;B\033\\"' DEBUG"#);
@@ -90,6 +90,7 @@ pub fn create_session(
         }),
         sync_active: std::sync::atomic::AtomicBool::new(false),
         sync_buffer: std::sync::Mutex::new(Vec::new()),
+        sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
     });
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
 
