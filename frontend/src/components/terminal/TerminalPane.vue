@@ -40,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { TerminalInstance } from '../../composables/useTerminal'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
@@ -151,6 +151,7 @@ function closeMenu() {
   handlesVisible.value = false
   linkType.value = undefined
   linkTarget.value = undefined
+  nextTick(() => terminal?.focus())
 }
 
 function onMenuCopy() {
