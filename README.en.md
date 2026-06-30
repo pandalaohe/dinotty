@@ -160,7 +160,7 @@ xattr -cr /Applications/Dinotty.app
 **Linux one-liner install**:
 
 ```bash
-curl -LO https://github.com/xichan96/dinotty/releases/download/v0.11.2/dinotty-server_0.11.2-1_amd64.deb && sudo dpkg -i dinotty-server_0.11.2-1_amd64.deb
+curl -LO https://github.com/xichan96/dinotty/releases/download/v0.14.0/dinotty-server_0.14.0-1_amd64.deb && sudo dpkg -i dinotty-server_0.14.0-1_amd64.deb
 ```
 
 **Linux startup**:
@@ -214,65 +214,17 @@ cd frontend && npx vue-tsc --noEmit
 
 **Written in Rust · Single binary · Zero dependencies** — Runs a full VT state machine on the server, not a pipe-forwarding proxy, so sessions survive disconnection.
 
-## Project Structure
-
-```
-src/               # Rust backend
-  main.rs          # Axum router & server entry
-  lib.rs           # Library entry point
-  ws.rs            # WebSocket ↔ PTY bridge
-  vt_screen.rs     # Virtual terminal emulator (VTE-based)
-  session.rs       # Session manager (multi-pane)
-  pty.rs           # PTY creation & management
-  tabs.rs          # Tab & pane management
-  history.rs       # Session history
-  workspace/       # File workspace API
-  proxy/           # Reverse proxy for preview
-  monitor.rs       # System monitor
-  notification.rs  # Notification broadcast (bell/OSC detection)
-  plugin/          # Plugin system management
-  settings.rs      # Settings persistence
-  auth.rs          # Authentication
-  file_watcher.rs  # File change watching
-
-frontend/          # Vue 3 SPA
-  src/
-    App.vue
-    components/
-      split/           # SplitContainer, TabBar, PaneHeader, StatusBar
-      terminal/        # TerminalPane, MonitorPopover
-      command/         # CommandPalette, CommandBookmarks
-      keyboard/        # MobileKeyboard, HistoryPanel, SuggestionBar
-      notification/    # NotificationPanel, NotificationCard
-      preview/         # FileWorkspacePreview, PreviewPanel, WebPreview
-      settings/        # Settings tabs (General, Theme, Keyboard, etc.)
-      workspace/       # MonacoEditor, FilePreviewContent, gitDecorations
-      plugin/          # PluginView
-      ui/              # ConfirmModal and other shared components
-      ServerList.vue   # Server list
-    composables/   # useTerminal, useTransport, useSettings, useTabApi, etc.
-
-src-tauri/         # Tauri desktop client
-docs/              # Design documents
-```
-
-## WebSocket Protocol
-
-JSON messages over `/ws`:
-
-| Direction | `type` | Fields |
-|-----------|--------|--------|
-| Client → Server | `input` | `data: String` |
-| Client → Server | `resize` | `cols: u16, rows: u16` |
-| Server → Client | `output` | `data: String` |
-| Server → Client | `shell_info` | `shell_type: String` |
-
 ## More Documentation
 
 - [Deployment Guide](docs/deployment.en.md) — systemd, Docker, cross-platform build, configuration
 - [Notification System](docs/notifications.en.md) — HTTP API, Claude Code integration, Open API
 - [Plugin System](docs/plugins.en.md) — installation, manifest, API, built-in plugins
 - [Plugin Development](docs/plugin-development.md) — full plugin development guide
+- [Agent API](docs/agent-api.md) — HTTP/WebSocket structured interaction for AI agents and automation scripts
+- [MCP Server](docs/mcp-server.md) — built-in MCP JSON-RPC server for AI assistants to operate terminal sessions
+- [Token Permission System](docs/token-system.md) — capability-based multi-token fine-grained access control
+- [Event Bus](docs/event-bus.md) — global event bus for inter-module event dispatch
+- [Audit Log & Webhook](docs/audit-webhook.md) — API usage tracking and external notifications
 - [Contributing](docs/contributing.en.md) — branch strategy, commit convention, code style
 
 ## Contributors

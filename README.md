@@ -160,7 +160,7 @@ xattr -cr /Applications/Dinotty.app
 **Linux 一键下载安装**：
 
 ```bash
-curl -LO https://github.com/xichan96/dinotty/releases/download/v0.11.2/dinotty-server_0.11.2-1_amd64.deb && sudo dpkg -i dinotty-server_0.11.2-1_amd64.deb
+curl -LO https://github.com/xichan96/dinotty/releases/download/v0.14.0/dinotty-server_0.14.0-1_amd64.deb && sudo dpkg -i dinotty-server_0.14.0-1_amd64.deb
 ```
 
 **Linux 启动方式**：
@@ -214,65 +214,17 @@ cd frontend && npx vue-tsc --noEmit
 
 **Rust 编写 · 单二进制 · 零依赖部署** — 服务端跑完整 VT 状态机，不是管道转发，断线会话不丢失。
 
-## 项目结构
-
-```
-src/               # Rust 后端
-  main.rs          # Axum 路由与服务入口
-  lib.rs           # 库入口
-  ws.rs            # WebSocket ↔ PTY 桥接
-  vt_screen.rs     # 虚拟终端仿真器（基于 VTE）
-  session.rs       # 会话管理器（多面板）
-  pty.rs           # PTY 创建与管理
-  tabs.rs          # Tab 与 Pane 管理
-  history.rs       # 会话历史记录
-  workspace/       # 文件工作区 API
-  proxy/           # 反向代理（预览）
-  monitor.rs       # 系统监控
-  notification.rs  # 通知广播（bell/OSC 检测）
-  plugin/          # 插件系统管理
-  settings.rs      # 设置持久化
-  auth.rs          # 身份认证
-  file_watcher.rs  # 文件变更监听
-
-frontend/          # Vue 3 SPA
-  src/
-    App.vue
-    components/
-      split/           # SplitContainer, TabBar, PaneHeader, StatusBar
-      terminal/        # TerminalPane, MonitorPopover
-      command/         # CommandPalette, CommandBookmarks
-      keyboard/        # MobileKeyboard, HistoryPanel, SuggestionBar
-      notification/    # NotificationPanel, NotificationCard
-      preview/         # FileWorkspacePreview, PreviewPanel, WebPreview
-      settings/        # 各设置 Tab（General, Theme, Keyboard 等）
-      workspace/       # MonacoEditor, FilePreviewContent, gitDecorations
-      plugin/          # PluginView
-      ui/              # ConfirmModal 等通用组件
-      ServerList.vue   # 服务器列表
-    composables/   # useTerminal, useTransport, useSettings, useTabApi 等
-
-src-tauri/         # Tauri 桌面客户端
-docs/              # 设计文档
-```
-
-## WebSocket 协议
-
-通过 `/ws` 传输的 JSON 消息：
-
-| 方向 | `type` | 字段 |
-|------|--------|------|
-| 客户端 → 服务端 | `input` | `data: String` |
-| 客户端 → 服务端 | `resize` | `cols: u16, rows: u16` |
-| 服务端 → 客户端 | `output` | `data: String` |
-| 服务端 → 客户端 | `shell_info` | `shell_type: String` |
-
 ## 更多文档
 
 - [部署指南](docs/deployment.md) — systemd、Docker、跨平台构建、配置说明
 - [通知系统](docs/notifications.md) — HTTP API、Claude Code 集成、Open API
 - [插件系统](docs/plugins.md) — 安装、清单、API、内置插件
 - [插件开发](docs/plugin-development.md) — 完整的插件开发文档
+- [Agent API](docs/agent-api.md) — HTTP/WebSocket 结构化交互，供 AI Agent 与自动化脚本调用
+- [MCP Server](docs/mcp-server.md) — 内置 MCP JSON-RPC 服务器，AI 助手直接操作终端会话
+- [Token 权限系统](docs/token-system.md) — 基于 Capability 的多 Token 细粒度访问控制
+- [Event Bus](docs/event-bus.md) — 全局事件总线，模块间事件分发
+- [审计日志与 Webhook](docs/audit-webhook.md) — API 使用追踪与外部通知
 - [贡献指南](docs/contributing.md) — 分支策略、Commit 规范、代码风格
 
 ## 贡献者

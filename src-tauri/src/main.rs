@@ -93,20 +93,26 @@ fn pty_spawn(
 }
 
 #[tauri::command]
-fn pty_write(
+async fn pty_write(
     pane_id: String,
     data: String,
     state: State<'_, Arc<SessionManager>>,
 ) -> Result<(), String> {
-    use std::io::Write;
-    let sessions = &state.sessions;
-    let session = sessions.get(&pane_id).ok_or("session not found")?;
+    let session = state.sessions.get(&pane_id).ok_or("session not found")?.value().clone();
     if session.is_exited() {
         return Err("session exited".into());
     }
-    let mut w = session.writer.lock().unwrap_or_else(|e| e.into_inner());
-    w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(())
+    let result = tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut w = session.writer.lock().unwrap_or_else(|e| e.into_inner());
+        w.write_all(data.as_bytes())
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(5), result).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(e))) => Err(e.to_string()),
+        Ok(Err(e)) => Err(format!("task join error: {e}")),
+        Err(_) => Err("write timeout".into()),
+    }
 }
 
 #[tauri::command]
