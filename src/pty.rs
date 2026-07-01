@@ -6,7 +6,7 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 /// Create a new PTY session and register it with the session manager.
 ///
@@ -133,7 +133,14 @@ pub fn create_session(
         let mut utf8_tail: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => {
+                    info!("PTY reader: EOF, pane={}", pane_id_clone);
+                    break;
+                }
+                Err(e) => {
+                    error!("PTY reader: read error: {:?}, pane={}", e, pane_id_clone);
+                    break;
+                }
                 Ok(n) => {
                     let data = &buf[..n];
                     // Feed to virtual screen and check for command completion
@@ -213,7 +220,9 @@ pub fn create_session(
                 }
             }
         }
-        session_clone.mark_exited();
+        // Notify all connected clients before marking as exited,
+        // so the frontend knows the process is dead instead of seeing a frozen terminal.
+        session_clone.notify_exit_and_mark_exited(&pane_id_clone);
         if manager_clone.sessions.remove(&pane_id_clone).is_some() {
             // Publish session closed event
             manager_clone.event_bus.publish(BusEvent::SessionClosed {

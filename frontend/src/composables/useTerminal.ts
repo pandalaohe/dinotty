@@ -124,6 +124,7 @@ export class TerminalInstance {
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _onDataRegistered = false
   private _overlay: HTMLElement | null = null
+  private _sessionExited = false
   private _suppressTitleChange = false
   private _touchCleanup: (() => void) | null = null
   private _focusinCleanup: (() => void) | null = null
@@ -156,6 +157,7 @@ export class TerminalInstance {
   onPreviewLink: ((url: string, x?: number, y?: number) => void) | null = null
   onRawOutput: ((data: string) => void) | null = null
   onInput: ((data: string) => void) | null = null
+  onSessionExit: (() => void) | null = null
 
   constructor(paneId: string) {
     this.paneId = paneId
@@ -507,6 +509,7 @@ export class TerminalInstance {
   }
 
   sendData(data: string, force = false) {
+    if (this._sessionExited) return
     // Guard: only the active pane sends input (prevents WKWebView multi-focus duplication)
     if (!force && _activePaneId !== null && _activePaneId !== this.paneId) return
     if (this._transport) {
@@ -589,6 +592,8 @@ export class TerminalInstance {
         this._writeQueue = []
         this._writing = false
         this._doFitAndResize(true)
+      } else if (msg.type === 'session_exit') {
+        this._handleSessionExit()
       }
     })
 
@@ -650,6 +655,8 @@ export class TerminalInstance {
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
+      } else if (msg.type === 'session_exit') {
+        this._handleSessionExit()
       }
     }
 
@@ -778,6 +785,34 @@ export class TerminalInstance {
       this._overlay.remove()
       this._overlay = null
     }
+  }
+
+  private _handleSessionExit() {
+    if (this._sessionExited) return
+    this._sessionExited = true
+    this._showExitOverlay()
+    this.onSessionExit?.()
+  }
+
+  private _showExitOverlay() {
+    if (!this._wrapper || this._overlay) return
+    this._overlay = document.createElement('div')
+    this._overlay.className = 'reconnect-overlay'
+
+    const text = document.createElement('span')
+    text.textContent = 'Process exited'
+
+    const btn = document.createElement('button')
+    btn.className = 'reconnect-retry-btn'
+    btn.textContent = 'New Tab'
+    btn.addEventListener('click', () => {
+      window.location.reload()
+    })
+
+    this._overlay.appendChild(text)
+    this._overlay.appendChild(btn)
+    this._wrapper.style.position = 'relative'
+    this._wrapper.appendChild(this._overlay)
   }
 
   _refit() {

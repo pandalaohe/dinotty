@@ -404,19 +404,15 @@ async fn handle_socket(
         }
         info!("All initial messages sent to pane={}", pane_id);
 
-        let pane_id_fwd = pane_id.clone();
         let fwd_ws_out_tx = ws_out_tx.clone();
         let fwd = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
-                info!("Forwarder: pane={}, data_len={}", pane_id_fwd, data.len());
                 let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
                     .expect("serialization is infallible");
                 if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
-                    error!("Forwarder: failed to send WS message for pane={}", pane_id_fwd);
                     break;
                 }
             }
-            info!("Forwarder: exited for pane={}", pane_id_fwd);
         });
 
         // Input channel: replaces old channel so only this connection writes to PTY
@@ -523,19 +519,15 @@ async fn handle_socket(
     let _ = ws_out_tx.send(Message::Text(shell_info));
 
     // Forward PTY output to this WS client
-    let pane_id_fwd = pane_id.clone();
     let fwd_ws_out_tx = ws_out_tx.clone();
     let fwd = tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
-            info!("Forwarder (new): pane={}, data_len={}", pane_id_fwd, data.len());
             let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
                 .expect("serialization is infallible");
             if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
-                error!("Forwarder (new): failed to send WS message for pane={}", pane_id_fwd);
                 break;
             }
         }
-        info!("Forwarder (new): exited for pane={}", pane_id_fwd);
     });
 
     // Input channel: dedicated write task reads from channel → PTY writer

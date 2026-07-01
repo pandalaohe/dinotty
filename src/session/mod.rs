@@ -178,15 +178,11 @@ impl Session {
             return;
         }
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Use try_send: if channel is full, skip this client for this message
-        // but don't remove it — the client will catch up on subsequent messages.
-        // This prevents PTY reader thread from blocking on slow consumers.
+        // blocking_send creates true backpressure: when the channel is full,
+        // the PTY reader thread pauses until the frontend catches up.
+        // This is safe because broadcast() runs in spawn_blocking (PTY reader thread).
         let data = msg.to_string();
-        for tx in clients.iter() {
-            let _ = tx.try_send(data.clone());
-        }
-        // Only remove truly closed senders (disconnected clients)
-        clients.retain(|tx| !tx.is_closed());
+        clients.retain(|tx| tx.blocking_send(data.clone()).is_ok());
     }
 
     /// Enable or disable synchronized output mode (DEC mode 2026).
@@ -216,20 +212,23 @@ impl Session {
         let combined = data.join("");
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if combined.len() <= FLUSH_CHUNK_SIZE {
-            // Use try_send: skip slow clients for this flush, don't block PTY reader
-            for tx in clients.iter() {
-                let _ = tx.try_send(combined.clone());
-            }
+            clients.retain(|tx| tx.blocking_send(combined.clone()).is_ok());
         } else {
             for chunk in combined.as_bytes().chunks(FLUSH_CHUNK_SIZE) {
                 let s = String::from_utf8_lossy(chunk).into_owned();
-                for tx in clients.iter() {
-                    let _ = tx.try_send(s.clone());
-                }
+                clients.retain(|tx| tx.blocking_send(s.clone()).is_ok());
             }
         }
-        // Only remove truly closed senders (disconnected clients)
-        clients.retain(|tx| !tx.is_closed());
+    }
+
+    /// Notify all connected clients that the session is exiting, then mark as exited.
+    /// Must be called from a blocking context (`spawn_blocking`) because it uses `blocking_send`.
+    pub fn notify_exit_and_mark_exited(&self, pane_id: &str) {
+        let exit_msg = serde_json::json!({"type": "session_exit", "pane_id": pane_id}).to_string();
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        clients.retain(|tx| tx.blocking_send(exit_msg.clone()).is_ok());
+        drop(clients);
+        self.mark_exited();
     }
 
     pub fn has_clients(&self) -> bool {
