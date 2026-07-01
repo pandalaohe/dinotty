@@ -681,6 +681,8 @@ export class TerminalInstance {
         this.onInput?.(data)
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({ type: 'input', data } as ClientMsg))
+        } else {
+          console.warn('[TerminalInput] WS not open, readyState:', this.ws?.readyState, 'pane:', this.paneId)
         }
       })
     }
