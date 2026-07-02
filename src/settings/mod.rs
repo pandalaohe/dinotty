@@ -61,6 +61,7 @@ pub struct Settings {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct KeyBinding {
     pub key: String,
     #[serde(default)]
@@ -73,6 +74,7 @@ pub struct KeyBinding {
     pub alt: bool,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_false(b: &bool) -> bool {
     !*b
 }
