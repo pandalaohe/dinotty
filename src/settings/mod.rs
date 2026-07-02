@@ -65,6 +65,16 @@ pub struct KeyBinding {
     pub key: String,
     #[serde(default)]
     pub shift: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub meta: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ctrl: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub alt: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
