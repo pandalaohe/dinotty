@@ -36,7 +36,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   drag: [handle: 'start' | 'end', clientX: number, clientY: number]
-  dragEnd: []
+  dragEnd: [canceled: boolean]
 }>()
 
 const dragging = ref(false)
@@ -85,7 +85,7 @@ function onMove(e: MouseEvent | TouchEvent) {
   emit('drag', activeHandle.value, pos.clientX, pos.clientY)
 }
 
-function onEnd() {
+function onEnd(e?: Event) {
   dragging.value = false
   activeHandle.value = null
   window.removeEventListener('mousemove', onMove)
@@ -93,7 +93,7 @@ function onEnd() {
   window.removeEventListener('touchmove', onMove)
   window.removeEventListener('touchend', onEnd)
   window.removeEventListener('touchcancel', onEnd)
-  emit('dragEnd')
+  emit('dragEnd', e?.type === 'touchcancel')
 }
 </script>
 

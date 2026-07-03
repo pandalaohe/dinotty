@@ -42,6 +42,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { TerminalInstance } from '../../composables/useTerminal'
+import { copyToClipboard } from '../../utils/clipboard'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
 import SelectionHandles from './SelectionHandles.vue'
@@ -93,6 +94,12 @@ let selectionTouched = false
 // Link context menu state
 const linkType = ref<'file' | 'link'>()
 const linkTarget = ref<string>()
+
+const DT8_TOUCH_DEBUG = import.meta.env.DEV && (typeof localStorage !== 'undefined') && localStorage.getItem('dt8-touch-select-debug') === '1'
+
+function debugTouchSelect(branch: string, data: Record<string, unknown>) {
+  if (DT8_TOUCH_DEBUG) console.debug('[dt8-touch-select]', branch, data)
+}
 
 function getTerminal() {
   return terminal
@@ -179,19 +186,48 @@ let cachedCellW = 0
 let cachedCellH = 0
 let cachedScreenRect: DOMRect | null = null
 
-function cacheCellDims() {
+type ScreenCellGeometry = { cellW: number; cellH: number; screenRect: DOMRect }
+
+function getScreenCellGeometry(xt: NonNullable<TerminalInstance['xterm']>): ScreenCellGeometry | null {
+  const screen = xt.element?.querySelector('.xterm-screen') as HTMLElement | null
+  if (!screen) {
+    debugTouchSelect('geometry:null-screen', { cols: xt.cols, rows: xt.rows })
+    return null
+  }
+  const screenRect = screen.getBoundingClientRect()
+  if (screenRect.width <= 0 || screenRect.height <= 0 || xt.cols <= 0 || xt.rows <= 0) {
+    debugTouchSelect('geometry:null-rect', {
+      width: screenRect.width,
+      height: screenRect.height,
+      cols: xt.cols,
+      rows: xt.rows,
+    })
+    return null
+  }
+  const cellW = screenRect.width / xt.cols
+  const cellH = screenRect.height / xt.rows
+  if (!(cellW > 0) || !(cellH > 0)) {
+    debugTouchSelect('geometry:null-cell', {
+      cellW,
+      cellH,
+      width: screenRect.width,
+      height: screenRect.height,
+      cols: xt.cols,
+      rows: xt.rows,
+    })
+    return null
+  }
+  return { cellW, cellH, screenRect }
+}
+
+function cacheCellDims(geom?: ScreenCellGeometry) {
   const xt = terminal?.xterm
   if (!xt) return false
-  const core = (xt as any)._core
-  const dims = core?._renderService?.dimensions
-  if (!dims?.css?.cell?.width || !dims.css.cell.height) return false
-  cachedCellW = dims.css.cell.width
-  cachedCellH = dims.css.cell.height
-  const xtermEl = xt.element
-  if (!xtermEl) return false
-  const screen = xtermEl.querySelector('.xterm-screen') as HTMLElement
-  if (!screen) return false
-  cachedScreenRect = screen.getBoundingClientRect()
+  const geometry = geom ?? getScreenCellGeometry(xt)
+  if (!geometry) return false
+  cachedCellW = geometry.cellW
+  cachedCellH = geometry.cellH
+  cachedScreenRect = geometry.screenRect
   return true
 }
 
@@ -280,19 +316,26 @@ function selectionToPixelCoords(): { start: { x: number; y: number }; end: { x: 
 function onTouchStart(e: TouchEvent) {
   if (!terminal || terminal.isMouseModeEnabled()) return
   if (handlesVisible.value) return // selection mode active, don't start new long-press
+  if (longPressTimer) clearTimeout(longPressTimer)
   longPressFired = false
   touchScrolling = false
+  terminal.touchMoved = false
   const touch = e.touches[0]
   longPressStartX = touch.clientX
   longPressStartY = touch.clientY
   longPressTimer = setTimeout(() => {
     longPressFired = true
 
-    const wordPos = selectWordAtTouch(longPressStartX, longPressStartY)
+    const xt = terminal?.xterm
+    if (!xt) return
+    const geom = getScreenCellGeometry(xt)
+    if (!geom) return
+
+    const wordPos = selectWordAtTouch(longPressStartX, longPressStartY, geom)
     if (!wordPos) return
 
     // Enter selection mode
-    cacheCellDims()
+    cacheCellDims(geom)
     terminal!.inTouchSelection = true
     terminal!.selStartRow = wordPos.bufferRow
     terminal!.selStartCol = wordPos.startCol
@@ -318,44 +361,62 @@ function onTouchStart(e: TouchEvent) {
   }, 500)
 }
 
-function selectWordAtTouch(clientX: number, clientY: number): { bufferRow: number; startCol: number } | null {
+function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeometry): { bufferRow: number; startCol: number } | null {
   const xterm = terminal?.xterm
-  if (!xterm) return null
+  if (!xterm) {
+    debugTouchSelect('select:null-xterm', {})
+    return null
+  }
 
-  const xtermEl = xterm.element
-  if (!xtermEl) return null
+  const col = Math.floor((clientX - geom.screenRect.left) / geom.cellW)
+  const row = Math.floor((clientY - geom.screenRect.top) / geom.cellH)
+  const geometryFacts = {
+    cellW: geom.cellW,
+    cellH: geom.cellH,
+    screenLeft: geom.screenRect.left,
+    screenTop: geom.screenRect.top,
+    screenWidth: geom.screenRect.width,
+    screenHeight: geom.screenRect.height,
+    col,
+    row,
+    cols: xterm.cols,
+    rows: xterm.rows,
+  }
 
-  const screen = xtermEl.querySelector('.xterm-screen') as HTMLElement
-  if (!screen) return null
-
-  const core = (xterm as any)._core
-  const dims = core?._renderService?.dimensions
-  if (!dims?.css?.cell?.width || !dims.css.cell.height) return null
-
-  const { width: cellW, height: cellH } = dims.css.cell
-  const rect = screen.getBoundingClientRect()
-
-  const col = Math.floor((clientX - rect.left) / cellW)
-  const row = Math.floor((clientY - rect.top) / cellH)
-
-  if (col < 0 || row < 0 || col >= xterm.cols || row >= xterm.rows) return null
+  if (col < 0 || row < 0 || col >= xterm.cols || row >= xterm.rows) {
+    debugTouchSelect('select:out-of-bounds', geometryFacts)
+    return null
+  }
 
   const buffer = xterm.buffer.active
   const bufferRow = buffer.viewportY + row
   const line = buffer.getLine(bufferRow)
-  if (!line) return null
+  if (!line) {
+    debugTouchSelect('select:null-line', { ...geometryFacts, bufferRow })
+    return null
+  }
 
   const lineText = line.translateToString(true)
-  if (!lineText) return null
+  if (!lineText) {
+    debugTouchSelect('select:empty-line', { ...geometryFacts, bufferRow })
+    return null
+  }
 
   const wordRegex = /[\w.:/@-]+/g
   let match: RegExpExecArray | null
   while ((match = wordRegex.exec(lineText)) !== null) {
     if (col >= match.index && col < match.index + match[0].length) {
       xterm.select(match.index, bufferRow, match[0].length)
+      debugTouchSelect('select:success', {
+        ...geometryFacts,
+        bufferRow,
+        startCol: match.index,
+        length: match[0].length,
+      })
       return { bufferRow, startCol: match.index }
     }
   }
+  debugTouchSelect('select:no-word', { ...geometryFacts, bufferRow })
   return null
 }
 
@@ -411,6 +472,10 @@ function onTouchEnd(e: TouchEvent) {
     e.preventDefault()
     terminal.inTouchSelection = false
     const text = terminal.xterm?.getSelection() ?? ''
+    if (text) void copyToClipboard(text).then(
+      () => debugTouchSelect('copy:touch-end', { success: true }),
+      () => debugTouchSelect('copy:touch-end', { success: false }),
+    )
     menuSelectedText.value = text
     if (selectionTouched) {
       if (text) {
@@ -498,10 +563,14 @@ function onHandleDrag(handle: 'start' | 'end', clientX: number, clientY: number)
   handleEndY.value = coords.end.y
 }
 
-function onHandleDragEnd() {
+function onHandleDragEnd(canceled = false) {
   if (terminal) terminal.inTouchSelection = false
   dragHandle = null
   const text = terminal?.xterm?.getSelection() ?? ''
+  if (!canceled && text) void copyToClipboard(text).then(
+    () => debugTouchSelect('copy:handle-drag-end', { success: true }),
+    () => debugTouchSelect('copy:handle-drag-end', { success: false }),
+  )
   menuSelectedText.value = text
   if (text) {
     menuX.value = handleEndX.value
