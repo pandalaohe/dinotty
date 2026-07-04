@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="containerRef"
     class="terminal-pane-container"
     @contextmenu.prevent="onContextMenu"
     @touchstart="onTouchStart"
@@ -63,6 +64,7 @@ const emit = defineEmits<{
 }>()
 
 const wrapperRef = ref<HTMLElement>()
+const containerRef = ref<HTMLElement>()
 let terminal: TerminalInstance | null = null
 let pendingFocus = false
 const searchVisible = ref(false)
@@ -314,7 +316,7 @@ function selectionToPixelCoords(): { start: { x: number; y: number }; end: { x: 
 
 // Mobile long-press to start touch selection
 function onTouchStart(e: TouchEvent) {
-  if (!terminal || terminal.isMouseModeEnabled()) return
+  if (!terminal) return
   if (handlesVisible.value) return // selection mode active, don't start new long-press
   if (longPressTimer) clearTimeout(longPressTimer)
   longPressFired = false
@@ -472,10 +474,18 @@ function onTouchEnd(e: TouchEvent) {
     e.preventDefault()
     terminal.inTouchSelection = false
     const text = terminal.xterm?.getSelection() ?? ''
-    if (text) void copyToClipboard(text).then(
-      () => debugTouchSelect('copy:touch-end', { success: true }),
-      () => debugTouchSelect('copy:touch-end', { success: false }),
-    )
+    const target = e.currentTarget as HTMLElement
+    if (text) {
+      // Dispatch synchronously (not inside the copy .then()) so App.vue's
+      // onTerminalTouch sees scrollGestureDetected before it decides whether
+      // to show the on-screen keyboard toolbar — an async dispatch arrives
+      // after kbVisible is already set, causing a visible flash.
+      target.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+      void copyToClipboard(text).then(
+        () => debugTouchSelect('copy:touch-end', { success: true }),
+        () => debugTouchSelect('copy:touch-end', { success: false }),
+      )
+    }
     menuSelectedText.value = text
     if (selectionTouched) {
       if (text) {
@@ -489,10 +499,13 @@ function onTouchEnd(e: TouchEvent) {
     }
     // If not touched: menu already visible from long press, keep it
     selectionTouched = false
+    longPressFired = false
     return
   }
   if (longPressFired) {
-    e.preventDefault()
+    if (terminal?.inTouchSelection) {
+      e.preventDefault()
+    }
     longPressFired = false
   }
   if (longPressTimer) {
@@ -567,10 +580,14 @@ function onHandleDragEnd(canceled = false) {
   if (terminal) terminal.inTouchSelection = false
   dragHandle = null
   const text = terminal?.xterm?.getSelection() ?? ''
-  if (!canceled && text) void copyToClipboard(text).then(
-    () => debugTouchSelect('copy:handle-drag-end', { success: true }),
-    () => debugTouchSelect('copy:handle-drag-end', { success: false }),
-  )
+  if (!canceled && text) {
+    // Dispatch synchronously — see onTouchEnd for why (avoids a keyboard-toolbar flash).
+    containerRef.value?.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+    void copyToClipboard(text).then(
+      () => debugTouchSelect('copy:handle-drag-end', { success: true }),
+      () => debugTouchSelect('copy:handle-drag-end', { success: false }),
+    )
+  }
   menuSelectedText.value = text
   if (text) {
     menuX.value = handleEndX.value
