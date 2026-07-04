@@ -94,6 +94,16 @@ let selAnchorCol = 0
 let dragHandle: 'start' | 'end' | null = null
 let selectionTouched = false
 
+// Edge auto-scroll during selection drag (A4) — repeating scroll while the
+// finger is held in the top/bottom edge band, so selection can extend past the
+// visible viewport. lastDrag* hold the RAW (unclamped) touch coords: edge
+// detection needs the real off-edge position, while selection math clamps.
+let autoScrollTimer: ReturnType<typeof setInterval> | null = null
+let lastDragClientX = 0
+let lastDragClientY = 0
+const EDGE_SCROLL_ZONE_CELLS = 1.5
+const EDGE_SCROLL_INTERVAL_MS = 60
+
 // Link context menu state
 const linkType = ref<'file' | 'link'>()
 const linkTarget = ref<string>()
@@ -458,6 +468,69 @@ function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeo
   return null
 }
 
+// Clamp a client Y into the terminal screen so the selection endpoint always
+// lands on visible content (A3) — prevents the drag from "leaking" into the
+// input row / status bar below the terminal. Edge auto-scroll (A4) reveals the
+// off-screen content instead.
+function clampClientYToScreen(clientY: number): number {
+  if (!cachedScreenRect) return clientY
+  return Math.min(Math.max(clientY, cachedScreenRect.top), cachedScreenRect.bottom - 1)
+}
+
+// Which edge band the RAW touch Y sits in: -1 = top (scroll up), 1 = bottom
+// (scroll down), 0 = middle (no auto-scroll).
+function edgeScrollDir(clientY: number): -1 | 0 | 1 {
+  if (!cachedScreenRect || !cachedCellH) return 0
+  const zone = cachedCellH * EDGE_SCROLL_ZONE_CELLS
+  if (clientY < cachedScreenRect.top + zone) return -1
+  if (clientY > cachedScreenRect.bottom - zone) return 1
+  return 0
+}
+
+function stopAutoScroll() {
+  if (autoScrollTimer) {
+    clearInterval(autoScrollTimer)
+    autoScrollTimer = null
+  }
+}
+
+function startAutoScrollIfEdge() {
+  if (edgeScrollDir(lastDragClientY) !== 0) {
+    if (!autoScrollTimer) autoScrollTimer = setInterval(autoScrollTick, EDGE_SCROLL_INTERVAL_MS)
+  } else {
+    stopAutoScroll()
+  }
+}
+
+// Re-extend the selection to the current (clamped) drag point without touching
+// lastDrag* — used by both live touch/handle drag and the auto-scroll timer.
+function applyTouchSelection(clientX: number, clientY: number) {
+  updateSelectionTo(clientX, clampClientYToScreen(clientY))
+  menuSelectedText.value = terminal!.xterm?.getSelection() ?? ''
+  const coords = selectionToPixelCoords()
+  handleStartX.value = coords.start.x
+  handleStartY.value = coords.start.y
+  handleEndX.value = coords.end.x
+  handleEndY.value = coords.end.y
+}
+
+function autoScrollTick() {
+  const xt = terminal?.xterm
+  if (!xt) { stopAutoScroll(); return }
+  const dir = edgeScrollDir(lastDragClientY)
+  if (dir === 0) { stopAutoScroll(); return }
+  const before = xt.buffer.active.viewportY
+  xt.scrollLines(dir)
+  if (xt.buffer.active.viewportY === before) { stopAutoScroll(); return } // hit top/bottom
+  if (dragHandle) {
+    applyHandleDrag(lastDragClientX, lastDragClientY)
+  } else if (terminal?.inTouchSelection) {
+    applyTouchSelection(lastDragClientX, lastDragClientY)
+  } else {
+    stopAutoScroll()
+  }
+}
+
 function onTouchMove(e: TouchEvent) {
   if (dragHandle) return // handle drag in progress, ignore terminal touch
   if (terminal?.inTouchSelection) {
@@ -467,13 +540,10 @@ function onTouchMove(e: TouchEvent) {
       menuVisible.value = false // Close menu when user starts adjusting
     }
     const touch = e.touches[0]
-    updateSelectionTo(touch.clientX, touch.clientY)
-    menuSelectedText.value = terminal!.xterm?.getSelection() ?? ''
-    const coords = selectionToPixelCoords()
-    handleStartX.value = coords.start.x
-    handleStartY.value = coords.start.y
-    handleEndX.value = coords.end.x
-    handleEndY.value = coords.end.y
+    lastDragClientX = touch.clientX
+    lastDragClientY = touch.clientY
+    applyTouchSelection(touch.clientX, touch.clientY)
+    startAutoScrollIfEdge()
     return
   }
   const touch = e.touches[0]
@@ -508,6 +578,7 @@ function onTouchEnd(e: TouchEvent) {
   if (dragHandle) return // handle drag in progress, ignore terminal touch
   if (terminal?.inTouchSelection) {
     e.preventDefault()
+    stopAutoScroll()
     terminal.inTouchSelection = false
     const text = terminal.xterm?.getSelection() ?? ''
     const target = e.currentTarget as HTMLElement
@@ -525,9 +596,10 @@ function onTouchEnd(e: TouchEvent) {
     menuSelectedText.value = text
     if (selectionTouched) {
       if (text) {
-        // User dragged to adjust → show menu at end handle
+        // User dragged to adjust → show menu at end handle (clamp into
+        // viewport so it doesn't render under the bottom status bar, A3)
         menuX.value = handleEndX.value
-        menuY.value = handleEndY.value + 24
+        menuY.value = Math.min(handleEndY.value + 24, window.innerHeight - 8)
         menuVisible.value = true
       } else {
         handlesVisible.value = false
@@ -557,6 +629,7 @@ function onTouchEnd(e: TouchEvent) {
 }
 
 function onTouchCancel() {
+  stopAutoScroll()
   if (longPressTimer) {
     clearTimeout(longPressTimer)
     longPressTimer = null
@@ -590,7 +663,19 @@ function onHandleDrag(handle: 'start' | 'end', clientX: number, clientY: number)
       }
     }
   }
-  const pos = touchToBufferPos(clientX, clientY)
+  lastDragClientX = clientX
+  lastDragClientY = clientY
+  applyHandleDrag(clientX, clientY)
+  startAutoScrollIfEdge()
+}
+
+// Extend the handle-drag selection to the (clamped) point. Anchor is already
+// fixed in selAnchorRow/Col by onHandleDrag's init block. Does not touch
+// lastDrag* — safe to call from the auto-scroll timer.
+function applyHandleDrag(clientX: number, clientY: number) {
+  const xt = terminal?.xterm
+  if (!xt) return
+  const pos = touchToBufferPos(clientX, clampClientYToScreen(clientY))
   if (!pos) return
   // Convert viewport-relative to absolute buffer coordinates
   const moveRow = xt.buffer.active.viewportY + pos.row
@@ -613,6 +698,7 @@ function onHandleDrag(handle: 'start' | 'end', clientX: number, clientY: number)
 }
 
 function onHandleDragEnd(canceled = false) {
+  stopAutoScroll()
   if (terminal) terminal.inTouchSelection = false
   dragHandle = null
   const text = terminal?.xterm?.getSelection() ?? ''
@@ -627,7 +713,7 @@ function onHandleDragEnd(canceled = false) {
   menuSelectedText.value = text
   if (text) {
     menuX.value = handleEndX.value
-    menuY.value = handleEndY.value + 24
+    menuY.value = Math.min(handleEndY.value + 24, window.innerHeight - 8)
     menuVisible.value = true
   } else {
     handlesVisible.value = false
@@ -676,6 +762,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopAutoScroll()
   terminal?.destroy()
   terminal = null
 })
