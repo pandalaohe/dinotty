@@ -42,6 +42,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import type { Terminal } from '@xterm/xterm'
 import { TerminalInstance } from '../../composables/useTerminal'
 import { copyToClipboard } from '../../utils/clipboard'
 import SearchBar from './SearchBar.vue'
@@ -363,6 +364,28 @@ function onTouchStart(e: TouchEvent) {
   }, 500)
 }
 
+function buildColumnMaps(line: NonNullable<ReturnType<Terminal['buffer']['active']['getLine']>>, cols: number) {
+  const colToStrIdx: number[] = new Array(cols)
+  const strIdxToCol: number[] = []
+  let strIdx = 0
+  let lastStartStrIdx = -1
+  for (let col = 0; col < cols; col++) {
+    const cell = line.getCell(col)
+    const width = cell ? cell.getWidth() : 1
+    if (width === 0) {
+      // continuation column of the previous wide char — shares that char's start index
+      colToStrIdx[col] = lastStartStrIdx
+      continue
+    }
+    const codeUnits = cell?.getChars().length || 1
+    lastStartStrIdx = strIdx
+    colToStrIdx[col] = strIdx
+    for (let i = 0; i < codeUnits; i++) strIdxToCol[strIdx + i] = col
+    strIdx += codeUnits
+  }
+  return { colToStrIdx, strIdxToCol }
+}
+
 function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeometry): { bufferRow: number; startCol: number } | null {
   const xterm = terminal?.xterm
   if (!xterm) {
@@ -404,18 +427,31 @@ function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeo
     return null
   }
 
-  const wordRegex = /[\w.:/@-]+/g
+  const { colToStrIdx, strIdxToCol } = buildColumnMaps(line, xterm.cols)
+  const strCol = colToStrIdx[col]
+  if (strCol === undefined || strCol < 0) {
+    debugTouchSelect('select:no-word', { ...geometryFacts, bufferRow })
+    return null
+  }
+
+  const wordRegex = /[\w.:/@-]+|[一-鿿]+/g
   let match: RegExpExecArray | null
   while ((match = wordRegex.exec(lineText)) !== null) {
-    if (col >= match.index && col < match.index + match[0].length) {
-      xterm.select(match.index, bufferRow, match[0].length)
+    if (strCol >= match.index && strCol < match.index + match[0].length) {
+      const startCol = strIdxToCol[match.index]
+      const lastStrIdx = match.index + match[0].length - 1
+      const lastCol = strIdxToCol[lastStrIdx]
+      if (startCol == null || lastCol == null) return null
+      const lastWidth = line.getCell(lastCol)?.getWidth() ?? 1
+      const columnLength = lastCol - startCol + Math.max(lastWidth, 1)
+      xterm.select(startCol, bufferRow, columnLength)
       debugTouchSelect('select:success', {
         ...geometryFacts,
         bufferRow,
-        startCol: match.index,
-        length: match[0].length,
+        startCol,
+        length: columnLength,
       })
-      return { bufferRow, startCol: match.index }
+      return { bufferRow, startCol }
     }
   }
   debugTouchSelect('select:no-word', { ...geometryFacts, bufferRow })
