@@ -59,13 +59,13 @@
     <div class="new-tab-split" ref="newMenuWrapRef">
       <button
         id="tab-new-btn"
-        title="New Tab (⌘T)"
+        :title="`${t('keybinding.newTab')} (${kbdNewTab})`"
         @click="newMenuOpen = !newMenuOpen"
         @touchend.prevent="newMenuOpen = !newMenuOpen"
       >
         <Terminal :size="16" />
       </button>
-      <div v-if="newMenuOpen" class="new-menu-dropdown" @mouseleave="newMenuOpen = false">
+      <div v-if="newMenuOpen" class="new-menu-dropdown" :class="{ 'align-right': newMenuAlignRight }" @mouseleave="newMenuOpen = false">
         <div
           class="new-menu-item"
           @click="emitAction('new-tab')"
@@ -115,6 +115,7 @@
         >
           <Globe :size="14" class="new-menu-icon" />
           <span class="new-menu-label">{{ t('palette.sshConnect') }}</span>
+          <kbd class="new-menu-kbd">{{ kbdSshConnect }}</kbd>
         </div>
       </div>
     </div>
@@ -163,6 +164,7 @@ const kbdNewTab = formatBinding(getBinding('newTab')).join('')
 const kbdSplitH = formatBinding(getBinding('splitHorizontal')).join('')
 const kbdSplitV = formatBinding(getBinding('splitVertical')).join('')
 const kbdBroadcast = formatBinding(getBinding('toggleBroadcast')).join('')
+const kbdSshConnect = formatBinding(getBinding('sshConnect')).join('')
 
 export interface TabInfo {
   paneId: string
@@ -260,6 +262,7 @@ function cancelEdit() {
 const pluginMenuOpen = ref(false)
 const pluginWrapRef = ref<HTMLElement>()
 const newMenuOpen = ref(false)
+const newMenuAlignRight = ref(false)
 const newMenuWrapRef = ref<HTMLElement>()
 
 function emitAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect') {
@@ -281,6 +284,15 @@ watch([pluginMenuOpen, newMenuOpen], ([pluginOpen, newOpen]) => {
     document.addEventListener('touchstart', onDocTouchStart, { passive: true })
   } else {
     document.removeEventListener('touchstart', onDocTouchStart)
+  }
+  if (newOpen) {
+    nextTick(() => {
+      const wrap = newMenuWrapRef.value
+      if (wrap) {
+        const rect = wrap.getBoundingClientRect()
+        newMenuAlignRight.value = rect.right + 220 > window.innerWidth
+      }
+    })
   }
 })
 
@@ -482,6 +494,7 @@ onBeforeUnmount(() => {
 }
 .tab-bar-plugin-wrap {
   position: relative;
+  flex-shrink: 0;
 }
 .plugin-dropdown {
   position: absolute;
@@ -519,6 +532,7 @@ onBeforeUnmount(() => {
 }
 .new-tab-split {
   position: relative;
+  flex-shrink: 0;
 }
 .new-menu-dropdown {
   position: absolute;
@@ -531,6 +545,10 @@ onBeforeUnmount(() => {
   padding: 4px 0;
   z-index: 500;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.new-menu-dropdown.align-right {
+  left: auto;
+  right: 0;
 }
 .new-menu-item {
   display: flex;
