@@ -1168,15 +1168,16 @@ export class TerminalInstance {
   }
 
   isMouseModeEnabled(): boolean {
-    // Detects DECSET mouse tracking modes (1000/1002/1003/…) via xterm.js internal API.
-    // Both paths access _core which is private — if xterm.js is upgraded and the structure
-    // changes, we warn once so the breakage is visible rather than silently falling back.
+    // Detects DECSET mouse tracking modes (1000/1002/1003/...) via xterm.js internal API.
+    // Tolerates both property and method shapes for areMouseEventsActive across xterm.js versions.
     if (!this.xterm) return false
     try {
       const core = (this.xterm as any)._core
-      const mouseService = core?.mouseService
-      if (mouseService) {
-        return mouseService.areMouseEventsActive?.() ?? false
+      const svc = core?.coreMouseService ?? core?.mouseService
+      if (svc) {
+        const active = svc.areMouseEventsActive
+        // xterm 5.5: boolean getter; tolerate older method shape
+        return typeof active === 'function' ? (active.call(svc) ?? false) : !!active
       }
       const modes = core?.services?.coreMouseService?._activeProtocol
       if (modes !== undefined) {
