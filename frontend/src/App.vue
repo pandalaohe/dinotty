@@ -619,10 +619,6 @@ async function activateTab(tabId: string) {
       console.error('Failed to activate pane:', e)
     }
   }
-  // Capture plugin preview when switching to a plugin tab
-  if (tab?.type === 'plugin') {
-    nextTick(() => refreshPluginPreview(tab.paneId))
-  }
   persist()
   nextTick(() => focusActive())
 }
