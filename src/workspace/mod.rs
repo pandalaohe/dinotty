@@ -100,7 +100,10 @@ pub(super) fn json_err(status: StatusCode, msg: &str) -> Response {
     (status, Json(serde_json::json!({ "error": msg }))).into_response()
 }
 
-fn get_session(manager: &SessionManager, pane_id: &str) -> Result<Arc<crate::session::Session>, Response> {
+fn get_session(
+    manager: &SessionManager,
+    pane_id: &str,
+) -> Result<Arc<crate::session::Session>, Response> {
     manager
         .sessions
         .get(pane_id)
@@ -117,7 +120,11 @@ fn get_root(manager: &SessionManager, pane_id: &str) -> Result<PathBuf, Response
 /// Check if a session is SSH. Returns `Some(session)` if SSH, `None` if local.
 fn ssh_session(manager: &SessionManager, pane_id: &str) -> Option<Arc<crate::session::Session>> {
     let session = manager.sessions.get(pane_id).map(|r| Arc::clone(r.value()))?;
-    if session.is_ssh() { Some(session) } else { None }
+    if session.is_ssh() {
+        Some(session)
+    } else {
+        None
+    }
 }
 
 impl MetaResponse {
@@ -583,7 +590,13 @@ pub async fn workspace_create_entry(
     Json(body): Json<CreateEntryBody>,
 ) -> Response {
     if let Some(session) = ssh_session(&manager, &q.pane_id) {
-        return remote::remote_create_entry(session, q.parent.clone(), body.kind.clone(), body.name.clone()).await;
+        return remote::remote_create_entry(
+            session,
+            q.parent.clone(),
+            body.kind.clone(),
+            body.name.clone(),
+        )
+        .await;
     }
     let name = try_res!(validate_entry_name(&body.name));
     let kind = body.kind.to_lowercase();
