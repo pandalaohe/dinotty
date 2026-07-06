@@ -1,7 +1,6 @@
-export function isWindowsClient(): boolean {
-  if (typeof navigator === 'undefined') return false
-  const platform =
+export const isWindowsClient: boolean =
+  typeof navigator !== 'undefined' &&
+  /Win/i.test(
     (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ||
-    navigator.platform
-  return /Win/i.test(platform)
-}
+      navigator.platform,
+  )

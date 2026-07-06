@@ -283,7 +283,7 @@ export class TerminalInstance {
           }
         }
 
-        const virtualMeta = settings.windowsAltAsCmd && isWindowsClient() && e.altKey && !e.ctrlKey
+        const virtualMeta = settings.windowsAltAsCmd && isWindowsClient && e.altKey && !e.ctrlKey
         if (virtualMeta && !e.shiftKey) {
           if (e.code === 'KeyC' && xt.hasSelection()) {
             navigator.clipboard.writeText(xt.getSelection())

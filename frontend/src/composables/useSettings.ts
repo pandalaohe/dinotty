@@ -202,7 +202,7 @@ export const settings = reactive<SettingsData>({
   keyboard_sound: false,
   show_virtual_keyboard: false,
   confirm_before_close_tab: true,
-  windowsAltAsCmd: isWindowsClient(),
+  windowsAltAsCmd: isWindowsClient,
   locale: 'zh',
   panel_position: 'auto',
   monitor: {

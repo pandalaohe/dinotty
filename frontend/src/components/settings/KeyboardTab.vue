@@ -2,8 +2,8 @@
   <div>
     <section class="settings-section">
       <h3>{{ t('keybinding.title') }}</h3>
-      <div v-if="isWindowsClient()" class="settings-row">
-        <label>{{ windowsAltAsCmdLabel }}</label>
+      <div v-if="isWindowsClient" class="settings-row">
+        <label>{{ t('keybinding.windowsAltAsCmd') }}</label>
         <label class="toggle">
           <input type="checkbox" v-model="settings.windowsAltAsCmd" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -334,11 +334,6 @@ const { t } = useI18n()
 const { defs, getBinding, formatBinding, isReadOnly } = useKeybindings()
 const appDefs = computed(() => defs.filter((def) => (def.kind ?? 'app') === 'app'))
 const terminalDefs = computed(() => defs.filter((def) => def.kind === 'terminal'))
-const windowsAltAsCmdLabel = computed(() =>
-  settings.locale === 'zh'
-    ? 'Windows 下用 Alt 触发应用快捷键'
-    : 'Use Alt for app shortcuts (Windows)'
-)
 
 const openApiPaneId = ref('')
 const openApiData = ref('')

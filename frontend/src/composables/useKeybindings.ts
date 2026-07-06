@@ -232,8 +232,9 @@ export function useKeybindings() {
     })
   }
 
+  /** Returns true if the key event matches an app-level shortcut (digits 0-9 for tab switch, or any app keybinding). Designed to be called only when virtualMeta is active. */
   function isAppShortcut(e: KeyboardEvent): boolean {
-    if (!e.shiftKey && e.key >= '1' && e.key <= '9') return true
+    if (!e.shiftKey && e.key >= '0' && e.key <= '9') return true
 
     for (const def of appKeyBindingDefs) {
       if (keyEventMatchesBinding(e, getBinding(def.id))) return true

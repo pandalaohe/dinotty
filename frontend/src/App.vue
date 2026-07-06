@@ -1123,7 +1123,7 @@ const paletteCommands = computed<Command[]>(() => {
 
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
-  const altAsCmd = appSettings.windowsAltAsCmd && isWindowsClient()
+  const altAsCmd = appSettings.windowsAltAsCmd && isWindowsClient
   const appCmd = (cmd || (altAsCmd && e.altKey)) && !(altAsCmd && e.ctrlKey && e.altKey)
   if (!appCmd) return
 
