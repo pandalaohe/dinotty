@@ -67,6 +67,7 @@
           @drilldown="onDrilldown"
           @select-all="onDrilldown('__all__')"
           @add="onAddWorkspace"
+          @rename="onRenameWorkspace"
         />
         <WorkspaceTabGrid
           v-else
@@ -86,8 +87,9 @@
     </Motion>
   </AnimatePresence>
   <CreateWorkspaceDialog
-    :visible="showCreateDialog"
-    @close="showCreateDialog = false"
+    :visible="showCreateDialog || !!renamingWorkspace"
+    :workspace="renamingWorkspace"
+    @close="showCreateDialog = false; renamingWorkspace = null"
     @created="onWorkspaceCreated"
   />
 </template>
@@ -126,7 +128,7 @@ const emit = defineEmits<{
   'rename-tab': [paneId: string, title: string]
 }>()
 
-const { workspaces, activeWorkspaceId, matchWorkspace, updateWorkspace, deleteWorkspace, activateWorkspace } = useWorkspaces()
+const { workspaces, activeWorkspaceId, matchWorkspace, deleteWorkspace, activateWorkspace } = useWorkspaces()
 const { isMobile } = useIsMobile()
 const { t } = useI18n()
 const session = useSessionStore()
@@ -137,6 +139,7 @@ const closing = ref(false)
 const backdropRef = ref<any>(null)
 const tabOverviewRef = ref<InstanceType<typeof TabOverview> | null>(null)
 const showCreateDialog = ref(false)
+const renamingWorkspace = ref<Workspace | null>(null)
 
 // Remember last active tab per workspace (workspaceId → paneId)
 const workspaceActiveTab = new Map<string, string>()
@@ -304,12 +307,7 @@ function onRenameTab(paneId: string, title: string) {
 function onRenameWorkspace(id: string) {
   const ws = workspaces.value.find((w) => w.id === id)
   if (!ws) return
-  const newName = prompt(t('workspace.name'), ws.name)
-  if (newName !== null && newName.trim()) {
-    updateWorkspace(id, { name: newName.trim() }).catch((e) =>
-      console.error('Failed to rename workspace:', e),
-    )
-  }
+  renamingWorkspace.value = ws
 }
 
 function onNewTab(cwd?: string) {

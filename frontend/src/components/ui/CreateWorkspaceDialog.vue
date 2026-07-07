@@ -3,7 +3,7 @@
     <div v-if="visible" class="cw-backdrop" @click.self="$emit('close')">
       <div class="cw-modal">
         <div class="cw-header">
-          <span class="cw-title">{{ t('workspace.add') }}</span>
+          <span class="cw-title">{{ isEdit ? t('palette.rename') : t('workspace.add') }}</span>
           <button class="cw-close" @click="$emit('close')">&times;</button>
         </div>
         <div class="cw-body">
@@ -13,10 +13,11 @@
               ref="pathInput"
               v-model="path"
               class="cw-input"
+              :disabled="isEdit"
               placeholder="/Users/me/projects/my-app"
               @keydown.enter="onSubmit"
             />
-            <button class="cw-browse-btn" @click="toggleBrowser">
+            <button v-if="!isEdit" class="cw-browse-btn" @click="toggleBrowser">
               <FolderOpen :size="14" />
             </button>
           </div>
@@ -32,12 +33,15 @@
         </div>
         <div class="cw-footer">
           <button class="cw-btn cancel" @click="$emit('close')">{{ t('confirm.closeWindowCancel') }}</button>
-          <button class="cw-btn primary" :disabled="!path.trim()" @click="onSubmit">{{ t('workspace.add') }}</button>
+          <button class="cw-btn primary" :disabled="!canSubmit" @click="onSubmit">
+            {{ isEdit ? t('settings.token.save') : t('workspace.add') }}
+          </button>
         </div>
       </div>
     </div>
 
     <FilePickerModal
+      v-if="!isEdit"
       :visible="showPicker"
       pane-id=""
       root="~"
@@ -48,20 +52,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { FolderOpen } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useWorkspaces } from '../../composables/useWorkspaces'
+import type { Workspace } from '../../types/workspace'
 import FilePickerModal from '../preview/FilePickerModal.vue'
 
 const { t } = useI18n()
-const { createWorkspace } = useWorkspaces()
+const { createWorkspace, updateWorkspace } = useWorkspaces()
 
-const props = defineProps<{ visible: boolean }>()
+const props = defineProps<{
+  visible: boolean
+  workspace?: Workspace | null
+}>()
+
 const emit = defineEmits<{
   close: []
   created: [id: string]
 }>()
+
+const isEdit = computed(() => !!props.workspace)
 
 const path = ref('')
 const name = ref('')
@@ -69,10 +80,20 @@ const error = ref('')
 const pathInput = ref<HTMLInputElement | null>(null)
 const showPicker = ref(false)
 
+const canSubmit = computed(() => {
+  if (isEdit.value) return !!name.value.trim()
+  return !!path.value.trim()
+})
+
 watch(() => props.visible, (v) => {
   if (v) {
-    path.value = ''
-    name.value = ''
+    if (props.workspace) {
+      path.value = props.workspace.path
+      name.value = props.workspace.name
+    } else {
+      path.value = ''
+      name.value = ''
+    }
     error.value = ''
     nextTick(() => pathInput.value?.focus())
   }
@@ -98,7 +119,6 @@ function autoFillName() {
   }
 }
 
-// Auto-fill name when path changes and name is empty
 watch(path, () => {
   if (!name.value.trim()) {
     autoFillName()
@@ -106,16 +126,20 @@ watch(path, () => {
 })
 
 async function onSubmit() {
-  const p = path.value.trim()
-  if (!p) return
-  autoFillName()
+  if (!canSubmit.value) return
   error.value = ''
   try {
-    const ws = await createWorkspace(p, name.value.trim() || undefined)
-    emit('created', ws.id)
+    if (isEdit.value && props.workspace) {
+      await updateWorkspace(props.workspace.id, { name: name.value.trim() })
+    } else {
+      const p = path.value.trim()
+      autoFillName()
+      const ws = await createWorkspace(p, name.value.trim() || undefined)
+      emit('created', ws.id)
+    }
     emit('close')
   } catch (e: any) {
-    error.value = e?.message || 'Failed to create workspace'
+    error.value = e?.message || 'Failed'
   }
 }
 </script>
@@ -200,6 +224,10 @@ async function onSubmit() {
 }
 .cw-input:focus {
   border-color: var(--accent);
+}
+.cw-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .cw-browse-btn {
   flex-shrink: 0;

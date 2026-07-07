@@ -94,6 +94,9 @@
             @file-click="onFileClick"
             @preview-link="onPreviewLink"
             @link-activate="onLinkActivate"
+            @split-horizontal="splitPane.splitPane('horizontal')"
+            @split-vertical="splitPane.splitPane('vertical')"
+            @toggle-broadcast="splitPane.toggleBroadcast()"
             @reorder="
               (src: string, tgt: string, pos: 'left' | 'right' | 'top' | 'bottom') =>
                 splitPane.reorderPane(src, tgt, pos)
@@ -147,7 +150,7 @@
 
     <CommandPalette ref="paletteRef" :commands="paletteCommands" />
 
-    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
+    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" @token-changed="onTokenChanged" />
 
     <ConfirmCloseDialog @confirm="onConfirmClose" />
 
@@ -860,7 +863,17 @@ function getSendFn(): ((data: string) => void) | null {
   if (!tab || tab.type !== 'terminal') return null
   const paneId = tab.activePaneId
   if (!termRefs[paneId]) return null
-  return (data: string) => termRefs[paneId]?.sendData(data)
+  return (data: string) => {
+    termRefs[paneId]?.sendData(data)
+    if (tab.broadcastMode && getAllLeaves(tab.layout).length > 1) {
+      for (const leaf of getAllLeaves(tab.layout)) {
+        if (leaf.paneId !== paneId) {
+          termRefs[leaf.paneId]?.sendData(data, true)
+        }
+      }
+      tab.broadcastActivity++
+    }
+  }
 }
 
 async function onLoginSuccess() {
@@ -926,6 +939,11 @@ function onTerminalScroll() {
   clearTimeout(scrollGestureTimer)
   scrollGestureTimer = window.setTimeout(() => { scrollGestureDetected = false }, 300)
   if (kbVisible.value) kbVisible.value = false
+}
+
+function onTokenChanged() {
+  syncWs.closeWs()
+  syncWs.connectSyncWS()
 }
 
 function onServerConnect(host: string, port: number) {

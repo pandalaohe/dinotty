@@ -42,7 +42,6 @@
         @touchend="onTouchEnd"
         @touchmove.passive="onTouchMove"
       >
-        <span class="mc-ws-mobile-dot">{{ ws.id === activeId ? '●' : '○' }}</span>
         <div class="mc-ws-mobile-info">
           <span class="mc-ws-mobile-name">{{ ws.name }}</span>
           <span class="mc-ws-mobile-path">{{ ws.path }}</span>
@@ -68,7 +67,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Motion } from 'motion-v'
-import { Plus, Pencil, Trash2, Check, XCircle } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2 } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useWorkspaces } from '../../composables/useWorkspaces'
 import type { Workspace } from '../../types/workspace'
@@ -76,7 +75,7 @@ import ContextMenu from '../ui/ContextMenu.vue'
 import type { ContextMenuItem } from '../ui/ContextMenu.vue'
 
 const { t } = useI18n()
-const { activateWorkspace, deleteWorkspace, updateWorkspace } = useWorkspaces()
+const { deleteWorkspace } = useWorkspaces()
 
 const props = defineProps<{
   workspaces: Workspace[]
@@ -89,6 +88,7 @@ const emit = defineEmits<{
   drilldown: [id: string | null]
   selectAll: []
   add: []
+  rename: [id: string]
 }>()
 
 // Context menu
@@ -102,39 +102,16 @@ function showCtx(ws: Workspace, x: number, y: number) {
   ctxY.value = y
   ctxItems.value = [
     {
-      label: t('workspace.activate'),
-      icon: ws.id === props.activeId ? XCircle : Check,
-      action: async () => {
-        try {
-          if (ws.id === props.activeId) {
-            await activateWorkspace(null)
-          } else {
-            await activateWorkspace(ws.id)
-          }
-        } catch (err) {
-          console.error('Failed to toggle workspace:', err)
-        }
-      },
-    },
-    {
       label: t('palette.rename'),
       icon: Pencil,
-      action: async () => {
-        const name = prompt(t('workspace.name'), ws.name)
-        if (name !== null && name.trim()) {
-          try {
-            await updateWorkspace(ws.id, { name: name.trim() })
-          } catch (err) {
-            console.error('Failed to rename workspace:', err)
-          }
-        }
-      },
+      action: () => emit('rename', ws.id),
     },
     {
       label: t('workspace.delete'),
       icon: Trash2,
       danger: true,
       action: async () => {
+        if (!confirm(t('workspace.confirmDelete').replace('{name}', ws.name))) return
         try {
           await deleteWorkspace(ws.id)
         } catch (err) {

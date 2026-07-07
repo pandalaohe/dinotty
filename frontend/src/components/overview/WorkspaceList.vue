@@ -31,7 +31,6 @@
           @click="$emit('select', ws.id)"
           @contextmenu.prevent="openCtx($event, ws)"
         >
-          <span class="mc-ws-dot">{{ ws.id === activeId ? '●' : '○' }}</span>
           <div class="mc-ws-info">
             <span class="mc-ws-name">{{ ws.name }}</span>
             <span class="mc-ws-path">{{ ws.path }}</span>
@@ -58,7 +57,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Plus, Pencil, Trash2, Check, XCircle } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2 } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useWorkspaces } from '../../composables/useWorkspaces'
 import type { Workspace } from '../../types/workspace'
@@ -66,7 +65,7 @@ import ContextMenu from '../ui/ContextMenu.vue'
 import type { ContextMenuItem } from '../ui/ContextMenu.vue'
 
 const { t } = useI18n()
-const { activateWorkspace, deleteWorkspace } = useWorkspaces()
+const { deleteWorkspace } = useWorkspaces()
 
 const props = defineProps<{
   workspaces: Workspace[]
@@ -94,22 +93,6 @@ function openCtx(e: MouseEvent, ws: Workspace) {
   ctxY.value = e.clientY
   ctxItems.value = [
     {
-      label: t('workspace.activate'),
-      icon: ws.id === props.activeId ? XCircle : Check,
-      disabled: false,
-      action: async () => {
-        try {
-          if (ws.id === props.activeId) {
-            await activateWorkspace(null)
-          } else {
-            await activateWorkspace(ws.id)
-          }
-        } catch (err) {
-          console.error('Failed to toggle workspace:', err)
-        }
-      },
-    },
-    {
       label: t('palette.rename'),
       icon: Pencil,
       action: () => emit('rename', ws.id),
@@ -119,6 +102,7 @@ function openCtx(e: MouseEvent, ws: Workspace) {
       icon: Trash2,
       danger: true,
       action: async () => {
+        if (!confirm(t('workspace.confirmDelete').replace('{name}', ws.name))) return
         try {
           await deleteWorkspace(ws.id)
         } catch (err) {
