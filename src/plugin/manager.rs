@@ -312,12 +312,12 @@ impl PluginManager {
         let backup = tempfile::tempdir().map_err(|e| e.to_string())?;
         if platform_fs::path_exists_or_symlink(&plugin_path) {
             copy_dir_all(&plugin_path, backup.path())?;
-            remove_plugin_path(&plugin_path)?;
+            platform_fs::remove_plugin_path(&plugin_path)?;
         }
 
         if let Err(e) = std::fs::rename(tmp.path(), &plugin_path) {
             if platform_fs::path_exists_or_symlink(&plugin_path) {
-                let _ = remove_plugin_path(&plugin_path);
+                let _ = platform_fs::remove_plugin_path(&plugin_path);
             }
             if backup.path().exists() {
                 let _ = std::fs::rename(backup.path(), &plugin_path);
@@ -350,7 +350,7 @@ impl PluginManager {
 
         let plugin_path = self.plugin_dir.join(id);
         if platform_fs::path_exists_or_symlink(&plugin_path) {
-            remove_plugin_path(&plugin_path)?;
+            platform_fs::remove_plugin_path(&plugin_path)?;
         }
 
         if !keep_data {
@@ -362,14 +362,5 @@ impl PluginManager {
 
         self.registry.remove(id);
         Ok(())
-    }
-}
-
-fn remove_plugin_path(path: &std::path::Path) -> Result<(), String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    if meta.file_type().is_symlink() || meta.file_type().is_file() {
-        platform_fs::remove_symlink_or_file(path)
-    } else {
-        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
     }
 }

@@ -245,10 +245,10 @@ fn powershell_history_path(home: &std::path::Path) -> PathBuf {
         .join("PSReadLine")
         .join("ConsoleHost_history.txt");
 
-    if windows_powershell.exists() || !powershell_core.exists() {
-        windows_powershell
-    } else {
+    if powershell_core.exists() || !windows_powershell.exists() {
         powershell_core
+    } else {
+        windows_powershell
     }
 }
 

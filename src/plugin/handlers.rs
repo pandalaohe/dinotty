@@ -488,15 +488,6 @@ pub async fn install_from_dir(
     }
 }
 
-fn remove_plugin_path(path: &std::path::Path) -> Result<(), String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    if meta.file_type().is_symlink() || meta.file_type().is_file() {
-        platform_fs::remove_symlink_or_file(path)
-    } else {
-        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
-    }
-}
-
 // ─── Marketplace ────────────────────────────────────────────────────────────
 
 const DEFAULT_REGISTRY_URL: &str =
@@ -675,12 +666,12 @@ pub async fn install_from_git(
             if let Err(e) = copy_dir_all(&dest, backup.path()) {
                 return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e);
             }
-            if let Err(e) = remove_plugin_path(&dest) {
+            if let Err(e) = platform_fs::remove_plugin_path(&dest) {
                 return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e);
             }
         }
         if let Err(e) = copy_dir_all(&plugin_root, &dest) {
-            let _ = remove_plugin_path(&dest);
+            let _ = platform_fs::remove_plugin_path(&dest);
             let _ = copy_dir_all(backup.path(), &dest);
             return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("update failed: {e}"));
         }

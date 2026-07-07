@@ -1,15 +1,27 @@
+#![allow(clippy::missing_errors_doc)]
+
 use std::path::Path;
 
 pub fn create_dir_symlink(src: &Path, link: &Path) -> Result<(), String> {
-    create_dir_symlink_impl(src, link).map_err(format_symlink_error)
+    create_dir_symlink_impl(src, link).map_err(|e| format_symlink_error(&e))
 }
 
+#[must_use]
 pub fn path_exists_or_symlink(path: &Path) -> bool {
     path.exists() || std::fs::symlink_metadata(path).is_ok()
 }
 
 pub fn remove_symlink_or_file(path: &Path) -> Result<(), String> {
     remove_symlink_or_file_impl(path).map_err(|e| format!("remove symlink failed: {e}"))
+}
+
+pub fn remove_plugin_path(path: &Path) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if meta.file_type().is_symlink() || meta.file_type().is_file() {
+        remove_symlink_or_file(path)
+    } else {
+        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+    }
 }
 
 pub fn set_executable(path: &Path) -> Result<(), String> {
@@ -127,7 +139,7 @@ fn validate_private_key_permissions_impl(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn format_symlink_error(e: std::io::Error) -> String {
+fn format_symlink_error(e: &std::io::Error) -> String {
     #[cfg(windows)]
     {
         if e.kind() == std::io::ErrorKind::PermissionDenied {

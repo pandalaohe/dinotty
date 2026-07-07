@@ -695,7 +695,7 @@ fn parse_title_cwd(title: &str, home: &Path) -> Option<PathBuf> {
         home.join(rest)
     } else if path_part == "~" {
         home.to_path_buf()
-    } else if Path::new(path_part).is_absolute() || path_part.starts_with('/') {
+    } else if Path::new(path_part).is_absolute() {
         PathBuf::from(path_part)
     } else {
         home.join(path_part)
