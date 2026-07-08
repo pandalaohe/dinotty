@@ -5,6 +5,7 @@ export interface CreateTabResult {
   pane_id: string
   layout: any
   cwd?: string
+  connection_id?: string
 }
 
 export interface SplitPaneResult {

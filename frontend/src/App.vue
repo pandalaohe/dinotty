@@ -200,6 +200,7 @@
       @activate="onOverviewActivate"
       @close-tab="onOverviewCloseTab"
       @new-tab="onOverviewNewTab"
+      @new-tab-ssh="onOverviewNewTabSsh"
       @rename-tab="onOverviewRenameTab"
     />
   </div>
@@ -277,7 +278,7 @@ import { useSettingsStore } from './stores/settingsStore'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
-const { tabs, activePaneId, tabList, activeTabType, isBroadcastActive, canBroadcast, paneLabels } =
+const { tabs, activePaneId, tabList, activeTabType, activeTab, isBroadcastActive, canBroadcast, paneLabels } =
   storeToRefs(session)
 
 const ui = useUiStore()
@@ -384,6 +385,40 @@ function onOverviewCloseTab(tabId: string) {
 async function onOverviewNewTab(cwd?: string) {
   overviewOpen.value = false
   await newTab(cwd)
+}
+
+async function onOverviewNewTabSsh(connectionId: string) {
+  overviewOpen.value = false
+  try {
+    const result = await apiCreateSshTab(connectionId)
+    const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
+    if (existing) {
+      activePaneId.value = result.tab_id
+      persist()
+      nextTick(() => focusActive())
+      return
+    }
+    const layout = ensureSplitRoot(result.layout)
+    tabs.value.push({
+      type: 'terminal',
+      paneId: result.tab_id,
+      layout,
+      activePaneId: result.pane_id,
+      paneMru: [result.pane_id],
+      broadcastMode: false,
+      broadcastActivity: 0,
+      previewVisible: false,
+      previewAddress: '',
+      previewUrl: '',
+      previewKind: 'web',
+      connectionId,
+    })
+    activePaneId.value = result.tab_id
+    persist()
+    nextTick(() => focusActive())
+  } catch (e) {
+    console.error('Failed to create SSH tab:', e)
+  }
 }
 
 function onOverviewRenameTab(paneId: string, title: string) {
@@ -562,6 +597,7 @@ function persistNow() {
         previewUrl: t.previewUrl,
         previewKind: t.previewKind,
         customTitle: t.customTitle,
+        connectionId: t.connectionId,
       }
     }
     return {
@@ -958,9 +994,21 @@ function onServerConnect(host: string, port: number) {
   window.location.href = `${proto}//${host}:${port}/`
 }
 
-async function onSshConnect(result: { tab_id: string; pane_id: string; layout: any }) {
+async function onSshConnect(result: { tab_id: string; pane_id: string; layout: any; connection_id?: string }) {
+  // If API didn't return connection_id, inherit from the active workspace
+  const resolvedConnectionId = result.connection_id
+    ?? workspaces.value.find((w) => w.id === activeWorkspaceId.value)?.connection_id
+
   const existing = tabs.value.find((t) => t.paneId === result.tab_id)
   if (existing) {
+    if (existing.type === 'terminal') {
+      if (resolvedConnectionId && !existing.connectionId) {
+        existing.connectionId = resolvedConnectionId
+      }
+      if (!existing.workspaceId && activeWorkspaceId.value) {
+        existing.workspaceId = activeWorkspaceId.value
+      }
+    }
     activePaneId.value = result.tab_id
     persist()
     nextTick(() => focusActive())
@@ -979,6 +1027,8 @@ async function onSshConnect(result: { tab_id: string; pane_id: string; layout: a
     previewAddress: '',
     previewUrl: '',
     previewKind: 'web',
+    connectionId: resolvedConnectionId,
+    workspaceId: activeWorkspaceId.value ?? undefined,
   })
   activePaneId.value = result.tab_id
   persist()
@@ -1345,6 +1395,7 @@ onMounted(async () => {
               previewAddress: '',
               previewUrl: '',
               previewKind: 'web',
+              connectionId: tab.connection_id,
             })
           }
           if (data.active_pane_id) {
