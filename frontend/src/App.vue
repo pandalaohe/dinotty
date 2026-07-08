@@ -97,6 +97,7 @@
             @split-horizontal="splitPane.splitPane('horizontal')"
             @split-vertical="splitPane.splitPane('vertical')"
             @toggle-broadcast="splitPane.toggleBroadcast()"
+            @new-local-terminal="splitPane.splitPane('horizontal', true, activeWorkspacePath ?? undefined)"
             @reorder="
               (src: string, tgt: string, pos: 'left' | 'right' | 'top' | 'bottom') =>
                 splitPane.reorderPane(src, tgt, pos)
@@ -632,7 +633,8 @@ const DEFAULT_PREVIEW_URL = ''
 
 async function newTab(cwd?: string) {
   try {
-    const result = await apiCreateTab(cwd ?? activeWorkspacePath.value)
+    const effectiveCwd = cwd ?? activeWorkspacePath.value
+    const result = await apiCreateTab(effectiveCwd)
     // Dedup: broadcast_sync echoes back to sender — tab_created handler may
     // have already added this tab if the sync message arrived before the
     // REST response.
@@ -1194,6 +1196,13 @@ const paletteCommands = computed<Command[]>(() => {
       subtitle: t('palette.sshConnectDesc'),
       action: () => sshPanelRef.value?.open(),
     },
+    // Only show "New Local Terminal" when active tab is an SSH session
+    ...(activeTab.value?.type === 'terminal' && activeTab.value.connectionId ? [{
+      icon: '⌂',
+      title: t('palette.newLocalTerminal'),
+      subtitle: t('palette.newLocalTerminalDesc'),
+      action: () => splitPane.splitPane('horizontal', true, activeWorkspacePath.value),
+    }] : []),
   ]
 
   // Plugin-registered commands
