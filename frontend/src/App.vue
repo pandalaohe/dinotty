@@ -260,6 +260,7 @@ import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import {
   apiCreateTab,
+  apiCreateSshTab,
   apiCloseTab,
   apiClosePane,
   apiActivatePane,
@@ -322,12 +323,7 @@ const visibleTabList = computed(() => {
   const list = tabList.value.filter((info) => {
     const rawTab = tabs.value.find((t) => t.paneId === info.paneId)
     if (!rawTab) return false
-    if (rawTab.type === 'plugin') {
-      if (activeWorkspaceId.value) {
-        return rawTab.workspaceId === activeWorkspaceId.value
-      }
-      return !rawTab.workspaceId
-    }
+    if (rawTab.type === 'plugin') return true
     // Terminal tab: match by connectionId (SSH) or cwd (local)
     const ws =
       rawTab.type === 'terminal'
