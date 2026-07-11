@@ -20,6 +20,7 @@ use dinotty_server::history;
 use dinotty_server::history::HistoryState;
 use dinotty_server::monitor::{self, MonitorState};
 use dinotty_server::notification::{self, NotificationBroadcast};
+use dinotty_server::platform::process::CommandNoWindowExt;
 use dinotty_server::plugin::{self, PluginManager, PluginManagerState};
 use dinotty_server::proxy;
 use dinotty_server::session::SessionManager;
@@ -231,7 +232,9 @@ fn generate_random_token() -> String {
 fn read_git_info() -> GitInfo {
     let version = option_env!("DINOTTY_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).to_string();
 
-    let repo_url = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    let repo_url = command
+        .no_window()
         .args(["remote", "get-url", "origin"])
         .output()
         .ok()

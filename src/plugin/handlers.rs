@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::sync::{Mutex as TokioMutex, RwLock};
 
-use crate::{platform::fs as platform_fs, session::SessionManager};
+use crate::{
+    platform::{fs as platform_fs, process::CommandNoWindowExt},
+    session::SessionManager,
+};
 
 use super::helpers::{
     copy_dir_all, extract_zip, find_plugin_root, is_safe_segment, plugin_err, set_executable,
@@ -146,6 +149,7 @@ pub async fn plugin_exec(
 
     let bin_path = pm.plugin_dir.join(&id).join(&bin.entry);
     let mut cmd = Command::new(&bin_path);
+    cmd.no_window();
     cmd.args(&body.args);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -214,12 +218,9 @@ pub async fn plugin_spawn_ws(
         use tokio::io::{AsyncBufReadExt, BufReader};
 
         let bin_path = plugin_dir.join(&bin.entry);
-        let mut child = match Command::new(&bin_path)
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+        let mut cmd = Command::new(&bin_path);
+        cmd.no_window().args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
                 let _ = socket
@@ -747,6 +748,7 @@ pub async fn plugin_process_start(
 
     let bin_path = pm.plugin_dir.join(&id).join(&bin.entry);
     let mut cmd = Command::new(&bin_path);
+    cmd.no_window();
     cmd.args(&body.args);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

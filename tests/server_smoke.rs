@@ -41,6 +41,27 @@ mod windows_smoke {
     }
 
     #[test]
+    fn background_process_launches_use_no_window() -> TestResult {
+        let root = repo_root();
+        let mut files = Vec::new();
+        collect_rust_files(&root.join("src"), &mut files)?;
+        collect_rust_files(&root.join("src-tauri").join("src"), &mut files)?;
+
+        let mut violations = Vec::new();
+        for file in files {
+            collect_command_violations(&root, &file, &mut violations)?;
+        }
+
+        assert!(
+            violations.is_empty(),
+            "Windows background process launches must call `.no_window()` near `Command::new(...)` \
+             so GUI/portable builds do not flash transient console windows:\n{}",
+            violations.join("\n")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn server_starts_and_serves_core_routes() -> TestResult {
         let server = env!("CARGO_BIN_EXE_dinotty-server");
         let port = free_loopback_port()?;
@@ -54,7 +75,7 @@ mod windows_smoke {
         create_dir(&userprofile)?;
 
         let mut child =
-            spawn_server(server, port, &repo_root(), &tmp, &appdata, &localappdata, &userprofile)?;
+            spawn_server(server, port, &userprofile, &tmp, &appdata, &localappdata, &userprofile)?;
 
         let client = Client::builder().timeout(Duration::from_secs(2)).build()?;
         let base = format!("http://127.0.0.1:{port}");
@@ -99,10 +120,66 @@ mod windows_smoke {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            cmd.creation_flags(0x0800_0000 | 0x0000_0008); // CREATE_NO_WINDOW | DETACHED_PROCESS
         }
 
         Ok(ChildGuard(cmd.spawn()?))
+    }
+
+    fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rust_files(&path, files)?;
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_command_violations(
+        root: &Path,
+        file: &Path,
+        violations: &mut Vec<String>,
+    ) -> TestResult {
+        let content = fs::read_to_string(file)?;
+        let lines: Vec<&str> = content.lines().collect();
+
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || !is_process_command_new(trimmed) {
+                continue;
+            }
+            if command_window(&lines, idx).contains(".no_window()") {
+                continue;
+            }
+
+            let display = file.strip_prefix(root).unwrap_or(file);
+            violations.push(format!("{}:{}: {trimmed}", display.display(), idx + 1));
+        }
+
+        Ok(())
+    }
+
+    fn is_process_command_new(line: &str) -> bool {
+        line.contains("Command::new(") && !line.contains("CommandBuilder::new(")
+    }
+
+    fn command_window(lines: &[&str], start: usize) -> String {
+        const LOOKAHEAD_LINES: usize = 6;
+
+        let mut window = String::new();
+        for line in lines.iter().skip(start).take(LOOKAHEAD_LINES) {
+            window.push_str(line);
+            window.push('\n');
+        }
+        window
     }
 
     fn wait_until_ready(
