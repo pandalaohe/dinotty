@@ -257,6 +257,7 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
+  markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
@@ -954,6 +955,7 @@ function getSendFn(): ((data: string) => void) | null {
 }
 
 async function onLoginSuccess() {
+  markCookieAuthenticated()
   ui.setAuthenticated(true)
   await getApiBase()
   await settingsStore.load()
