@@ -38,7 +38,7 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('settings.customColors')" level="group">
+    <CollapsibleSection :title="t('settings.customColors')" level="group" default-open>
       <p class="settings-hint">{{ t('settings.customColorsHint') }}</p>
       <div class="custom-colors-grid">
         <label class="color-field">
