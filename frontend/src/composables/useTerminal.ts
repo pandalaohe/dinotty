@@ -6,6 +6,11 @@ import { SearchAddon } from '@xterm/addon-search'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, saveSettings, settings, onTextChange } from './useSettings'
+import {
+  computeWheelPlan,
+  type TrackingWheelState,
+  type WheelPlanInput,
+} from './computeWheelPlan'
 import { wsUrlWithToken } from './apiBase'
 import { terminalKeyBindingDefs, useKeybindings, type KeyBinding } from './useKeybindings'
 import { isWindowsClient } from '../utils/clientPlatform'
@@ -211,6 +216,10 @@ export class TerminalInstance {
   private _resizeDebounce: number = 0
   private _lastInputData = ''
   private _lastInputTime = 0
+  private _wheelBypass = false
+  private _lastWheelTime = 0
+  private _trackingWheelState: TrackingWheelState | null = null
+  private _wheelRowHeightWarned = false
   private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
   private _writeQueue: string[] = []
   private _writing = false
@@ -518,7 +527,10 @@ export class TerminalInstance {
       setTouchMoved: (v) => {
         this.touchMoved = v
       },
+      sendWheelEvent: (deltaY, clientX, clientY) =>
+        this._sendWheelEvent(deltaY, clientX, clientY),
     })
+    this._setupAdaptiveWheel()
 
     this._resizeObserver = new ResizeObserver(() => this._refit())
     this._resizeObserver.observe(wrapper)
@@ -603,6 +615,13 @@ export class TerminalInstance {
   }
 
   private _handleXtermData(rawData: string) {
+    // Mouse reports produced synchronously by our synthetic wheel dispatches
+    // (_sendWheelEvent) are legitimate identical repeats; the WKWebView
+    // key-replay dedup below must not eat them.
+    if (this._wheelBypass) {
+      this._emitInput(rawData)
+      return
+    }
     const tauri = isTauri()
     const data = tauri ? stripImeConfirmSpace(rawData) : rawData
     if (!data) return
@@ -800,6 +819,16 @@ export class TerminalInstance {
     }
     this._writing = true
 
+    // Snapshot whether the viewport is at the bottom BEFORE writing this batch.
+    // During burst output, the rAF yields between batches let pending wheel events
+    // (e.g. macOS trackpad inertia) fire. Even a 1-px upward delta sets
+    // xterm.js's isUserScrolling=true, which prevents ydisp from following ybase
+    // in subsequent write() calls — the viewport gets stuck above the bottom.
+    // By recording the at-bottom state here and restoring it after the batch, we
+    // keep the viewport pinned to the bottom when the user hasn't intentionally
+    // scrolled away.
+    const wasAtBottom = this._isAtBottom()
+
     // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
     // This prevents the xterm.write() callback chain from monopolizing
     // the main thread and starving keyboard input events.
@@ -809,6 +838,9 @@ export class TerminalInstance {
 
     const processNext = () => {
       if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
+        if (wasAtBottom && this.xterm) {
+          this.xterm.scrollToBottom()
+        }
         if (this._writeQueue.length > 0) {
           // More data to process — yield to the browser, then continue
           requestAnimationFrame(() => this._processWriteQueue())
@@ -830,6 +862,12 @@ export class TerminalInstance {
     }
 
     processNext()
+  }
+
+  private _isAtBottom(): boolean {
+    if (!this.xterm) return true
+    const buf = this.xterm.buffer.active
+    return buf.viewportY >= buf.baseY
   }
 
   private _scheduleReconnect() {
@@ -1143,6 +1181,110 @@ export class TerminalInstance {
       target.removeEventListener('paste', pasteHandler, true)
       target.removeEventListener('keydown', keydownHandler, true)
     }
+  }
+
+  private _sendWheelEvent(
+    deltaY: number,
+    clientX: number,
+    clientY: number,
+    deltaMode = 0
+  ) {
+    if (!this.xterm || deltaY === 0) return
+
+    const xtermEl = this.xterm.element
+    if (!xtermEl) return
+
+    // Synthetic dispatches must never re-enter the adaptive-wheel planner.
+    this._wheelBypass = true
+    try {
+      xtermEl.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY,
+          deltaX: 0,
+          deltaZ: 0,
+          deltaMode,
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+        })
+      )
+    } finally {
+      this._wheelBypass = false
+    }
+  }
+
+  private _setupAdaptiveWheel() {
+    this.xterm?.attachCustomWheelEventHandler((e: WheelEvent): boolean => {
+      if (this._wheelBypass) return true
+      if (!this.xterm) return true
+
+      const now = Date.now()
+      const elapsed = now - this._lastWheelTime
+      if (elapsed > 500) this._trackingWheelState = null
+      const dt = elapsed || 1
+      const rowHeight = this._getWheelRowHeight()
+      const lines =
+        e.deltaMode === 1
+          ? Math.abs(e.deltaY)
+          : e.deltaMode === 0 && rowHeight > 0
+            ? Math.abs(e.deltaY) / rowHeight
+            : 0
+      const velocity = lines / dt
+      this._lastWheelTime = now
+
+      const sensitivity = settings.text.scroll_sensitivity ?? 1
+      const acceleration = settings.text.scroll_acceleration ?? 0
+      const isMouseTracking = this.isMouseModeEnabled()
+      if (!isMouseTracking) this._trackingWheelState = null
+      const input: WheelPlanInput = {
+        deltaY: e.deltaY,
+        deltaX: e.deltaX,
+        deltaMode: e.deltaMode,
+        shiftKey: e.shiftKey,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        velocity,
+        isMouseTracking,
+      }
+      const plan = computeWheelPlan(
+        input,
+        sensitivity,
+        acceleration,
+        this._trackingWheelState
+      )
+      if (plan.action === 'native') {
+        this._trackingWheelState = null
+        return true
+      }
+      this._trackingWheelState = plan.nextTrackingState ?? null
+
+      e.preventDefault()
+      e.stopPropagation()
+      for (let i = 0; i < plan.count; i++) {
+        this._sendWheelEvent(plan.deltaY, e.clientX, e.clientY, plan.deltaMode)
+      }
+      return false
+    })
+  }
+
+  private _getWheelRowHeight(): number {
+    try {
+      const h = Number(
+        (this.xterm as any)?._core?._renderService?.dimensions?.css?.cell?.height
+      )
+      if (Number.isFinite(h) && h > 0) return h
+    } catch {
+      // fall through to the one-time warning below
+    }
+    if (!this._wheelRowHeightWarned) {
+      this._wheelRowHeightWarned = true
+      console.warn(
+        '[useTerminal] xterm private cell-height API (_core._renderService.dimensions.css.cell.height) unavailable or invalid; wheel-scroll acceleration (velocity term) is disabled, sensitivity still applies. xterm.js internals may have changed.'
+      )
+    }
+    return 0
   }
 
   isMouseModeEnabled(): boolean {
