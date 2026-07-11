@@ -402,7 +402,7 @@
       </section>
     </div>
 
-    <CollapsibleSection :title="t('settings.log')" level="group">
+    <CollapsibleSection :title="t('settings.log')" level="group" default-open>
       <section class="settings-section">
         <div class="settings-row">
           <label>{{ t('settings.log.enabled') }}</label>
