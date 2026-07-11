@@ -317,19 +317,6 @@ impl Session {
         let _ = self.resize_tx.send(Some((origin_id, cols, rows)));
     }
 
-    pub fn resize_from(&self, origin_id: u64, cols: u16, rows: u16) {
-        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        clients.retain(|client| !client.tx.is_closed());
-        if !clients.iter().any(|client| client.id == origin_id) {
-            return; // stale/removed origin - do not echo back
-        }
-        for client in clients.iter().filter(|client| client.id != origin_id) {
-            if client.tx.try_send(SessionClientEvent::Resize { cols, rows }).is_err() {
-                tracing::debug!("broadcast: client channel full, dropping resize {cols}x{rows}");
-            }
-        }
-    }
-
     pub fn apply_and_broadcast_resize(&self, origin_id: u64, cols: u16, rows: u16) {
         {
             let mut clients =

@@ -832,13 +832,13 @@ mod tests {
         let ac = Arc::clone(&apply_count);
         let la = Arc::clone(&last_applied);
 
-        // Same pattern as resize_debounce_task: borrow() + conditional apply
+        // Same pattern as resize_debounce_task: borrow_and_update() + conditional apply
         tokio::spawn(async move {
             loop {
                 if rx.changed().await.is_err() {
                     break;
                 }
-                let size = *rx.borrow();
+                let size = *rx.borrow_and_update();
                 if let Some((cols, rows)) = size {
                     tokio::time::sleep(Duration::from_millis(300)).await;
                     let latest = *rx.borrow();
@@ -881,12 +881,12 @@ mod tests {
         let ac = Arc::clone(&apply_count);
         let sizes = Arc::clone(&applied_sizes);
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 if rx.changed().await.is_err() {
                     break;
                 }
-                let size = *rx.borrow();
+                let size = *rx.borrow_and_update();
                 if let Some((cols, rows)) = size {
                     tokio::time::sleep(Duration::from_millis(300)).await;
                     let latest = *rx.borrow();
@@ -906,8 +906,8 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
 
-        // Wait for debounce to settle
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for debounce to settle (300ms task sleep + buffer)
+        tokio::time::sleep(Duration::from_millis(800)).await;
 
         let count = apply_count.load(Ordering::SeqCst);
         let applied = applied_sizes.lock().unwrap().clone();
@@ -937,7 +937,7 @@ mod tests {
                 if rx.changed().await.is_err() {
                     break;
                 }
-                let size = *rx.borrow();
+                let size = *rx.borrow_and_update();
                 if let Some((cols, rows)) = size {
                     tokio::time::sleep(Duration::from_millis(300)).await;
                     let latest = *rx.borrow();
