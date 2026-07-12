@@ -666,6 +666,7 @@ async function onSelectFile(rel: string) {
 async function fetchList(rel: string): Promise<DirEntry[]> {
   await getApiBase()
   const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
+  if (cwdLabel.value) q.set('root', cwdLabel.value)
   const res = await authFetch(apiUrl(`/api/workspace/list?${q}`))
   if (!res.ok) throw new Error('list failed')
   const data = await res.json()
@@ -741,6 +742,7 @@ async function onInlineCreateCommit(name: string) {
   inlineCreate.value = null
   await getApiBase()
   const q = new URLSearchParams({ pane_id: props.paneId, parent: parentRel })
+  if (cwdLabel.value) q.set('cwd', cwdLabel.value)
   const res = await authFetch(apiUrl(`/api/workspace/create?${q}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -781,6 +783,7 @@ async function onInlineRenameCommit(newName: string) {
   inlineRename.value = null
   await getApiBase()
   const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
+  if (cwdLabel.value) q.set('cwd', cwdLabel.value)
   const res = await authFetch(apiUrl(`/api/workspace/rename?${q}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

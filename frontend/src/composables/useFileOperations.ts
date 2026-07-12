@@ -149,6 +149,7 @@ export function useFileOperations(opts: {
   const rawUrl = computed(() => {
     if (!opts.selectedRel.value || opts.selectedIsDir.value) return ''
     const q = new URLSearchParams({ pane_id: opts.paneId(), path: opts.selectedRel.value })
+    if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
     // Browser: same-origin requests include cookies automatically.
     // Tauri: need token in URL for tauri_fetch or direct image loads.
     if (isTauri()) {
@@ -172,6 +173,14 @@ export function useFileOperations(opts: {
   }
 
   function absolutePath(rel: string): string {
+    // SSH mode: cwdLabel starts with '/' and changes as user navigates, but
+    // tree rel paths are always relative to the initial root '/', so rel IS
+    // the path from root — just prefix with '/'.
+    // Local mode: cwdLabel is the stable PTY cwd (e.g. /Users/me/project),
+    // and rel is relative to it, so join them.
+    if (opts.cwdLabel.value.startsWith('/')) {
+      return rel ? `/${rel}` : opts.cwdLabel.value.replace(/\/+$/, '') || '/'
+    }
     const root = opts.cwdLabel.value.replace(/\/+$/, '')
     return rel ? `${root}/${rel}` : root
   }
@@ -208,6 +217,7 @@ export function useFileOperations(opts: {
         if (resp.status >= 400) console.error('[upload] server error:', resp.status)
       } else {
         const q = new URLSearchParams({ pane_id: opts.paneId(), dir })
+        if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
         const fd = new FormData()
         for (const { file, path } of files) {
           fd.append('path', path)
@@ -311,6 +321,7 @@ export function useFileOperations(opts: {
     await getApiBase()
     const name = rel.split('/').pop() || 'file'
     const q = new URLSearchParams({ pane_id: opts.paneId(), path: rel })
+    if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
     const url = apiUrl(`/api/workspace/raw?${q}`)
     if (isTauri()) {
       const token = getAuthToken()
@@ -349,6 +360,7 @@ export function useFileOperations(opts: {
     if (!skipConfirm && !confirm(msg)) return false
     await getApiBase()
     const q = new URLSearchParams({ pane_id: opts.paneId(), path: rel })
+    if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
     const res = await authFetch(apiUrl(`/api/workspace/delete?${q}`), { method: 'DELETE' })
     if (!res.ok) return false
     const parentRel = parentRelPath(rel)
