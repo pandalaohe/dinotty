@@ -885,7 +885,7 @@ mod tests {
         let ac = Arc::clone(&apply_count);
         let sizes = Arc::clone(&applied_sizes);
 
-        let handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
                 if rx.changed().await.is_err() {
                     break;
