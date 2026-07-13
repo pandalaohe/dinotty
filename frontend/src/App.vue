@@ -280,7 +280,8 @@ import { isWebPreviewInput } from './utils/previewRouting'
 import { isWindowsClient } from './utils/clientPlatform'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
-import { useNotification } from './composables/useNotification'
+import { useToast } from 'vue-toastification'
+import { useNotification, pushNotification, setToastInstance } from './composables/useNotification'
 import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import {
@@ -339,6 +340,7 @@ const sshAuthPrompts = ref<Array<{ prompt: string; echo: boolean }>>([])
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
+setToastInstance(useToast())
 const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
 const { isMobile } = useIsMobile()
 
@@ -1215,10 +1217,18 @@ window.__dinotty_terminal_api = {
     return tab?.type === 'terminal' ? tab.activePaneId : ''
   },
 }
-window.__dinotty_ui_notify = (message: string, level?: 'info' | 'warn' | 'error') => {
-  // Use notification system or console
-  if (level === 'error') console.error('[plugin]', message)
-  else console.log('[plugin]', message)
+window.__dinotty_ui_notify = (
+  message: string,
+  level?: 'info' | 'warn' | 'error',
+  title?: string
+) => {
+  const type = level === 'error' ? 'error' : level === 'warn' ? 'warning' : 'info'
+  pushNotification({
+    type,
+    title: title ?? 'Plugin',
+    body: message,
+    source: 'plugin',
+  })
 }
 window.__dinotty_ui_confirm = (message: string) => uiConfirm(message)
 window.__dinotty_open_plugin = openPlugin
