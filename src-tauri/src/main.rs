@@ -489,11 +489,7 @@ fn close_window(app: AppHandle, state: State<'_, Arc<SessionManager>>) {
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-        ))
-        .init();
+    let _log_guard = dinotty_server::settings::init_logging();
 
     let args: Vec<String> = std::env::args().collect();
     let port = parse_port(&args);
