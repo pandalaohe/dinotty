@@ -172,8 +172,8 @@ fn is_permission_error(msg: &str) -> bool {
 /// - Empty path → `/`  (tree root is the filesystem root)
 /// - Absolute path → as-is
 /// - `~` / `~/…` → remote home expansion
-/// - Relative path → joined against `cwd` (falls back to `/`)
-fn resolve_remote_rel(session: &Session, rel: &str, cwd: Option<&str>) -> String {
+/// - Relative path → joined against `/` (cwd param ignored - see below)
+fn resolve_remote_rel(session: &Session, rel: &str, _cwd: Option<&str>) -> String {
     let rel = rel.trim();
     if rel.is_empty() {
         return "/".to_string();
@@ -191,8 +191,10 @@ fn resolve_remote_rel(session: &Session, rel: &str, cwd: Option<&str>) -> String
         let home = session.remote_home.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         return home.as_ref().map_or_else(|| "/".to_string(), |h| h.to_string_lossy().into_owned());
     }
-    let base = cwd.unwrap_or("/");
-    normalize_remote_join(base, rel)
+    // SSH tree rel paths are always relative to / (the filesystem root).
+    // The cwd parameter is ignored - using it as base would double-prefix
+    // paths (e.g. /home/user + home/user/x -> /home/user/home/user/x).
+    normalize_remote_join("/", rel)
 }
 
 // ── list ──────────────────────────────────────────────────────────────────
