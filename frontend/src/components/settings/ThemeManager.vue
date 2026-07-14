@@ -179,13 +179,13 @@ function previewColors(item: ThemeItem): Record<string, string> {
   return saved ? buildCustomThemeColors(saved) : item.colors
 }
 
-function exportCurrentTheme() {
+async function exportCurrentTheme() {
   const activeItem = themeItems.value.find((item) => item.active)
   const name = activeItem ? activeItem.label : themeLabel(settings.theme.preset)
   const colors = activeItem
     ? extractColors(previewColors(activeItem))
     : extractColors(effectiveTheme.value.colors)
-  downloadTheme(name, colors)
+  await downloadTheme(name, colors)
 }
 
 const themeItems = computed<ThemeItem[]>(() => {

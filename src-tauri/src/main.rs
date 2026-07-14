@@ -358,6 +358,15 @@ async fn tauri_download(
 }
 
 #[tauri::command]
+async fn tauri_save_text(filename: String, content: String) -> Result<(), String> {
+    let dialog =
+        rfd::AsyncFileDialog::new().set_title("Save File").set_file_name(&filename).save_file();
+    let file = dialog.await.ok_or("cancelled")?;
+    tokio::fs::write(file.path(), content.as_bytes()).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn pick_upload_dir() -> Option<String> {
     rfd::AsyncFileDialog::new()
         .pick_folder()
@@ -617,6 +626,7 @@ fn main() {
             tauri_upload,
             tauri_read_file,
             tauri_download,
+            tauri_save_text,
             pick_upload_dir,
             pick_workspace_dir,
             close_window,

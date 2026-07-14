@@ -1,4 +1,5 @@
 import type { ThemeColors } from '../composables/useDeviceThemeSelection'
+import { isTauri, tauriInvoke } from '../composables/useTransport'
 
 const PALETTE_LABELS = [
   '黑   black',
@@ -47,14 +48,47 @@ export function serializeTheme(name: string, colors: ThemeColors): string {
   ].join('\n')
 }
 
-export function downloadTheme(name: string, colors: ThemeColors): void {
-  if (typeof document === 'undefined') return
-  const blob = new Blob([serializeTheme(name, colors)], { type: 'text/plain' })
+export async function downloadTheme(name: string, colors: ThemeColors): Promise<void> {
+  if (typeof document === 'undefined' && typeof window === 'undefined') return
+  const sanitizedName = name.trim().replace(/[\\/:*?"<>|\s]+/g, '-') || 'theme'
+  const filename = `${sanitizedName}.conf`
+  const content = serializeTheme(name, colors)
+
+  if (isTauri()) {
+    try {
+      await tauriInvoke('tauri_save_text', { filename, content })
+    } catch {
+      // User cancelled or write failed — silently ignore.
+    }
+    return
+  }
+
+  const w = window as any
+  if (typeof w.showSaveFilePicker === 'function') {
+    try {
+      const handle = await w.showSaveFilePicker({
+        suggestedName: filename,
+        types: [
+          {
+            description: 'Theme file',
+            accept: { 'text/plain': ['.conf'] },
+          },
+        ],
+      })
+      const writable = await handle.createWritable()
+      await writable.write(content)
+      await writable.close()
+      return
+    } catch {
+      // User cancelled or unsupported — fall back to anchor download.
+    }
+  }
+
+  const blob = new Blob([content], { type: 'text/plain' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
-  const sanitizedName = name.trim().replace(/[\\/:*?"<>|\s]+/g, '-') || 'theme'
   anchor.href = url
-  anchor.download = `${sanitizedName}.conf`
+  anchor.download = filename
   document.body.appendChild(anchor)
   anchor.click()
   URL.revokeObjectURL(url)
