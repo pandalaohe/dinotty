@@ -403,14 +403,19 @@ async fn tauri_upload(
     pane_id: String,
     dir: String,
     files: Vec<UploadFile>,
+    cwd: Option<String>,
     token: Option<String>,
 ) -> Result<FetchResponse, String> {
     let port = EMBEDDED_HTTP_PORT.get().copied().unwrap_or(8999);
-    let url = format!(
+    let mut url = format!(
         "http://127.0.0.1:{port}/api/workspace/upload?pane_id={}&dir={}",
         urlencoding::encode(&pane_id),
         urlencoding::encode(&dir),
     );
+    if let Some(c) = cwd.as_deref().filter(|c| !c.is_empty()) {
+        url.push_str("&cwd=");
+        url.push_str(&urlencoding::encode(c));
+    }
 
     let client = reqwest::Client::new();
     let mut form = reqwest::multipart::Form::new();
@@ -423,8 +428,10 @@ async fn tauri_upload(
             .file_name(f.name.clone())
             .mime_str("application/octet-stream")
             .map_err(|e| e.to_string())?;
-        form = form.part("file", part);
+        // path must precede file: backend reads fields in order and pairs
+        // each path with the next file field.
         form = form.text("path", f.path.clone());
+        form = form.part("file", part);
     }
 
     let mut req = client.post(&url).multipart(form);
