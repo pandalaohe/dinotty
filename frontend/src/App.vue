@@ -8,7 +8,7 @@
     <TabBar
       :tabs="visibleTabList"
       :active-pane-id="activePaneId"
-      :indicators="notif.unreadByPane"
+      :indicators="tabIndicators"
       :plugins="pluginList"
       :can-broadcast="canBroadcast"
       :broadcast-active="isBroadcastActive"
@@ -219,6 +219,7 @@
       :visible="overviewOpen"
       :active-pane-id="activePaneId"
       :term-refs="termRefs"
+      :indicators="tabIndicators"
       @close="overviewOpen = false"
       @activate="onOverviewActivate"
       @close-tab="onOverviewCloseTab"
@@ -281,7 +282,7 @@ import { isWindowsClient } from './utils/clientPlatform'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useToast } from 'vue-toastification'
-import { useNotification, pushNotification, setToastInstance } from './composables/useNotification'
+import { useNotification, pushNotification, setToastInstance, aggregateSeverity } from './composables/useNotification'
 import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import {
@@ -366,6 +367,19 @@ const visibleTabList = computed(() => {
   })
   // Reindex: workspace-relative 1-based indices
   return list.map((t, i) => ({ ...t, index: i + 1 }))
+})
+
+/** Aggregated per-tab unread notification severity (rolls up all leaves of a split tab). */
+const tabIndicators = computed(() => {
+  const result: Record<string, string> = {}
+  for (const tab of tabs.value) {
+    const paneIds = tab.type === 'terminal'
+      ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
+      : [tab.paneId]
+    const sev = aggregateSeverity(paneIds)
+    if (sev) result[tab.paneId] = sev
+  }
+  return result
 })
 
 /** Enriched pane labels with workspace and tab context for notifications */
@@ -770,11 +784,14 @@ async function activateTab(tabId: string) {
   }
 
   activePaneId.value = tab.paneId
+
+  // Clear notifications for this tab on activation (terminal: tab-level + all leaves; plugin: tab-level)
+  const activatedPaneIds = tab.type === 'terminal'
+    ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
+    : [tab.paneId]
+  notif.clearForPaneIds(activatedPaneIds)
+
   if (tab.type === 'terminal') {
-    // Clear unread for all leaves in this tab
-    for (const leaf of getAllLeaves(tab.layout)) {
-      notif.clearPaneUnread(leaf.paneId)
-    }
     try {
       await apiActivatePane(tab.paneId, tab.activePaneId)
     } catch (e) {
@@ -857,6 +874,12 @@ async function onConfirmClose(tabId: string, paneId: string | null) {
 async function closeTab(tabId: string) {
   const tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab) return
+
+  // Clean up notifications associated with this tab (tab-level + all leaves)
+  const closedPaneIds = tab.type === 'terminal'
+    ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
+    : [tab.paneId]
+  notif.clearForPaneIds(closedPaneIds)
 
   // Invalidate plugin preview cache when closing a plugin tab
   if (tab.type === 'plugin') {

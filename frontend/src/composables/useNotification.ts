@@ -114,6 +114,23 @@ function severityRank(t: NotificationType): number {
   return ranks[t] ?? 0
 }
 
+/** Returns the highest severity among the given paneIds, or null if none unread. */
+export function aggregateSeverity(paneIds: string[]): NotificationType | null {
+  let highest: NotificationType | null = null
+  let highestRank = -1
+  for (const pid of paneIds) {
+    const sev = unreadByPane[pid]
+    if (sev) {
+      const r = severityRank(sev)
+      if (r > highestRank) {
+        highest = sev
+        highestRank = r
+      }
+    }
+  }
+  return highest
+}
+
 function getNotifConfig() {
   return settings.notification
 }
@@ -351,6 +368,15 @@ export function useNotification() {
     },
     clearPaneUnread(paneId: string) {
       delete unreadByPane[paneId]
+    },
+    clearForPaneIds(paneIds: string[]) {
+      const idSet = new Set(paneIds)
+      notifications.value = notifications.value.filter(
+        (n) => !n.paneId || !idSet.has(n.paneId),
+      )
+      for (const pid of paneIds) {
+        delete unreadByPane[pid]
+      }
     },
     togglePanel() {
       panelVisible.value = !panelVisible.value
