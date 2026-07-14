@@ -561,6 +561,17 @@ export class TerminalInstance {
     this._resizeObserver = new ResizeObserver(() => this._refit())
     this._resizeObserver.observe(wrapper)
 
+    // Web fonts load asynchronously; if the terminal is fitted before the
+    // font is ready, cellWidth is based on the fallback font (usually
+    // narrower), so cols is overestimated and long lines overflow the
+    // canvas. Refit once after fonts settle to correct cellWidth -> cols.
+    if (typeof document !== 'undefined' && document.fonts) {
+      document.fonts.ready.then(() => {
+        if (this._destroyed || !this.xterm) return
+        this._refit()
+      })
+    }
+
     this._visibilityHandler = () => {
       if (!document.hidden) this._doFitAndResize(true)
     }
