@@ -232,6 +232,13 @@ export class TerminalInstance {
   private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
   private _writeQueue: string[] = []
   private _writing = false
+  // Cross-batch viewport pin: survives rAF yields between write batches so
+  // trackpad inertia / sub-pixel wheel noise doesn't flip isUserScrolling and
+  // drop the viewport above ybase mid-stream. Only a deliberate upward scroll
+  // (accumulated |deltaY| past NOISE_THRESHOLD within ACCUM_RESET_MS) un-pins.
+  private _writePinnedToBottom = true
+  private _wheelUpAccumulated = 0
+  private _wheelUpResetTimer: ReturnType<typeof setTimeout> | null = null
   touchMoved = false
   inTouchSelection = false
   selStartRow = 0
@@ -707,6 +714,10 @@ export class TerminalInstance {
     this._followingPeer = false
     if (this._refitRaf) cancelAnimationFrame(this._refitRaf)
     if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
+    if (this._wheelUpResetTimer) {
+      clearTimeout(this._wheelUpResetTimer)
+      this._wheelUpResetTimer = null
+    }
     this._resizeObserver?.disconnect()
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler)
@@ -764,6 +775,7 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._writeQueue = []
         this._writing = false
+        this._writePinnedToBottom = true
         this._doFitAndResize(true)
         this._scheduleSettleResize()
       } else if (msg.type === 'resize') {
@@ -816,6 +828,7 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._reconnectAttempts = 0
         this._hideOverlay()
+        this._writePinnedToBottom = true
         this._doFitAndResize(true)
         this._scheduleSettleResize()
       } else if (msg.type === 'output') {
@@ -875,15 +888,12 @@ export class TerminalInstance {
     }
     this._writing = true
 
-    // Snapshot whether the viewport is at the bottom BEFORE writing this batch.
-    // During burst output, the rAF yields between batches let pending wheel events
-    // (e.g. macOS trackpad inertia) fire. Even a 1-px upward delta sets
-    // xterm.js's isUserScrolling=true, which prevents ydisp from following ybase
-    // in subsequent write() calls — the viewport gets stuck above the bottom.
-    // By recording the at-bottom state here and restoring it after the batch, we
-    // keep the viewport pinned to the bottom when the user hasn't intentionally
-    // scrolled away.
-    const wasAtBottom = this._isAtBottom()
+    // Cross-batch viewport pin: read fresh on every (re)entry so the wheel
+    // handler can un-pin mid-stream. Unlike the old per-batch wasAtBottom
+    // snapshot, this value is only flipped by DELIBERATE upward scroll
+    // (accumulated |deltaY| past the noise threshold), not by trackpad
+    // inertia that fires between rAF-yielded batches.
+    const pinToBottom = this._writePinnedToBottom
 
     // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
     // This prevents the xterm.write() callback chain from monopolizing
@@ -894,7 +904,7 @@ export class TerminalInstance {
 
     const processNext = () => {
       if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
-        if (wasAtBottom && this.xterm) {
+        if (pinToBottom && this.xterm) {
           this.xterm.scrollToBottom()
         }
         if (this._writeQueue.length > 0) {
@@ -1065,7 +1075,10 @@ export class TerminalInstance {
     const heightChanged = rows !== this._lastRows
     this._lastCols = cols
     this._lastRows = rows
-    if (heightChanged && !this.isMouseModeEnabled()) this.xterm.scrollToBottom()
+    if (heightChanged && !this.isMouseModeEnabled()) {
+      this.xterm.scrollToBottom()
+      this._writePinnedToBottom = true
+    }
     const gen = ++this._peerFollowGen
     this._followingPeer = true
     this._pendingLocalRefit = false
@@ -1108,6 +1121,7 @@ export class TerminalInstance {
     this._lastRows = rows
     if (heightChanged && !this.isMouseModeEnabled()) {
       this.xterm.scrollToBottom()
+      this._writePinnedToBottom = true
     }
     if (cols !== this._lastSentCols || rows !== this._lastSentRows) {
       if (this._resizeDebounce) {
@@ -1161,6 +1175,7 @@ export class TerminalInstance {
     this._lastRows = rows
     if (heightChanged && !this.isMouseModeEnabled()) {
       this.xterm.scrollToBottom()
+      this._writePinnedToBottom = true
     }
     if (force) {
       this._sendResize(cols, rows)
@@ -1364,6 +1379,28 @@ export class TerminalInstance {
     this.xterm?.attachCustomWheelEventHandler((e: WheelEvent): boolean => {
       if (this._wheelBypass) return true
       if (!this.xterm) return true
+
+      // Track user scroll intent to maintain the cross-batch viewport pin.
+      // macOS trackpad inertia produces sub-pixel deltaY<0 events that set
+      // xterm's isUserScrolling=true; without this filter, a single inertia
+      // event between rAF-yielded write batches would un-pin and drop the
+      // viewport above ybase mid-stream.
+      if (e.deltaY < 0) {
+        if (this._wheelUpResetTimer) clearTimeout(this._wheelUpResetTimer)
+        this._wheelUpAccumulated += Math.abs(e.deltaY)
+        if (this._wheelUpAccumulated > 8) {
+          this._writePinnedToBottom = false
+        }
+        this._wheelUpResetTimer = setTimeout(() => {
+          this._wheelUpAccumulated = 0
+          this._wheelUpResetTimer = null
+        }, 500)
+      } else if (e.deltaY > 0) {
+        this._wheelUpAccumulated = 0
+        if (this._isAtBottom()) {
+          this._writePinnedToBottom = true
+        }
+      }
 
       const now = Date.now()
       const elapsed = now - this._lastWheelTime
