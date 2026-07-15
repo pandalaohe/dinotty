@@ -1104,10 +1104,15 @@ export class TerminalInstance {
       this._peerFollowTimer = null
       if (this._destroyed || gen !== this._peerFollowGen) return
       this._followingPeer = false
-      if (this._pendingLocalRefit) {
-        this._pendingLocalRefit = false
-        this._doFitAndResize(true)
-      }
+      this._pendingLocalRefit = false
+      // Always refit after the follow period. The peer's size may be larger
+      // than the local wrapper (e.g. desktop client with no status bar vs.
+      // web client with a 24px status bar), and without a local refit the
+      // terminal keeps the peer's rows, leaving the last few lines clipped
+      // behind the status bar. _settleRefit only re-sends the resize when
+      // the local size differs from the last sent size, so two clients with
+      // stable but different visible areas don't ping-pong resizes.
+      this._settleRefit()
     }, 500) as unknown as ReturnType<typeof setTimeout>
   }
 
