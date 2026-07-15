@@ -719,7 +719,12 @@ export class TerminalInstance {
     const data = tauri ? stripImeConfirmSpace(rawData) : rawData
     if (!data) return
     const now = performance.now()
-    if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
+    // Gate the WKWebView replay dedup to Tauri only. On web, browsers don't
+    // multi-fire onData for one key, so the 2ms same-char window only
+    // corrupts legitimate fast repeats (e.g. `3000000` -> `30`, held arrow
+    // keys, fast paste of repeated chars). On Tauri/WKWebView, keep the
+    // dedup to absorb the multi-focus replay (P4).
+    if (tauri && isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
     this._lastInputData = data
     this._lastInputTime = now
     if (tauri && isShiftSymbolChar(data)) {
