@@ -232,6 +232,13 @@ export class TerminalInstance {
   private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
   private _writeQueue: string[] = []
   private _writing = false
+  // Watchdog for silent xterm.write() callback loss. xterm.js can drop the
+  // write callback without throwing (observed when resize interleaves with a
+  // pending write under high output), which strands _writing=true forever.
+  // The watchdog force-advances the pump if the callback hasn't fired within
+  // WRITE_WATCHDOG_MS, recovering output without a full page reload.
+  private _writeWatchdog: ReturnType<typeof setTimeout> | null = null
+  private _writeWatchdogFires = 0
   // Cross-batch viewport pin: survives rAF yields between write batches so
   // trackpad inertia / sub-pixel wheel noise doesn't flip isUserScrolling and
   // drop the viewport above ybase mid-stream. Only a deliberate upward scroll
@@ -251,6 +258,7 @@ export class TerminalInstance {
   private _transportConnected = false
   private _lastSentCols = 0
   private _lastSentRows = 0
+  private _resizeCooldownUntil = 0
   private _followingPeer = false
   private _peerFollowGen = 0
   private _peerFollowTimer: ReturnType<typeof setTimeout> | null = null
@@ -438,7 +446,14 @@ export class TerminalInstance {
 
     try {
       const webgl = new WebglAddon()
-      webgl.onContextLoss(() => webgl.dispose())
+      webgl.onContextLoss(() => {
+        webgl.dispose()
+        // Disposing restores the canvas renderer but doesn't trigger a
+        // redraw. Without refresh, the terminal appears frozen until the
+        // next resize (e.g. dragging the window) kicks the render service.
+        const rows = this.xterm?.rows ?? 1
+        this.xterm?.refresh(0, Math.max(0, rows - 1))
+      })
       this.xterm.loadAddon(webgl)
     } catch {
       /* DOM renderer fallback */
@@ -741,6 +756,10 @@ export class TerminalInstance {
     this._textUnsub?.()
     this._writeQueue = []
     this._writing = false
+    if (this._writeWatchdog) {
+      clearTimeout(this._writeWatchdog)
+      this._writeWatchdog = null
+    }
     if (this._transport) {
       this._transport.disconnect()
       this._transport = null
@@ -786,6 +805,10 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._writeQueue = []
         this._writing = false
+        if (this._writeWatchdog) {
+          clearTimeout(this._writeWatchdog)
+          this._writeWatchdog = null
+        }
         this._writePinnedToBottom = true
         this._doFitAndResize(true)
         this._scheduleSettleResize()
@@ -839,6 +862,16 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._reconnectAttempts = 0
         this._hideOverlay()
+        // Reset the write pump: a prior stall may have stranded _writing=true,
+        // and xterm.reset() invalidated the old buffer. Without this, output
+        // after reconnect queues forever and the terminal stays dead until a
+        // full page reload.
+        this._writeQueue = []
+        this._writing = false
+        if (this._writeWatchdog) {
+          clearTimeout(this._writeWatchdog)
+          this._writeWatchdog = null
+        }
         this._writePinnedToBottom = true
         this._doFitAndResize(true)
         this._scheduleSettleResize()
@@ -884,10 +917,17 @@ export class TerminalInstance {
     // Dropping intermediate chunks is safe: the terminal state is determined
     // by the latest output.
     const MAX_WRITE_QUEUE = 64
+    const MAX_QUEUE_BYTES = 4 * 1024 * 1024
     if (this._writeQueue.length >= MAX_WRITE_QUEUE) {
       this._writeQueue = [this._writeQueue.join('') + data]
     } else {
       this._writeQueue.push(data)
+    }
+    let totalBytes = 0
+    for (const chunk of this._writeQueue) totalBytes += chunk.length
+    while (totalBytes > MAX_QUEUE_BYTES && this._writeQueue.length > 1) {
+      const dropped = this._writeQueue.shift()!
+      totalBytes -= dropped.length
     }
     if (!this._writing) this._processWriteQueue()
   }
@@ -899,13 +939,6 @@ export class TerminalInstance {
     }
     this._writing = true
 
-    // Cross-batch viewport pin: read fresh on every (re)entry so the wheel
-    // handler can un-pin mid-stream. Unlike the old per-batch wasAtBottom
-    // snapshot, this value is only flipped by DELIBERATE upward scroll
-    // (accumulated |deltaY| past the noise threshold), not by trackpad
-    // inertia that fires between rAF-yielded batches.
-    const pinToBottom = this._writePinnedToBottom
-
     // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
     // This prevents the xterm.write() callback chain from monopolizing
     // the main thread and starving keyboard input events.
@@ -915,7 +948,10 @@ export class TerminalInstance {
 
     const processNext = () => {
       if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
-        if (pinToBottom && this.xterm) {
+        // Read _writePinnedToBottom fresh here, not at batch entry. A
+        // wheel-up mid-batch flips the flag to false; using a batch-entry
+        // snapshot would override the user's scroll with scrollToBottom.
+        if (this._writePinnedToBottom && this.xterm) {
           this.xterm.scrollToBottom()
         }
         if (this._writeQueue.length > 0) {
@@ -930,11 +966,42 @@ export class TerminalInstance {
       const chunk = this._writeQueue.shift()!
       // Split large writes to prevent UI thread blocking.
       // A single xterm.write() with hundreds of KB synchronously blocks rendering.
-      if (chunk.length > MAX_CHUNK) {
-        this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
-        this.xterm.write(chunk.slice(0, MAX_CHUNK), () => processNext())
-      } else {
-        this.xterm.write(chunk, () => processNext())
+      // Wrap in try/catch: xterm.write() can throw synchronously (e.g. its
+      // WriteBuffer "data discarded" above the 50MB watermark). Without this,
+      // the callback never fires, _writing stays true, and the write pump is
+      // stranded permanently - all subsequent output (including key echo)
+      // queues forever and the terminal appears dead until a full page reload.
+      let advanced = false
+      const advance = () => {
+        if (advanced) return
+        advanced = true
+        if (this._writeWatchdog) {
+          clearTimeout(this._writeWatchdog)
+          this._writeWatchdog = null
+        }
+        processNext()
+      }
+      // Watchdog: xterm.write() can silently drop the callback (no throw,
+      // no invocation) when resize interleaves with a pending write under
+      // high output. Without this, _writing stays true and the pump is dead.
+      // 1s is well above any legitimate write latency but short enough that
+      // users don't notice the stall before recovery.
+      this._writeWatchdog = setTimeout(() => {
+        this._writeWatchdog = null
+        this._writeWatchdogFires++
+        console.warn(`[dinotty] write pump watchdog fired (${this._writeWatchdogFires}); xterm.write callback lost, force-advancing`)
+        advance()
+      }, 1000)
+      try {
+        if (chunk.length > MAX_CHUNK) {
+          this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
+          this.xterm.write(chunk.slice(0, MAX_CHUNK), advance)
+        } else {
+          this.xterm.write(chunk, advance)
+        }
+      } catch (e) {
+        console.error('[dinotty] xterm.write threw:', e)
+        advance()
       }
     }
 
@@ -1051,6 +1118,12 @@ export class TerminalInstance {
     }
     this._lastSentCols = cols
     this._lastSentRows = rows
+    // Cooldown: suppress the post-peer-follow reclaim send for a few
+    // seconds so two clients with different stable sizes don't ping-pong
+    // the PTY size back and forth. Only the follower (who didn't recently
+    // initiate) reclaims; the initiator stays quiet and keeps the peer's
+    // size until the user actively resizes.
+    this._resizeCooldownUntil = Date.now() + 3000
     return true
   }
 
@@ -1105,13 +1178,13 @@ export class TerminalInstance {
       if (this._destroyed || gen !== this._peerFollowGen) return
       this._followingPeer = false
       this._pendingLocalRefit = false
-      // Always refit after the follow period. The peer's size may be larger
-      // than the local wrapper (e.g. desktop client with no status bar vs.
-      // web client with a 24px status bar), and without a local refit the
-      // terminal keeps the peer's rows, leaving the last few lines clipped
-      // behind the status bar. _settleRefit only re-sends the resize when
-      // the local size differs from the last sent size, so two clients with
-      // stable but different visible areas don't ping-pong resizes.
+      // Refit to local wrapper and reclaim the PTY size - unless we
+      // recently initiated a resize ourselves (cooldown). Without the
+      // cooldown, two clients with different stable sizes ping-pong the
+      // PTY every 500ms: A sends -> B follows -> B reclaims -> A follows
+      // -> A reclaims -> repeat. The initiator (who just sent) stays
+      // quiet; the follower reclaims so its display matches the PTY.
+      if (Date.now() < this._resizeCooldownUntil) return
       this._settleRefit()
     }, 500) as unknown as ReturnType<typeof setTimeout>
   }
