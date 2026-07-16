@@ -98,7 +98,7 @@ export interface NotificationItem {
   epoch?: string
 }
 
-type MarkReadReason =
+export type MarkReadReason =
   | 'focus'
   | 'terminal_input'
   | 'tab_activate'
@@ -173,6 +173,13 @@ let cachedClientId: string | null = null
 const pendingRequests = new Map<string, PendingRequest>()
 const historyDedup = new Set<string>()
 
+interface ActiveReadContext {
+  getActiveFocusedPaneId: () => string | null
+  isAppForeground: () => boolean
+}
+
+let activeReadContext: ActiveReadContext | null = null
+
 function randomToken(): string {
   try {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -189,7 +196,7 @@ function randomToken(): string {
 
 const tabNonce = randomToken()
 
-function getClientId(): string {
+export function getNotificationClientId(): string {
   if (cachedClientId) return cachedClientId
   try {
     const stored = localStorage.getItem(CLIENT_ID_KEY)
@@ -204,6 +211,10 @@ function getClientId(): string {
     cachedClientId = randomToken()
     return cachedClientId
   }
+}
+
+export function mintNotificationRequestId(): string {
+  return `${tabNonce}-${++requestCounter}`
 }
 
 function genId(): string {
@@ -240,6 +251,7 @@ export function aggregateSeverity(paneIds: string[]): NotificationType | null {
 
 function refreshProjection() {
   const next = attentionStore.unreadPaneSeverities()
+  delete next['']
   for (const paneId of Object.keys(unreadByPane)) {
     if (!(paneId in next)) delete unreadByPane[paneId]
   }
@@ -287,7 +299,7 @@ function handleEvent(event: LegacyEvent) {
     if (!cfg.bell?.enabled) return
     body = 'Bell'
   } else if (event.type === 'notify') {
-    if (!cfg.osc_notify) return
+    if (!event.notifId && !cfg.osc_notify) return
     title = event.title ?? null
     body = event.body ?? ''
     notifType = (event.notification_type as NotificationType) || 'info'
@@ -307,7 +319,7 @@ function handleEvent(event: LegacyEvent) {
     title,
     body,
     timestamp: Date.now(),
-    source: 'terminal',
+    source: event.notifId && !event.pane_id ? 'plugin' : 'terminal',
     eventSeq: event.eventSeq,
     notifId: event.notifId,
     epoch: attentionStore.epoch ?? undefined,
@@ -390,6 +402,17 @@ let goToHandler: ((paneId: string) => void) | null = null
 
 export function setGoToPaneHandler(handler: (paneId: string) => void) {
   goToHandler = handler
+}
+
+export function setActiveReadContext(context: ActiveReadContext | null) {
+  activeReadContext = context
+}
+
+export function evaluateActiveRead() {
+  if (!activeReadContext?.isAppForeground()) return
+  const paneId = activeReadContext.getActiveFocusedPaneId()
+  if (!paneId) return
+  markPaneReadIfUnread(paneId, 'active_observed')
 }
 
 function showToast(item: NotificationItem) {
@@ -503,12 +526,12 @@ function createPending(
   notifs: MarkReadPayload['notifs']
 ) {
   if (targets.length === 0) return
-  const requestId = `${tabNonce}-${++requestCounter}`
+  const requestId = mintNotificationRequestId()
   const payload: MarkReadPayload = {
     type: 'notification.mark_read',
     v: 1,
     epoch: attentionStore.epoch ?? '',
-    clientId: getClientId(),
+    clientId: getNotificationClientId(),
     requestId,
     reason,
     panes,
@@ -539,6 +562,13 @@ export function markPanesRead(
     targets.push({ paneId: requested.paneId, throughEventSeq: BigInt(throughEventSeq) })
   }
   createPending(targets, reason, wirePanes, [])
+}
+
+export function markPaneReadIfUnread(paneId: string, reason: MarkReadReason) {
+  if (!paneId || !unreadByPane[paneId]) return
+  const pane = attentionStore.panes.get(paneId)
+  if (!pane) return
+  markPanesRead([{ paneId, throughEventSeq: pane.latestEventSeq.toString() }], reason)
 }
 
 export function markNotifsRead(notifIds: string[], reason: MarkReadReason) {
@@ -616,15 +646,19 @@ export function __dispatchServerMessageForTest(msg: unknown) {
   const envelope = msg as { type: string }
   switch (envelope.type) {
     case 'state_delta':
-      attentionStore.applyDelta(msg as unknown as AttentionStateEnvelope)
-      prunePendingWithoutOverlay()
-      refreshProjection()
+      {
+        const applied = attentionStore.applyDelta(msg as unknown as AttentionStateEnvelope)
+        prunePendingWithoutOverlay()
+        refreshProjection()
+        if (applied) evaluateActiveRead()
+      }
       break
     case 'snapshot': {
       const snapshot = msg as unknown as AttentionStateEnvelope
-      attentionStore.applySnapshot(snapshot)
+      const applied = attentionStore.applySnapshot(snapshot)
       prunePendingWithoutOverlay()
       refreshProjection()
+      if (applied) evaluateActiveRead()
       if (connectionNeedsSnapshot) {
         connectionNeedsSnapshot = false
         resendPendingAfterSnapshot()
@@ -713,6 +747,7 @@ export function __resetForTest() {
   protocolUpgradeStopped = false
   toastInstance = null
   goToHandler = null
+  activeReadContext = null
 }
 
 export function useNotification() {
@@ -729,6 +764,7 @@ export function useNotification() {
     historyCount,
     setGoToPaneHandler,
     markPanesRead,
+    markPaneReadIfUnread,
     markNotifsRead,
     dismissOne(id: string) {
       const item = notifications.value.find((notification) => notification.id === id)
