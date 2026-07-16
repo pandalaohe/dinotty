@@ -278,7 +278,7 @@ describe('presentation coalesce scheduler', () => {
     const scheduler = createPresentationScheduler<PresentationEvent>({
       getWindowMs: () => 100,
       evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: true, vibrate: true }),
-      fire: (event) => fired.push(event),
+      fire: (event) => { fired.push(event) },
     })
     scheduler.enqueue({ paneId: 'p', eventSeq: '1', severity: 'warning' })
     scheduler.enqueue({ paneId: 'p', eventSeq: '2', severity: 'error' })
@@ -293,7 +293,7 @@ describe('presentation coalesce scheduler', () => {
     const scheduler = createPresentationScheduler<PresentationEvent>({
       getWindowMs: () => 100,
       evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: true, vibrate: true }),
-      fire: (event) => fired.push(event),
+      fire: (event) => { fired.push(event) },
     })
     scheduler.enqueue({ paneId: 'p', eventSeq: '5', severity: 'urgent' })
     scheduler.cancelPane('p', '5')
@@ -321,6 +321,161 @@ describe('presentation coalesce scheduler', () => {
     expect(fired).not.toHaveBeenCalled()
   })
 
+  it('registers a returned live handle and dismisses it on pane cancellation', () => {
+    const dismiss = vi.fn()
+    const scheduler = createPresentationScheduler<PresentationEvent>({
+      getWindowMs: () => 100,
+      evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
+      fire: () => dismiss,
+    })
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '7', severity: 'info' })
+    vi.advanceTimersByTime(100)
+
+    scheduler.cancelPane('pane-a')
+
+    expect(dismiss).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a newer live pane handle above the read watermark and dismisses it at that sequence', () => {
+    const dismiss = vi.fn()
+    const scheduler = createPresentationScheduler<PresentationEvent>({
+      getWindowMs: () => 100,
+      evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
+      fire: () => dismiss,
+    })
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '7', severity: 'info' })
+    vi.advanceTimersByTime(100)
+
+    scheduler.cancelPane('pane-a', '6')
+    expect(dismiss).not.toHaveBeenCalled()
+
+    scheduler.cancelPane('pane-a', '7')
+    expect(dismiss).toHaveBeenCalledOnce()
+  })
+
+  it('dismisses live handles on notif cancellation and pane removal', () => {
+    const dismissNotif = vi.fn()
+    const dismissPane = vi.fn()
+    const scheduler = createPresentationScheduler<PresentationEvent>({
+      getWindowMs: () => 100,
+      evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
+      fire: (event) => event.notifId ? dismissNotif : dismissPane,
+    })
+    scheduler.enqueue({ notifId: 'notif-a', severity: 'info' })
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '3', severity: 'info' })
+    vi.advanceTimersByTime(100)
+
+    scheduler.cancelNotif('notif-a')
+    scheduler.removePane('pane-a')
+
+    expect(dismissNotif).toHaveBeenCalledOnce()
+    expect(dismissPane).toHaveBeenCalledOnce()
+  })
+
+  it('dismisses every live toast for the same pane covered by cancellation', () => {
+    const firstDismiss = vi.fn()
+    const secondDismiss = vi.fn()
+    const scheduler = createPresentationScheduler<PresentationEvent>({
+      getWindowMs: () => 100,
+      evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
+      fire: (event) => event.eventSeq === '1' ? firstDismiss : secondDismiss,
+    })
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '1', severity: 'info' })
+    vi.advanceTimersByTime(100)
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '2', severity: 'info' })
+    vi.advanceTimersByTime(100)
+
+    expect(firstDismiss).not.toHaveBeenCalled()
+    scheduler.cancelPane('pane-a', '2')
+    expect(firstDismiss).toHaveBeenCalledOnce()
+    expect(secondDismiss).toHaveBeenCalledOnce()
+  })
+
+  it('dismisses only live pane toasts at or below a read watermark', () => {
+    const lowerDismiss = vi.fn()
+    const higherDismiss = vi.fn()
+    const scheduler = createPresentationScheduler<PresentationEvent>({
+      getWindowMs: () => 100,
+      evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
+      fire: (event) => event.eventSeq === '1' ? lowerDismiss : higherDismiss,
+    })
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '1', severity: 'info' })
+    vi.advanceTimersByTime(100)
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '3', severity: 'info' })
+    vi.advanceTimersByTime(100)
+
+    scheduler.cancelPane('pane-a', '2')
+
+    expect(lowerDismiss).toHaveBeenCalledOnce()
+    expect(higherDismiss).not.toHaveBeenCalled()
+    scheduler.cancelPane('pane-a', '3')
+    expect(higherDismiss).toHaveBeenCalledOnce()
+  })
+
+  it('retires a naturally closed live toast without dismissing it again', () => {
+    const dismiss = vi.fn()
+    let retire: (() => void) | undefined
+    const scheduler = createPresentationScheduler<PresentationEvent>({
+      getWindowMs: () => 100,
+      evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
+      fire: (_event, _output, retireEntry) => {
+        retire = retireEntry
+        return dismiss
+      },
+    })
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '1', severity: 'info' })
+    vi.advanceTimersByTime(100)
+
+    retire?.()
+    retire?.()
+    scheduler.cancelPane('pane-a')
+
+    expect(dismiss).not.toHaveBeenCalled()
+  })
+
+  it('does not let an old toast retirement remove a newer toast for the same pane', () => {
+    const firstDismiss = vi.fn()
+    const secondDismiss = vi.fn()
+    const retirements: Array<() => void> = []
+    const scheduler = createPresentationScheduler<PresentationEvent>({
+      getWindowMs: () => 100,
+      evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
+      fire: (event, _output, retire) => {
+        retirements.push(retire)
+        return event.eventSeq === '1' ? firstDismiss : secondDismiss
+      },
+    })
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '1', severity: 'info' })
+    vi.advanceTimersByTime(100)
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '2', severity: 'info' })
+    vi.advanceTimersByTime(100)
+
+    retirements[0]()
+    scheduler.cancelPane('pane-a', '2')
+
+    expect(firstDismiss).not.toHaveBeenCalled()
+    expect(secondDismiss).toHaveBeenCalledOnce()
+  })
+
+  it('dismisses and clears all live handles on dispose', () => {
+    const dismissPane = vi.fn()
+    const dismissNotif = vi.fn()
+    const scheduler = createPresentationScheduler<PresentationEvent>({
+      getWindowMs: () => 100,
+      evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
+      fire: (event) => event.paneId ? dismissPane : dismissNotif,
+    })
+    scheduler.enqueue({ paneId: 'pane-a', eventSeq: '1', severity: 'info' })
+    scheduler.enqueue({ notifId: 'notif-a', severity: 'info' })
+    vi.advanceTimersByTime(100)
+
+    scheduler.dispose()
+    scheduler.dispose()
+
+    expect(dismissPane).toHaveBeenCalledOnce()
+    expect(dismissNotif).toHaveBeenCalledOnce()
+  })
+
   it('re-evaluates masks using settings at fire time', () => {
     const settings = cloneSettings()
     const fired: unknown[] = []
@@ -330,7 +485,7 @@ describe('presentation coalesce scheduler', () => {
         settings, focusedPaneId: null, activeTabPaneIds: [], isAppForeground: false,
         now: () => new Date(2026, 6, 16, 12, 0),
       }),
-      fire: (_event, output) => fired.push(output),
+      fire: (_event, output) => { fired.push(output) },
     })
     scheduler.enqueue({ paneId: 'p', eventSeq: '1', severity: 'info' })
     settings.dnd_level = 'silent'
@@ -364,7 +519,7 @@ describe('presentation coalesce scheduler', () => {
     const scheduler = createPresentationScheduler<PresentationEvent>({
       getWindowMs: () => 100,
       evaluate: () => ({ storeHistory: true, showTabIndicator: true, showPopup: true, playSound: false, vibrate: false }),
-      fire: (event) => fired.push(event),
+      fire: (event) => { fired.push(event) },
     })
     scheduler.enqueue({ paneId: 'pane-less-1', eventSeq: '1', severity: 'warning' })
     scheduler.enqueue({ notifId: 'notif-a', severity: 'error' })

@@ -66,6 +66,7 @@ import {
   markPanesRead,
   pushNotification,
   setActiveReadContext,
+  setGoToPaneHandler,
   setToastInstance,
   useNotification,
 } from '../useNotification'
@@ -117,6 +118,15 @@ function raised(overrides: Record<string, unknown> = {}) {
     severity: 'info',
     ...overrides,
   }
+}
+
+function createToastSpy() {
+  let nextId = 0
+  const toast = vi.fn(() => `toast-${++nextId}`) as ReturnType<typeof vi.fn> & {
+    dismiss: ReturnType<typeof vi.fn>
+  }
+  toast.dismiss = vi.fn()
+  return toast
 }
 
 beforeEach(() => {
@@ -357,6 +367,110 @@ describe('raised presentation pipeline', () => {
     expect(toast).toHaveBeenCalledOnce()
     expect(sound).toHaveBeenCalledOnce()
     expect(vibrate).toHaveBeenCalledOnce()
+  })
+
+  it('markPaneReadIfUnread dismisses the visible toast for that pane', () => {
+    const toast = createToastSpy()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 0
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '3')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '3' }))
+    vi.advanceTimersByTime(0)
+    expect(toast).toHaveBeenCalledOnce()
+
+    markPaneReadIfUnread('pane-a', 'focus')
+
+    expect(toast.dismiss).toHaveBeenCalledWith('toast-1')
+  })
+
+  it('dismisses a visible local toast when a server state delta marks its pane read', () => {
+    const toast = createToastSpy()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 0
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '4')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '4' }))
+    vi.advanceTimersByTime(0)
+    expect(toast).toHaveBeenCalledOnce()
+
+    __dispatchServerMessageForTest(delta('2', [pane('pane-a', '4', '4')]))
+
+    expect(toast.dismiss).toHaveBeenCalledWith('toast-1')
+  })
+
+  it('dismisses through the toast interface that created the live toast', () => {
+    const creatingToast = createToastSpy()
+    const replacementToast = createToastSpy()
+    setToastInstance(creatingToast)
+    useNotificationPresentation().settings.coalesce_window_ms = 0
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '3')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '3' }))
+    vi.advanceTimersByTime(0)
+
+    setToastInstance(replacementToast)
+    markPaneReadIfUnread('pane-a', 'focus')
+
+    expect(creatingToast.dismiss).toHaveBeenCalledWith('toast-1')
+    expect(replacementToast.dismiss).not.toHaveBeenCalled()
+  })
+
+  it('retires a naturally closed toast without later dismissing it', () => {
+    const toast = createToastSpy()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 0
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '3')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '3' }))
+    vi.advanceTimersByTime(0)
+    const options = toast.mock.calls[0][1] as any
+
+    options.onClose()
+    options.onClose()
+    markPaneReadIfUnread('pane-a', 'focus')
+
+    expect(toast.dismiss).not.toHaveBeenCalled()
+  })
+
+  it("does not let an old toast's onClose retire a newer toast for the same pane", () => {
+    const toast = createToastSpy()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 0
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '2')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '1' }))
+    vi.advanceTimersByTime(0)
+    __dispatchServerMessageForTest(raised({ eventSeq: '2' }))
+    vi.advanceTimersByTime(0)
+    const firstOptions = toast.mock.calls[0][1] as any
+
+    firstOptions.onClose()
+    markPanesRead([{ paneId: 'pane-a', throughEventSeq: '2' }], 'focus')
+
+    expect(toast.dismiss).toHaveBeenCalledTimes(1)
+    expect(toast.dismiss).toHaveBeenCalledWith('toast-2')
+  })
+
+  it('dismisses its own toast before running the goTo button behavior', () => {
+    const actions: string[] = []
+    const toast = createToastSpy()
+    toast.dismiss.mockImplementation(() => actions.push('dismiss'))
+    setToastInstance(toast)
+    setGoToPaneHandler(() => actions.push('goTo'))
+    useNotificationPresentation().settings.coalesce_window_ms = 0
+    useNotification()
+    __dispatchServerMessageForTest(raised())
+    vi.advanceTimersByTime(0)
+    const content = toast.mock.calls[0][0] as any
+    const goToButton = content.children.find(
+      (child: any) => child?.children === 'notification.goTo',
+    )
+
+    goToButton.props.onClick()
+
+    expect(toast.dismiss).toHaveBeenCalledWith('toast-1')
+    expect(actions).toEqual(['dismiss', 'goTo'])
   })
 
   it('dismisses a pane card during its open coalesce window with no later presentation', () => {

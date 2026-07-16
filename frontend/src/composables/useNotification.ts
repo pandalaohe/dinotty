@@ -1,5 +1,6 @@
 import { ref, shallowReactive, computed, h } from 'vue'
 import { TYPE } from 'vue-toastification'
+import type { ToastInterface } from 'vue-toastification'
 import { getApiBase, wsUrlWithToken } from './apiBase'
 import { isTauri } from './useTransport'
 import { settings } from './useSettings'
@@ -216,7 +217,11 @@ function gateNotification(item: NotificationItem): PresentationOutput {
   )
 }
 
-function emitPresentation(item: NotificationItem, output: PresentationOutput) {
+function emitPresentation(
+  item: NotificationItem,
+  output: PresentationOutput,
+  retire: () => void,
+) {
   const presentation = getNotificationPresentationSettings()
   if (output.playSound) {
     const soundCfg = presentation.sounds[item.type]
@@ -225,7 +230,7 @@ function emitPresentation(item: NotificationItem, output: PresentationOutput) {
   if (output.vibrate && typeof navigator !== 'undefined' && navigator.vibrate) {
     navigator.vibrate(item.type === 'urgent' ? [100, 50, 100, 50, 100] : [100])
   }
-  if (output.showPopup) showToast(item)
+  if (output.showPopup) return showToast(item, retire)
 }
 
 type ScheduledNotification = NotificationItem & PresentationEvent
@@ -462,9 +467,18 @@ const toastTypeMap: Record<NotificationType, any> = {
 // Toast instance must be captured from a component setup context (App.vue) and
 // injected here - vue-toastification v2's useToast() called outside component
 // context returns an interface that doesn't reach the mounted container reliably.
-let toastInstance: ((content: any, options?: any) => void) | null = null
+type ToastID = ReturnType<ToastInterface>
+type ToastInstance = ((content: any, options?: any) => ToastID) & {
+  dismiss(id: ToastID): void
+}
+type LegacyToastInstance = (content: any, options?: any) => void
+type StoredToastInstance = ((content: any, options?: any) => ToastID | void) & {
+  dismiss?: (id: ToastID) => void
+}
 
-export function setToastInstance(toast: ((content: any, options?: any) => void) | null) {
+let toastInstance: StoredToastInstance | null = null
+
+export function setToastInstance(toast: ToastInstance | LegacyToastInstance | null) {
   toastInstance = toast
   return () => {
     if (toastInstance === toast) toastInstance = null
@@ -495,15 +509,19 @@ export function evaluateActiveRead() {
   markPaneReadIfUnread(paneId, 'active_observed')
 }
 
-function showToast(item: NotificationItem) {
+function showToast(item: NotificationItem, retire: () => void) {
   if (!toastInstance) {
     console.warn(
       '[notification] toast instance not set; call setToastInstance() from App.vue setup'
     )
     return
   }
+  const toast = toastInstance
   const { t } = useI18n()
   const paneId = item.paneId
+  let dismissToast: (() => void) | undefined
+  let closed = false
+  let dismissRequested = false
   const children = [
     item.title ? h('strong', { class: 'notif-toast-title' }, item.title) : null,
     h('span', { class: 'notif-toast-body' }, item.body),
@@ -513,6 +531,7 @@ function showToast(item: NotificationItem) {
           {
             class: 'notif-toast-btn',
             onClick: () => {
+              dismissToast?.()
               if (goToHandler) {
                 goToHandler(paneId)
               } else {
@@ -528,6 +547,7 @@ function showToast(item: NotificationItem) {
       {
         class: 'notif-toast-btn',
         onClick: () => {
+          dismissToast?.()
           panelVisible.value = true
         },
       },
@@ -535,10 +555,23 @@ function showToast(item: NotificationItem) {
     ),
   ].filter(Boolean)
   const content = h('div', { class: 'notif-toast-content' }, children)
-  toastInstance(content, {
+  const id = toast(content, {
     type: toastTypeMap[item.type] ?? TYPE.INFO,
     timeout: item.type === 'urgent' ? 8000 : 5000,
+    onClose: () => {
+      if (closed) return
+      closed = true
+      retire()
+    },
   })
+  if (id !== undefined && 'dismiss' in toast && typeof toast.dismiss === 'function') {
+    dismissToast = () => {
+      if (closed || dismissRequested) return
+      dismissRequested = true
+      toast.dismiss?.(id)
+    }
+  }
+  return dismissToast
 }
 
 function isSocketOpen(): boolean {

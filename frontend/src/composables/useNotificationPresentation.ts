@@ -403,9 +403,19 @@ type PresentationKey =
 export interface PresentationSchedulerOptions<T extends PresentationEvent> {
   getWindowMs: () => number
   evaluate: (event: T) => PresentationOutput
-  fire: (event: T, output: PresentationOutput) => void
+  fire: (
+    event: T,
+    output: PresentationOutput,
+    retire: () => void,
+  ) => (() => void) | void
   setTimer?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+}
+
+interface LivePresentation {
+  token: object
+  dismiss: () => void
+  representativeSeq?: string
 }
 
 const severityRanks: Record<NotificationType, number> = {
@@ -417,6 +427,7 @@ export function createPresentationScheduler<T extends PresentationEvent>(
 ) {
   const pendingPanes = new Map<string, PendingPresentation<T>>()
   const pendingNotifs = new Map<string, PendingPresentation<T>>()
+  const livePresentations = new Map<string, LivePresentation[]>()
   const readWatermarks = new Map<string, bigint>()
   const setTimer = options.setTimer ?? ((callback: () => void, delay: number) =>
     setTimeout(callback, delay))
@@ -431,6 +442,33 @@ export function createPresentationScheduler<T extends PresentationEvent>(
 
   function mapFor(key: PresentationKey) {
     return key.kind === 'pane' ? pendingPanes : pendingNotifs
+  }
+
+  function namespacedKey(key: PresentationKey) {
+    return `${key.kind}:${key.id}`
+  }
+
+  function retireLive(key: PresentationKey, token: object) {
+    const liveKey = namespacedKey(key)
+    const entries = livePresentations.get(liveKey)
+    if (!entries) return
+    const survivors = entries.filter((entry) => entry.token !== token)
+    if (survivors.length > 0) livePresentations.set(liveKey, survivors)
+    else livePresentations.delete(liveKey)
+  }
+
+  function dismissLive(
+    key: PresentationKey,
+    matches: (entry: LivePresentation) => boolean = () => true,
+  ) {
+    const liveKey = namespacedKey(key)
+    const entries = livePresentations.get(liveKey)
+    if (!entries) return
+    const dismissed = entries.filter(matches)
+    const survivors = entries.filter((entry) => !matches(entry))
+    if (survivors.length > 0) livePresentations.set(liveKey, survivors)
+    else livePresentations.delete(liveKey)
+    for (const entry of dismissed) entry.dismiss()
   }
 
   function representative(events: PendingPresentation<T>['events']): T {
@@ -449,7 +487,33 @@ export function createPresentationScheduler<T extends PresentationEvent>(
     pending.delete(key.id)
     const event = representative(entry.events)
     const output = options.evaluate(event)
-    if (output.showPopup || output.playSound || output.vibrate) options.fire(event, output)
+    if (output.showPopup || output.playSound || output.vibrate) {
+      const token = {}
+      let retired = false
+      const retire = () => {
+        if (retired) return
+        retired = true
+        retireLive(key, token)
+      }
+      if (key.kind === 'notif' && output.showPopup) dismissLive(key)
+      const dismiss = options.fire(event, output, retire)
+      if (dismiss && !retired) {
+        let dismissed = false
+        const live: LivePresentation = {
+          token,
+          representativeSeq: event.eventSeq,
+          dismiss: () => {
+            if (dismissed) return
+            dismissed = true
+            dismiss()
+          },
+        }
+        const liveKey = namespacedKey(key)
+        const entries = livePresentations.get(liveKey) ?? []
+        entries.push(live)
+        livePresentations.set(liveKey, entries)
+      }
+    }
   }
 
   function enqueue(event: T, initialOutput = options.evaluate(event)): boolean {
@@ -472,6 +536,7 @@ export function createPresentationScheduler<T extends PresentationEvent>(
   }
 
   function cancelPane(paneId: string, throughEventSeq?: string | bigint) {
+    const key: PresentationKey = { kind: 'pane', id: paneId }
     const cancelAllForPane = throughEventSeq === undefined
     if (throughEventSeq !== undefined) {
       const watermark = BigInt(throughEventSeq)
@@ -479,24 +544,28 @@ export function createPresentationScheduler<T extends PresentationEvent>(
       if (current === undefined || watermark > current) readWatermarks.set(paneId, watermark)
     }
     const entry = pendingPanes.get(paneId)
-    if (!entry) return
-    clearTimer(entry.timer)
-    const watermark = readWatermarks.get(paneId)
-    const survivors = cancelAllForPane || watermark === undefined
-      ? []
-      : entry.events.filter(({ event }) => !event.eventSeq || BigInt(event.eventSeq) > watermark)
-    pendingPanes.delete(paneId)
-    if (survivors.length > 0) {
-      const key: PresentationKey = { kind: 'pane', id: paneId }
-      const timer = setTimer(() => flush(key), Math.max(0, options.getWindowMs()))
-      pendingPanes.set(paneId, { events: survivors, timer })
+    if (entry) {
+      clearTimer(entry.timer)
+      const watermark = readWatermarks.get(paneId)
+      const survivors = cancelAllForPane || watermark === undefined
+        ? []
+        : entry.events.filter(({ event }) => !event.eventSeq || BigInt(event.eventSeq) > watermark)
+      pendingPanes.delete(paneId)
+      if (survivors.length > 0) {
+        const timer = setTimer(() => flush(key), Math.max(0, options.getWindowMs()))
+        pendingPanes.set(paneId, { events: survivors, timer })
+      }
     }
+    dismissLive(key, (live) => cancelAllForPane
+      || !live.representativeSeq
+      || BigInt(live.representativeSeq) <= BigInt(throughEventSeq!))
   }
 
   function removePane(paneId: string) {
     const entry = pendingPanes.get(paneId)
     if (entry) clearTimer(entry.timer)
     pendingPanes.delete(paneId)
+    dismissLive({ kind: 'pane', id: paneId })
     readWatermarks.delete(paneId)
   }
 
@@ -504,16 +573,27 @@ export function createPresentationScheduler<T extends PresentationEvent>(
     const entry = pendingNotifs.get(notifId)
     if (entry) clearTimer(entry.timer)
     pendingNotifs.delete(notifId)
+    dismissLive({ kind: 'notif', id: notifId })
   }
 
   function cancelAllNotifs() {
     for (const entry of pendingNotifs.values()) clearTimer(entry.timer)
     pendingNotifs.clear()
+    for (const [key, entries] of livePresentations) {
+      if (!key.startsWith('notif:')) continue
+      livePresentations.delete(key)
+      for (const live of entries) live.dismiss()
+    }
   }
 
   function cancelAllPanes() {
     for (const entry of pendingPanes.values()) clearTimer(entry.timer)
     pendingPanes.clear()
+    for (const [key, entries] of livePresentations) {
+      if (!key.startsWith('pane:')) continue
+      livePresentations.delete(key)
+      for (const live of entries) live.dismiss()
+    }
   }
 
   function dispose() {
@@ -521,6 +601,10 @@ export function createPresentationScheduler<T extends PresentationEvent>(
     for (const entry of pendingNotifs.values()) clearTimer(entry.timer)
     pendingPanes.clear()
     pendingNotifs.clear()
+    for (const entries of livePresentations.values()) {
+      for (const live of entries) live.dismiss()
+    }
+    livePresentations.clear()
     readWatermarks.clear()
   }
 
