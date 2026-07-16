@@ -237,6 +237,19 @@ export class TerminalInstance {
   private _composing = false
   private _writeQueue: string[] = []
   private _writing = false
+  // DEC mode 2026 transaction buffer. While _syncActive is true, server-side
+  // Output is held here instead of entering the write pump; on sync_end the
+  // joined buffer is enqueued as a single write so xterm sees a coherent
+  // stream and doesn't repaint per 32 KiB / per rAF chunk mid-redraw. The
+  // server's 256 KiB SYNC_BUFFER_LIMIT can force-flush mid-transaction, so
+  // _syncTransactionBuffer can grow unbounded across multiple flushes — bound
+  // it locally to avoid pathological memory growth if an app emits a huge
+  // sync burst and never sends DECRST (the server watchdog should also fire,
+  // but defense-in-depth on the client is cheap).
+  private _syncActive = false
+  private _syncTransactionBuffer: string[] = []
+  private _syncTransactionBytes = 0
+  private static readonly MAX_SYNC_TRANSACTION_BYTES = 8 * 1024 * 1024
   // Watchdog for silent xterm.write() callback loss. xterm.js can drop the
   // write callback without throwing (observed when resize interleaves with a
   // pending write under high output), which strands _writing=true forever.
@@ -803,6 +816,7 @@ export class TerminalInstance {
     this._textUnsub?.()
     this._writeQueue = []
     this._writing = false
+    this._resetSyncTransaction()
     if (this._writeWatchdog) {
       clearTimeout(this._writeWatchdog)
       this._writeWatchdog = null
@@ -841,7 +855,11 @@ export class TerminalInstance {
     this._transport.onMessage((msg) => {
       if (this._destroyed || !this.xterm) return
       if (msg.type === 'output') {
-        this._enqueueWrite(msg.data)
+        if (this._syncActive) {
+          this._appendToSyncTransaction(msg.data)
+        } else {
+          this._enqueueWrite(msg.data)
+        }
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this._shellType = msg.shell_type
@@ -852,6 +870,10 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._writeQueue = []
         this._writing = false
+        // Reset sync transaction: the server's sync_active state is not
+        // replayed across reconnect — any in-flight SyncBegin is lost.
+        // Without this, a post-reconnect SyncEnd would flush a stale buffer.
+        this._resetSyncTransaction()
         if (this._writeWatchdog) {
           clearTimeout(this._writeWatchdog)
           this._writeWatchdog = null
@@ -860,9 +882,22 @@ export class TerminalInstance {
         this._doFitAndResize(true)
         this._scheduleSettleResize()
       } else if (msg.type === 'resize') {
+        // Server breaks sync mode before broadcasting Resize (see
+        // apply_and_broadcast_resize), so SyncEnd lands before Resize in the
+        // FIFO channel. If a Resize arrives while _syncActive is somehow
+        // still true (race), flush first so buffered bytes land before the
+        // resize changes xterm geometry.
+        if (this._syncActive) {
+          this._flushSyncTransaction()
+          this._syncActive = false
+        }
         this._followPeerResize(msg.cols, msg.rows)
       } else if (msg.type === 'session_exit') {
         this._handleSessionExit()
+      } else if (msg.type === 'sync_begin') {
+        this._handleSyncBegin()
+      } else if (msg.type === 'sync_end') {
+        this._handleSyncEnd()
       }
     })
 
@@ -915,6 +950,9 @@ export class TerminalInstance {
         // full page reload.
         this._writeQueue = []
         this._writing = false
+        // Reset sync transaction: server's sync_active state is not replayed
+        // across reconnect — any in-flight SyncBegin is lost.
+        this._resetSyncTransaction()
         if (this._writeWatchdog) {
           clearTimeout(this._writeWatchdog)
           this._writeWatchdog = null
@@ -923,15 +961,31 @@ export class TerminalInstance {
         this._doFitAndResize(true)
         this._scheduleSettleResize()
       } else if (msg.type === 'output') {
-        this._enqueueWrite(msg.data)
+        if (this._syncActive) {
+          this._appendToSyncTransaction(msg.data)
+        } else {
+          this._enqueueWrite(msg.data)
+        }
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this._shellType = msg.shell_type
         this.onShellInfo?.(msg.shell_type)
       } else if (msg.type === 'resize') {
+        // Server breaks sync mode before broadcasting Resize (see
+        // apply_and_broadcast_resize), so SyncEnd lands before Resize. Flush
+        // any residual transaction first to keep buffered bytes ahead of the
+        // resize geometry change.
+        if (this._syncActive) {
+          this._flushSyncTransaction()
+          this._syncActive = false
+        }
         this._followPeerResize(msg.cols, msg.rows)
       } else if (msg.type === 'session_exit') {
         this._handleSessionExit()
+      } else if (msg.type === 'sync_begin') {
+        this._handleSyncBegin()
+      } else if (msg.type === 'sync_end') {
+        this._handleSyncEnd()
       }
     }
 
@@ -977,6 +1031,63 @@ export class TerminalInstance {
       totalBytes -= dropped.length
     }
     if (!this._writing) this._processWriteQueue()
+  }
+
+  // ── DEC mode 2026 transaction handling ───────────────────────
+  //
+  // Server enqueues SyncBegin → buffered Output (during sync_active) → SyncEnd
+  // → post-sync live Output, in that FIFO order per client. Frontend diverts
+  // Output into _syncTransactionBuffer between SyncBegin and SyncEnd, then
+  // writes the merged buffer to xterm as a single enqueueWrite on SyncEnd.
+  // This collapses the per-chunk rAF repaints that xterm would otherwise do
+  // for each 32 KiB / 64 KiB flush chunk mid-redraw.
+
+  private _handleSyncBegin() {
+    // If a prior transaction was left open (missed SyncEnd — should be rare
+    // since the server watchdog forces closure), flush it first to preserve
+    // output ordering before starting a new one.
+    if (this._syncActive) {
+      this._flushSyncTransaction()
+    }
+    this._syncActive = true
+    this._syncTransactionBuffer = []
+    this._syncTransactionBytes = 0
+  }
+
+  private _handleSyncEnd() {
+    if (!this._syncActive) {
+      // Stray SyncEnd without matching SyncBegin (e.g. arrived after a
+      // reconnect that reset state). Ignore — no buffer to flush.
+      return
+    }
+    this._flushSyncTransaction()
+    this._syncActive = false
+  }
+
+  private _appendToSyncTransaction(data: string) {
+    this._syncTransactionBuffer.push(data)
+    this._syncTransactionBytes += data.length
+    if (this._syncTransactionBytes >= TerminalInstance.MAX_SYNC_TRANSACTION_BYTES) {
+      // Pathological burst (app emitted >8 MiB inside one sync transaction
+      // without DECRST, or server watchdog force-flushed raw). Bound memory
+      // by flushing early; _syncActive stays true so subsequent Output still
+      // diverts into a fresh buffer until SyncEnd arrives.
+      this._flushSyncTransaction()
+    }
+  }
+
+  private _flushSyncTransaction() {
+    if (this._syncTransactionBuffer.length === 0) return
+    const merged = this._syncTransactionBuffer.join('')
+    this._syncTransactionBuffer = []
+    this._syncTransactionBytes = 0
+    this._enqueueWrite(merged)
+  }
+
+  private _resetSyncTransaction() {
+    this._syncActive = false
+    this._syncTransactionBuffer = []
+    this._syncTransactionBytes = 0
   }
 
   private _processWriteQueue() {

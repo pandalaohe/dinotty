@@ -83,10 +83,20 @@ pub struct PendingCommandResult {
     pub method: String,
 }
 
+#[derive(Clone)]
 pub enum SessionClientEvent {
     Output(String),
     Resize { cols: u16, rows: u16 },
     SessionExit { pane_id: String },
+    /// DEC mode 2026 transaction boundary. SyncBegin is enqueued BEFORE any
+    /// subsequent Output (which goes to the sync_buffer while sync_active is
+    /// true); SyncEnd is enqueued AFTER flush_sync_buffer drains the buffer,
+    /// so the on-wire order is [buffered Output chunks] → SyncEnd → [post-sync
+    /// live Output]. Frontend uses these to divert Output into a transaction
+    /// buffer and write it to xterm as a single batch, eliminating per-chunk
+    /// intermediate rAF repaints during a synchronized redraw.
+    SyncBegin,
+    SyncEnd,
 }
 
 pub struct ClientEndpoint {
@@ -465,11 +475,35 @@ impl Session {
     }
 
     /// Enable or disable synchronized output mode (DEC mode 2026).
-    /// When disabling, flushes the buffered output.
+    /// When enabling: mark sync_active first (so subsequent broadcast() calls
+    /// divert Output to sync_buffer instead of going direct), then enqueue
+    /// SyncBegin to clients — it lands in the per-client mpsc channel before
+    /// any buffered Output could be flushed.
+    /// When disabling: flush sync_buffer (buffered chunks land in client
+    /// channels), enqueue SyncEnd, THEN clear sync_active so the broadcast
+    /// task resumes direct sends. The on-wire order per client is therefore
+    /// [buffered Output] → SyncEnd → [post-sync live Output].
     pub fn set_sync_mode(&self, active: bool) {
-        self.sync_active.store(active, Ordering::Relaxed);
-        if !active {
+        if active {
+            self.sync_active.store(true, Ordering::Relaxed);
+            self.enqueue_control(SessionClientEvent::SyncBegin);
+        } else {
             self.flush_sync_buffer();
+            self.enqueue_control(SessionClientEvent::SyncEnd);
+            self.sync_active.store(false, Ordering::Relaxed);
+        }
+    }
+
+    /// Enqueue a control event (SyncBegin/SyncEnd) to all connected clients.
+    /// Channel-full events are dropped (not the client), matching
+    /// send_chunk_to_clients' policy. Closed channels are pruned.
+    fn enqueue_control(&self, event: SessionClientEvent) {
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        clients.retain(|client| !client.tx.is_closed());
+        for client in clients.iter() {
+            if client.tx.try_send(event.clone()).is_err() {
+                tracing::debug!("broadcast: client channel full, dropping control event");
+            }
         }
     }
 

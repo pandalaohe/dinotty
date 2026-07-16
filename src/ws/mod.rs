@@ -85,6 +85,12 @@ pub enum ServerMsg<'a> {
         cols: u16,
         rows: u16,
     },
+    /// DEC mode 2026 transaction boundary. SyncBegin precedes buffered Output
+    /// accumulated during synchronized output mode; SyncEnd follows the
+    /// flushed Output. Frontend uses these to batch the buffered Output into
+    /// a single xterm write, reducing intermediate rAF repaints.
+    SyncBegin,
+    SyncEnd,
     SessionExit,
     /// SSH keyboard-interactive 认证提示
     SshAuthPrompt {
@@ -561,6 +567,8 @@ async fn handle_socket(
                     SessionClientEvent::SessionExit { pane_id: _ } => {
                         serde_json::to_string(&ServerMsg::SessionExit)
                     }
+                    SessionClientEvent::SyncBegin => serde_json::to_string(&ServerMsg::SyncBegin),
+                    SessionClientEvent::SyncEnd => serde_json::to_string(&ServerMsg::SyncEnd),
                 }
                 .expect("serialization is infallible");
                 if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
@@ -712,6 +720,8 @@ async fn handle_socket(
                 SessionClientEvent::SessionExit { pane_id: _ } => {
                     serde_json::to_string(&ServerMsg::SessionExit)
                 }
+                SessionClientEvent::SyncBegin => serde_json::to_string(&ServerMsg::SyncBegin),
+                SessionClientEvent::SyncEnd => serde_json::to_string(&ServerMsg::SyncEnd),
             }
             .expect("serialization is infallible");
             if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
@@ -990,6 +1000,8 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
                 SessionClientEvent::SessionExit { pane_id: _ } => {
                     serde_json::to_string(&ServerMsg::SessionExit)
                 }
+                SessionClientEvent::SyncBegin => serde_json::to_string(&ServerMsg::SyncBegin),
+                SessionClientEvent::SyncEnd => serde_json::to_string(&ServerMsg::SyncEnd),
             }
             .expect("serialization is infallible");
             if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {

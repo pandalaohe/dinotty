@@ -38,7 +38,27 @@ export interface SessionExitMsg {
   pane_id: string
 }
 
-export type ServerMsg = OutputMsg | ShellInfoMsg | ReconnectedMsg | ResizeServerMsg | SessionExitMsg
+/// DEC mode 2026 transaction boundary. SyncBegin precedes buffered Output
+/// accumulated during synchronized output mode; SyncEnd follows the flushed
+/// Output. Frontend diverts Output into a transaction buffer between
+/// SyncBegin and SyncEnd, then writes the merged buffer to xterm as a single
+/// batch — eliminating per-chunk rAF repaints during a synchronized redraw.
+export interface SyncBeginMsg {
+  type: 'sync_begin'
+}
+
+export interface SyncEndMsg {
+  type: 'sync_end'
+}
+
+export type ServerMsg =
+  | OutputMsg
+  | ShellInfoMsg
+  | ReconnectedMsg
+  | ResizeServerMsg
+  | SessionExitMsg
+  | SyncBeginMsg
+  | SyncEndMsg
 
 // Sync WS messages
 export interface SyncTabList {

@@ -37,6 +37,14 @@ struct PtyExit {
     pane_id: String,
 }
 
+/// DEC mode 2026 transaction boundary marker. `active: true` = SyncBegin,
+/// `active: false` = SyncEnd. Emitted to the frontend as `pty-sync` event.
+#[derive(Clone, Serialize)]
+struct PtySyncControl {
+    pane_id: String,
+    active: bool,
+}
+
 fn spawn_tauri_output_forwarder(
     app: AppHandle,
     pane_id: String,
@@ -59,7 +67,9 @@ fn spawn_tauri_output_forwarder(
                             Ok(SessionClientEvent::Output(data)) => batch.push_str(&data),
                             Ok(
                                 event @ (SessionClientEvent::Resize { .. }
-                                | SessionClientEvent::SessionExit { .. }),
+                                | SessionClientEvent::SessionExit { .. }
+                                | SessionClientEvent::SyncBegin
+                                | SessionClientEvent::SyncEnd),
                             ) => {
                                 pending = Some(event);
                                 break;
@@ -85,6 +95,18 @@ fn spawn_tauri_output_forwarder(
                 SessionClientEvent::SessionExit { pane_id: exit_pane_id } => {
                     let _ = app.emit("pty-exit", PtyExit { pane_id: exit_pane_id });
                     break;
+                }
+                SessionClientEvent::SyncBegin => {
+                    let _ = app.emit(
+                        "pty-sync",
+                        PtySyncControl { pane_id: pane_id.clone(), active: true },
+                    );
+                }
+                SessionClientEvent::SyncEnd => {
+                    let _ = app.emit(
+                        "pty-sync",
+                        PtySyncControl { pane_id: pane_id.clone(), active: false },
+                    );
                 }
             }
         }

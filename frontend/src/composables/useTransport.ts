@@ -155,6 +155,13 @@ export class TauriIpcTransport implements Transport {
         }
       })
     )
+    this._unlistenFns.push(
+      await listen('pty-sync', (e: any) => {
+        if (e.payload.pane_id === this.paneId) {
+          this._messageHandler?.({ type: e.payload.active ? 'sync_begin' : 'sync_end' })
+        }
+      })
+    )
 
     try {
       const shellType: string = (await this._invoke('pty_spawn')) as string
