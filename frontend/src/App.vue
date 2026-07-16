@@ -322,6 +322,7 @@ import { useSessionStore } from './stores/sessionStore'
 import { useUiStore } from './stores/uiStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { shellEscapePath } from './utils/shell'
+import { buildRunCodeCommand } from './utils/runCodeCommand'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
@@ -1247,6 +1248,30 @@ function onTerminalInsertText(e: Event) {
   if (send) send(text)
 }
 
+function onTerminalRunCode(e: Event) {
+  // 步骤1：读取文件路径和当前活动终端。
+  const path = (e as CustomEvent<{ path: string }>).detail?.path
+  if (!path || !activePaneId.value) return
+
+  let activeTerminalTab: TerminalTab | null = null
+  for (let tabIndex = 0; tabIndex < tabs.value.length; tabIndex += 1) {
+    const candidateTab = tabs.value[tabIndex]
+    if (candidateTab.paneId === activePaneId.value && candidateTab.type === 'terminal') {
+      activeTerminalTab = candidateTab
+      break
+    }
+  }
+  if (!activeTerminalTab) return
+
+  const activeLeaf = findLeaf(activeTerminalTab.layout, activeTerminalTab.activePaneId)
+  const send = getSendFn()
+  if (!activeLeaf || !send) return
+
+  // 步骤2：按活动 shell 生成命令，并发送回车立即执行。
+  const command = buildRunCodeCommand(path, activeLeaf.shell_type ?? '')
+  if (command) send(`${command}\r`)
+}
+
 function onLinkActivate() {
   linkJustActivated = true
 }
@@ -1857,6 +1882,7 @@ onMounted(async () => {
   window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
   window.addEventListener('terminal-insert-text', onTerminalInsertText)
+  window.addEventListener('terminal-run-code', onTerminalRunCode)
   if (window.visualViewport) {
     naturalVH = window.visualViewport.height
     window.visualViewport.addEventListener('resize', onViewportResize)
@@ -1981,6 +2007,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onOrientationChange)
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
   window.removeEventListener('terminal-insert-text', onTerminalInsertText)
+  window.removeEventListener('terminal-run-code', onTerminalRunCode)
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', onViewportResize)
   }
