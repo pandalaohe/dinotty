@@ -222,7 +222,6 @@ export class TerminalInstance {
   private _refitRaf: number = 0
   private _lastCols = 0
   private _lastRows = 0
-  private _resizeDebounce: number = 0
   private _lastInputData = ''
   private _lastInputTime = 0
   private _wheelBypass = false
@@ -815,7 +814,6 @@ export class TerminalInstance {
     this._peerFollowGen++
     this._followingPeer = false
     if (this._refitRaf) cancelAnimationFrame(this._refitRaf)
-    if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
     if (this._wheelUpResetTimer) {
       clearTimeout(this._wheelUpResetTimer)
       this._wheelUpResetTimer = null
@@ -1094,6 +1092,13 @@ export class TerminalInstance {
 
   private _handleSyncEnd() {
     this._endTransaction()
+    // The transaction guard in _doFitAndResize/_settleRefit suppressed
+    // fitting while sync was active. Re-arm the ladder so any wrapper
+    // size change during the sync is applied now that the buffered bytes
+    // have landed.
+    if (this._transactionDepth === 0) {
+      this._scheduleSettleResize()
+    }
   }
 
   private _handleReplayBegin(cols: number, rows: number) {
@@ -1130,6 +1135,9 @@ export class TerminalInstance {
     // next settle-ladder tick will reclaim the PTY size if our wrapper has
     // drifted from the snapshot's cols/rows.
     this._snapshotPending = false
+    // Re-arm the ladder: the transaction guard suppressed fitting during
+    // the replay, so any wrapper change during it is now applied.
+    this._scheduleSettleResize()
   }
 
   private _beginTransaction() {
@@ -1431,10 +1439,6 @@ export class TerminalInstance {
       cancelAnimationFrame(this._refitRaf)
       this._refitRaf = 0
     }
-    if (this._resizeDebounce) {
-      clearTimeout(this._resizeDebounce)
-      this._resizeDebounce = 0
-    }
     for (const h of this._settleTimeouts) clearTimeout(h)
     this._settleTimeouts = []
     if (this._settleRaf) {
@@ -1486,6 +1490,10 @@ export class TerminalInstance {
       return null
     }
     if (this._destroyed || !this.fitAddon || !this.xterm || !this._wrapper) return null
+    // Skip settling during a sync/replay transaction — buffered Output is
+    // encoded at the current xterm geometry and a mid-transaction fit would
+    // shift geometry under it. sync_end / replay_end re-arms the ladder.
+    if (this._transactionDepth > 0) return null
     const rect = this._wrapper.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) {
       // Flex chain collapsed (cold reload, hidden tab, mobile keyboard).
@@ -1512,10 +1520,6 @@ export class TerminalInstance {
       this._writePinnedToBottom = true
     }
     if (cols !== this._lastSentCols || rows !== this._lastSentRows) {
-      if (this._resizeDebounce) {
-        clearTimeout(this._resizeDebounce)
-        this._resizeDebounce = 0
-      }
       this._sendResize(cols, rows)
     }
     return { cols, rows }
@@ -1575,6 +1579,12 @@ export class TerminalInstance {
       return
     }
     if (!this.fitAddon || !this.xterm || !this._wrapper) return
+    // Skip fitting during a sync/replay transaction: the buffered Output
+    // was encoded at the current xterm geometry, and a mid-transaction fit
+    // would change geometry out from under it. sync_end / replay_end will
+    // re-arm the settle-ladder so the wrapper's post-transaction size is
+    // applied as soon as the transaction closes.
+    if (this._transactionDepth > 0) return
     const rect = this._wrapper.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) {
       this._scheduleZeroSizeRetry()
@@ -1601,11 +1611,11 @@ export class TerminalInstance {
     if (force) {
       this._sendResize(cols, rows)
     } else {
-      if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
-      this._resizeDebounce = window.setTimeout(() => {
-        this._resizeDebounce = 0
-        this._sendResize(cols, rows)
-      }, 25)
+      // No frontend debounce: rAF coalesces frame-rate (in _refit), the
+      // _lastSentCols/Rows dedup guards no-op frames, and the server's 25ms
+      // debounce is the single wire-rate throttle. Stacking a frontend
+      // debounce on top added latency without further compression.
+      this._sendResize(cols, rows)
     }
     // If we owe the server a snapshot_request (Reconnected arrived while the
     // wrapper was 0×0), fire it now that the wrapper has recovered. Idempotent
