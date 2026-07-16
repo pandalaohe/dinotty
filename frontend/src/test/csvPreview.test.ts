@@ -162,6 +162,63 @@ describe('CsvPreview', function csvPreviewComponentSuite() {
     expect(wrapper.find('thead').text()).toContain('status')
   })
 
+  it('can hide every data column and restore all columns', async function hidesEveryColumn() {
+    // 步骤1：打开列选择弹窗并使用“全不选”。
+    const wrapper = mount(CsvPreview, {
+      props: {
+        content: 'name,city,status\nAlice,Shanghai,active',
+        filePath: 'people.csv',
+        truncated: false,
+      },
+    })
+    await wrapper.get('[data-testid="csv-columns-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="csv-columns-select-none"]').trigger('click')
+    await wrapper.get('[data-testid="csv-columns-confirm"]').trigger('click')
+
+    // 步骤2：确认后仅保留行号表头和行号单元格。
+    expect(wrapper.findAll('thead th')).toHaveLength(1)
+    expect(wrapper.findAll('tbody td')).toHaveLength(0)
+    expect(wrapper.findAll('tbody th')).toHaveLength(1)
+
+    // 步骤3：重新全选并确认后恢复全部数据列。
+    await wrapper.get('[data-testid="csv-columns-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="csv-columns-select-all"]').trigger('click')
+    await wrapper.get('[data-testid="csv-columns-confirm"]').trigger('click')
+    expect(wrapper.findAll('thead th')).toHaveLength(4)
+    expect(wrapper.findAll('tbody td')).toHaveLength(3)
+  })
+
+  it('filters rows with numeric and date comparisons', async function filtersNumbersAndDates() {
+    // 步骤1：打开包含数值列和日期列的 CSV 表格筛选面板。
+    const wrapper = mount(CsvPreview, {
+      props: {
+        content: 'name,amount,date\nAlice,10,2025-01-10\nBob,25.5,2025-02-15\nCarol,100,2025-03-20',
+        filePath: 'payments.csv',
+        truncated: false,
+      },
+    })
+    await wrapper.get('[data-testid="csv-filter-toggle"]').trigger('click')
+
+    // 步骤2：设置“金额大于 20”，并确认输入框使用数值类型。
+    await wrapper.get('[data-testid="csv-filter-column-0"]').setValue('1')
+    await wrapper.get('[data-testid="csv-filter-operator-0"]').setValue('numberGreaterThan')
+    expect(wrapper.get('[data-testid="csv-filter-value-0"]').attributes('type')).toBe('number')
+    await wrapper.get('[data-testid="csv-filter-value-0"]').setValue('20')
+
+    // 步骤3：添加“日期早于 2025-03-01”，并确认输入框使用日期类型。
+    await wrapper.get('[data-testid="csv-filter-add"]').trigger('click')
+    await wrapper.get('[data-testid="csv-filter-column-1"]').setValue('2')
+    await wrapper.get('[data-testid="csv-filter-operator-1"]').setValue('dateBefore')
+    expect(wrapper.get('[data-testid="csv-filter-value-1"]').attributes('type')).toBe('date')
+    await wrapper.get('[data-testid="csv-filter-value-1"]').setValue('2025-03-01')
+
+    // 步骤4：AND 组合只保留同时满足两个条件的 Bob。
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.find('tbody').text()).toContain('Bob')
+    expect(wrapper.find('tbody').text()).not.toContain('Alice')
+    expect(wrapper.find('tbody').text()).not.toContain('Carol')
+  })
+
   it('emits a source request from the toolbar', async function emitsSourceRequest() {
     // 步骤1：挂载最小 CSV 内容。
     const wrapper = mount(CsvPreview, {

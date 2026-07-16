@@ -196,6 +196,30 @@
               <option value="endsWith">{{ t('csvPreview.endsWith') }}</option>
               <option value="isEmpty">{{ t('csvPreview.isEmpty') }}</option>
               <option value="isNotEmpty">{{ t('csvPreview.isNotEmpty') }}</option>
+              <optgroup :label="t('csvPreview.numberOperators')">
+                <option value="numberEquals">{{ t('csvPreview.numberEquals') }}</option>
+                <option value="numberGreaterThan">
+                  {{ t('csvPreview.numberGreaterThan') }}
+                </option>
+                <option value="numberGreaterThanOrEqual">
+                  {{ t('csvPreview.numberGreaterThanOrEqual') }}
+                </option>
+                <option value="numberLessThan">{{ t('csvPreview.numberLessThan') }}</option>
+                <option value="numberLessThanOrEqual">
+                  {{ t('csvPreview.numberLessThanOrEqual') }}
+                </option>
+              </optgroup>
+              <optgroup :label="t('csvPreview.dateOperators')">
+                <option value="dateEquals">{{ t('csvPreview.dateEquals') }}</option>
+                <option value="dateBefore">{{ t('csvPreview.dateBefore') }}</option>
+                <option value="dateBeforeOrEqual">
+                  {{ t('csvPreview.dateBeforeOrEqual') }}
+                </option>
+                <option value="dateAfter">{{ t('csvPreview.dateAfter') }}</option>
+                <option value="dateAfterOrEqual">
+                  {{ t('csvPreview.dateAfterOrEqual') }}
+                </option>
+              </optgroup>
             </select>
           </label>
 
@@ -204,7 +228,8 @@
             <input
               v-model="condition.value"
               :data-testid="`csv-filter-value-${conditionIndex}`"
-              type="text"
+              :type="conditionInputType(condition)"
+              :step="conditionInputType(condition) === 'number' ? 'any' : undefined"
               :placeholder="t('csvPreview.filterValue')"
               @input="resetPage"
             />
@@ -271,6 +296,15 @@
           >
             {{ t('csvPreview.showAllColumns') }}
           </button>
+          <button
+            type="button"
+            class="csv-preview-text-button"
+            data-testid="csv-columns-select-none"
+            :disabled="draftVisibleColumnIndexes.length === 0"
+            @click="selectNoDraftColumns"
+          >
+            {{ t('csvPreview.hideAllColumns') }}
+          </button>
         </div>
 
         <div class="csv-preview-dialog-column-list">
@@ -298,7 +332,6 @@
             type="button"
             class="csv-preview-primary-button"
             data-testid="csv-columns-confirm"
-            :disabled="draftVisibleColumnIndexes.length === 0"
             @click="confirmColumnDialog"
           >
             {{ t('csvPreview.confirm') }}
@@ -421,6 +454,16 @@ type CsvFilterOperator =
   | 'endsWith'
   | 'isEmpty'
   | 'isNotEmpty'
+  | 'numberEquals'
+  | 'numberGreaterThan'
+  | 'numberGreaterThanOrEqual'
+  | 'numberLessThan'
+  | 'numberLessThanOrEqual'
+  | 'dateEquals'
+  | 'dateBefore'
+  | 'dateBeforeOrEqual'
+  | 'dateAfter'
+  | 'dateAfterOrEqual'
 
 type CsvFilterLogicMode = 'and' | 'or'
 
@@ -594,6 +637,17 @@ function conditionNeedsValue(condition: CsvFilterCondition): boolean {
   return condition.operator !== 'isEmpty' && condition.operator !== 'isNotEmpty'
 }
 
+function conditionInputType(condition: CsvFilterCondition): 'text' | 'number' | 'date' {
+  // 步骤1：数值运算符使用浏览器的数字输入控件。
+  if (condition.operator.startsWith('number')) return 'number'
+
+  // 步骤2：日期运算符使用浏览器的日期输入控件。
+  if (condition.operator.startsWith('date')) return 'date'
+
+  // 步骤3：其他运算符继续使用普通文本输入框。
+  return 'text'
+}
+
 function conditionIsComplete(condition: CsvFilterCondition): boolean {
   // 步骤1：无需输入值的条件在选中后立即完整。
   if (!conditionNeedsValue(condition)) return true
@@ -602,12 +656,98 @@ function conditionIsComplete(condition: CsvFilterCondition): boolean {
   return condition.value.trim() !== ''
 }
 
+function parseNumber(value: string): number | null {
+  // 步骤1：空文本不作为有效数值。
+  const trimmedValue = value.trim()
+  if (trimmedValue === '') return null
+
+  // 步骤2：只接受 JavaScript 能完整转换的有限数值。
+  const parsedValue = Number(trimmedValue)
+  if (!Number.isFinite(parsedValue)) return null
+  return parsedValue
+}
+
+function parseDate(value: string): number | null {
+  // 步骤1：优先读取单元格开头的标准年月日。
+  const trimmedValue = value.trim()
+  const standardDateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmedValue)
+  if (standardDateMatch) {
+    const year = Number(standardDateMatch[1])
+    const monthIndex = Number(standardDateMatch[2]) - 1
+    const day = Number(standardDateMatch[3])
+    const timestamp = Date.UTC(year, monthIndex, day)
+    const parsedDate = new Date(timestamp)
+    const dateIsValid =
+      parsedDate.getUTCFullYear() === year &&
+      parsedDate.getUTCMonth() === monthIndex &&
+      parsedDate.getUTCDate() === day
+    if (!dateIsValid) return null
+    return timestamp
+  }
+
+  // 步骤2：其他常见日期格式交给浏览器解析，再统一到 UTC 日历日。
+  const parsedTimestamp = Date.parse(trimmedValue)
+  if (!Number.isFinite(parsedTimestamp)) return null
+  const parsedDate = new Date(parsedTimestamp)
+  return Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate())
+}
+
+function numberMatchesCondition(cellValue: string, condition: CsvFilterCondition): boolean {
+  // 步骤1：任一侧不是有效数值时不匹配。
+  const cellNumber = parseNumber(cellValue)
+  const filterNumber = parseNumber(condition.value)
+  if (cellNumber === null || filterNumber === null) return false
+
+  // 步骤2：按当前数值运算符比较。
+  switch (condition.operator) {
+    case 'numberGreaterThan':
+      return cellNumber > filterNumber
+    case 'numberGreaterThanOrEqual':
+      return cellNumber >= filterNumber
+    case 'numberLessThan':
+      return cellNumber < filterNumber
+    case 'numberLessThanOrEqual':
+      return cellNumber <= filterNumber
+    default:
+      return cellNumber === filterNumber
+  }
+}
+
+function dateMatchesCondition(cellValue: string, condition: CsvFilterCondition): boolean {
+  // 步骤1：任一侧不是有效日期时不匹配。
+  const cellDate = parseDate(cellValue)
+  const filterDate = parseDate(condition.value)
+  if (cellDate === null || filterDate === null) return false
+
+  // 步骤2：按当前日期运算符比较日历日。
+  switch (condition.operator) {
+    case 'dateBefore':
+      return cellDate < filterDate
+    case 'dateBeforeOrEqual':
+      return cellDate <= filterDate
+    case 'dateAfter':
+      return cellDate > filterDate
+    case 'dateAfterOrEqual':
+      return cellDate >= filterDate
+    default:
+      return cellDate === filterDate
+  }
+}
+
 function cellMatchesCondition(cellValue: string, condition: CsvFilterCondition): boolean {
-  // 步骤1：统一使用不区分大小写的文本进行匹配。
+  // 步骤1：数值和日期条件分别使用对应类型进行比较。
+  if (condition.operator.startsWith('number')) {
+    return numberMatchesCondition(cellValue, condition)
+  }
+  if (condition.operator.startsWith('date')) {
+    return dateMatchesCondition(cellValue, condition)
+  }
+
+  // 步骤2：文本条件统一使用不区分大小写的内容进行匹配。
   const normalizedCellValue = cellValue.toLocaleLowerCase()
   const normalizedFilterValue = condition.value.trim().toLocaleLowerCase()
 
-  // 步骤2：按当前匹配方式判断单元格。
+  // 步骤3：按当前文本匹配方式判断单元格。
   switch (condition.operator) {
     case 'equals':
       return normalizedCellValue === normalizedFilterValue
@@ -750,6 +890,11 @@ function selectAllDraftColumns(): void {
   draftVisibleColumnIndexes.value = allColumnIndexes
 }
 
+function selectNoDraftColumns(): void {
+  // 步骤1：清空弹窗草稿中的全部可见列。
+  draftVisibleColumnIndexes.value = []
+}
+
 function closeColumnDialog(): void {
   // 步骤1：关闭弹窗并把键盘焦点还给列按钮。
   columnDialogOpen.value = false
@@ -764,10 +909,7 @@ function cancelColumnDialog(): void {
 }
 
 function confirmColumnDialog(): void {
-  // 步骤1：没有选择列时不允许应用。
-  if (draftVisibleColumnIndexes.value.length === 0) return
-
-  // 步骤2：根据草稿生成新的隐藏列列表。
+  // 步骤1：根据草稿生成新的隐藏列列表，空草稿表示隐藏全部数据列。
   const updatedHiddenIndexes: number[] = []
   for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
     if (!draftVisibleColumnIndexes.value.includes(columnIndex)) {
@@ -776,7 +918,7 @@ function confirmColumnDialog(): void {
   }
   hiddenColumnIndexes.value = updatedHiddenIndexes
 
-  // 步骤3：应用后关闭弹窗。
+  // 步骤2：应用后关闭弹窗。
   closeColumnDialog()
 }
 
@@ -1282,6 +1424,7 @@ function emitShowSource(): void {
   display: flex;
   flex-shrink: 0;
   justify-content: flex-end;
+  gap: 7px;
   padding: 7px 12px;
   border-bottom: 1px solid var(--border, #333333);
 }
