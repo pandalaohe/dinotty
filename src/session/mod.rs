@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::Instant,
 };
@@ -995,6 +995,10 @@ pub struct SessionManager {
     pub tab_order: Mutex<Vec<String>>,
     pub event_bus: EventBus,
     notify_port: AtomicU16,
+    /// Set once (via `register_notifier`) so any authoritative pane-removal site — including
+    /// natural PTY/SSH exit, which never goes through `kill_and_remove` — can notify the
+    /// attention ledger without threading a notifier handle through every call site.
+    notifier: OnceLock<Arc<crate::notification::NotificationBroadcast>>,
 }
 
 #[derive(Serialize)]
@@ -1094,6 +1098,16 @@ impl SessionManager {
             pending_ssh_auth: DashMap::new(),
             event_bus: EventBus::new(),
             notify_port: AtomicU16::new(0),
+            notifier: OnceLock::new(),
+        }
+    }
+
+    /// Notifies the attention ledger that `pane_id` was authoritatively removed, if a notifier
+    /// has been registered (via `register_notifier`). No-op otherwise (e.g. in unit tests that
+    /// construct a bare `SessionManager`).
+    pub(crate) fn pane_closed_notify(&self, pane_id: &str) {
+        if let Some(notifier) = self.notifier.get() {
+            notifier.pane_closed(pane_id);
         }
     }
 
@@ -1191,6 +1205,7 @@ impl SessionManager {
             // Drop the input channel sender so the writer task's recv() returns
             // None and the task exits, releasing its Arc<Session>.
             session.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            self.pane_closed_notify(pane_id);
             true
         } else {
             false
@@ -1363,6 +1378,15 @@ impl SessionManager {
         }
     }
 
+    /// Registers the notifier once, so `kill_and_remove` and natural PTY/SSH exit paths can
+    /// notify the attention ledger directly via `pane_closed_notify` without threading a
+    /// notifier handle through every call site. Safe to call before `start_cleanup_task` (the
+    /// two are independent — a bind failure or startup ordering issue must never suppress the
+    /// detached-session reaper).
+    pub fn register_notifier(&self, notifier: Arc<crate::notification::NotificationBroadcast>) {
+        let _ = self.notifier.set(notifier);
+    }
+
     pub fn start_cleanup_task(self: &Arc<Self>) {
         let manager = Arc::clone(self);
         tokio::spawn(async move {
@@ -1400,6 +1424,7 @@ impl SessionManager {
 
                     if should_kill {
                         info!("Cleanup: removing detached session: pane={}", pane_id);
+                        // kill_and_remove now notifies the attention ledger internally.
                         manager.kill_and_remove(&pane_id);
                     }
                 }
@@ -1410,3 +1435,68 @@ impl SessionManager {
 
 #[cfg(test)]
 mod tests;
+
+/// Covers `kill_and_remove`'s attention-ledger wiring specifically (session/tests.rs is out of
+/// scope for this change and only covers layout helpers). A stub `Session` with
+/// `SessionBackend::Exited` avoids spawning a real PTY/child process.
+#[cfg(test)]
+mod kill_and_remove_notifier_tests {
+    use super::*;
+    use crate::notification::NotificationBroadcast;
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+
+    fn stub_session() -> Arc<Session> {
+        let (resize_tx, _resize_rx) = watch::channel(None);
+        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        Arc::new(Session {
+            backend: tokio::sync::Mutex::new(SessionBackend::Exited),
+            ssh_params: None,
+            screen: Mutex::new(VirtualScreen::new(80, 24)),
+            clients: Mutex::new(Vec::new()),
+            next_client_id: AtomicU64::new(1),
+            tauri_client_id: Mutex::new(None),
+            input_tx: Mutex::new(None),
+            status: Mutex::new(SessionStatus::Connected),
+            size: Mutex::new((80, 24)),
+            exited: Mutex::new(false),
+            shell_type: "test".to_string(),
+            tauri_on_exit: Mutex::new(None),
+            cwd_state: Mutex::new(CwdState { cwd: PathBuf::from("/"), sniff_buf: Vec::new() }),
+            sync_active: AtomicBool::new(false),
+            sync_buffer: Mutex::new(Vec::new()),
+            sync_buffer_bytes: AtomicUsize::new(0),
+            resize_tx,
+            ssh_cmd_tx: Mutex::new(None),
+            ssh_handle: tokio::sync::Mutex::new(None),
+            sftp_session: Mutex::new(None),
+            remote_home: Mutex::new(None),
+            remote_user: Mutex::new(None),
+            output_tx,
+            output_rx: Mutex::new(Some(output_rx)),
+            pending_results: Mutex::new(Vec::new()),
+        })
+    }
+
+    #[tokio::test]
+    async fn kill_and_remove_notifies_attention_ledger_with_a_single_removal_delta() {
+        let notifier = Arc::new(NotificationBroadcast::new());
+        let manager = Arc::new(SessionManager::new());
+        manager.register_notifier(Arc::clone(&notifier));
+
+        let pane_id = "stub-pane";
+        manager.sessions.insert(pane_id.to_string(), stub_session());
+        notifier.broadcast_test_delta(pane_id, crate::notification::now_ms());
+        let registration = notifier.register_client();
+        notifier.take_data(registration.conn_id).unwrap(); // snapshot
+
+        assert!(manager.kill_and_remove(pane_id));
+
+        let delta = match notifier.take_data(registration.conn_id) {
+            Some(crate::notification::ServerEnvelope::StateDelta { delta }) => delta,
+            other => panic!("expected exactly one removal delta, got {other:?}"),
+        };
+        assert!(delta.panes.iter().any(|p| p.pane_id == pane_id && p.removed == Some(true)));
+        // Single hub notification: nothing further queued.
+        assert!(notifier.take_data(registration.conn_id).is_none());
+    }
+}

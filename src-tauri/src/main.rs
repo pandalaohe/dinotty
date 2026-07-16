@@ -641,6 +641,9 @@ fn main() {
         rt.block_on(async move {
             let listener = embedded_server::bind_listener(port)
                 .unwrap_or_else(|e| panic!("failed to bind embedded server on port {port}: {e}"));
+            // The reaper must run unconditionally — a bind failure or notifier-registration
+            // ordering issue must never suppress it. Notification GC simply no-ops until
+            // run_server registers a notifier.
             mgr.start_cleanup_task();
             embedded_server::run_server(listener, mgr).await
         });

@@ -178,6 +178,12 @@ impl axum::extract::FromRef<AppState> for Arc<NotificationBroadcast> {
     }
 }
 
+impl axum::extract::FromRef<AppState> for (Arc<NotificationBroadcast>, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.notifier.clone(), state.manager.clone())
+    }
+}
+
 impl axum::extract::FromRef<AppState> for HistoryState {
     fn from_ref(state: &AppState) -> Self {
         state.history.clone()
@@ -641,7 +647,6 @@ async fn main() {
 
     let port = parse_port();
     let manager = Arc::new(SessionManager::new());
-    manager.start_cleanup_task();
 
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
@@ -649,6 +654,19 @@ async fn main() {
     let notifier = Arc::new(NotificationBroadcast::new());
     let settings_state = settings::create_settings_state();
     notifier.set_settings(settings_state.clone());
+    manager.register_notifier(Arc::clone(&notifier));
+    manager.start_cleanup_task();
+    {
+        let notifier = Arc::clone(&notifier);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(notification::SWEEP_INTERVAL);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                notifier.sweep(notification::now_ms());
+            }
+        });
+    }
     let history_state = HistoryState::new();
 
     // Load token from dedicated file or env var; empty means first-time setup

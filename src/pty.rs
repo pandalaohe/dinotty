@@ -155,6 +155,7 @@ fn cleanup_exited_pty_session(
     let _ = session.output_tx.send(Vec::new());
 
     if manager.sessions.remove(pane_id).is_some() {
+        manager.pane_closed_notify(pane_id);
         manager
             .event_bus
             .publish(BusEvent::SessionClosed { pane_id: pane_id.to_string(), exit_code });
