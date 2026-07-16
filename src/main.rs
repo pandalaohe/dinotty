@@ -336,6 +336,10 @@ fn generate_random_token() -> String {
     })
 }
 
+fn default_port() -> u16 {
+    option_env!("DINOTTY_DEFAULT_PORT").and_then(|s| s.parse().ok()).unwrap_or(8999)
+}
+
 fn parse_port() -> u16 {
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -353,7 +357,7 @@ fn parse_port() -> u16 {
         }
         i += 1;
     }
-    8999
+    default_port()
 }
 
 async fn server_info(State(state): State<AppState>) -> Json<serde_json::Value> {
