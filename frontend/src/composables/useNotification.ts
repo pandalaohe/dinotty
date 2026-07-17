@@ -1,4 +1,4 @@
-import { ref, shallowReactive, computed, h } from 'vue'
+import { ref, shallowReactive, computed, h, watch } from 'vue'
 import { TYPE } from 'vue-toastification'
 import type { ToastInterface } from 'vue-toastification'
 import { getApiBase, wsUrlWithToken } from './apiBase'
@@ -167,11 +167,48 @@ const ACK_TIMEOUT_MS = 5000
 const MAX_SEND_ATTEMPTS = 4
 const PENDING_CAP = 64
 const HISTORY_DEDUP_CAP = 512
+const PANEL_EMPTY_AUTOHIDE_MS = 250
 const CLIENT_ID_KEY = 'dinotty.notifClientId'
 const PROTO_RELOAD_KEY = 'dinotty.protoReloadAt'
 
 const notifications = ref<NotificationItem[]>([])
 const panelVisible = ref(false)
+let panelEmptyAutohideTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearPanelEmptyAutohide() {
+  if (panelEmptyAutohideTimer === null) return
+  clearTimeout(panelEmptyAutohideTimer)
+  panelEmptyAutohideTimer = null
+}
+
+watch(
+  () => notifications.value.length,
+  (length, previousLength) => {
+    if (length > 0) {
+      clearPanelEmptyAutohide()
+      return
+    }
+    if (!panelVisible.value || previousLength === 0) return
+
+    clearPanelEmptyAutohide()
+    panelEmptyAutohideTimer = setTimeout(() => {
+      panelEmptyAutohideTimer = null
+      if (panelVisible.value && notifications.value.length === 0) {
+        panelVisible.value = false
+      }
+    }, PANEL_EMPTY_AUTOHIDE_MS)
+  },
+  { flush: 'sync' },
+)
+
+watch(
+  panelVisible,
+  (visible) => {
+    if (!visible) clearPanelEmptyAutohide()
+  },
+  { flush: 'sync' },
+)
+
 const unreadByPane = shallowReactive<Record<string, NotificationType>>({})
 const firstUnreadAtByPane = shallowReactive<Record<string, number | null>>({})
 const projectionVersion = ref(0)
@@ -918,6 +955,7 @@ function connectWs() {
 
 export function __resetForTest() {
   resetPresentationEffects()
+  clearPanelEmptyAutohide()
   connectGeneration++
   if (reconnectTimer !== null) clearTimeout(reconnectTimer)
   reconnectTimer = null
@@ -981,7 +1019,6 @@ export function useNotification() {
       presentationScheduler.cancelAllPanes()
       presentationScheduler.cancelAllNotifs()
       notifications.value = []
-      panelVisible.value = false
       const panes = [...attentionStore.panes.entries()]
         .filter(([, pane]) => pane.latestEventSeq > pane.readThroughSeq)
         .map(([paneId, pane]) => ({ paneId, throughEventSeq: pane.latestEventSeq.toString() }))

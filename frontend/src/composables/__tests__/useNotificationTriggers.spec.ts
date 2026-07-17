@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
 
 class FakeWebSocket {
   static OPEN = 1
@@ -71,6 +72,7 @@ import {
   useNotification,
 } from '../useNotification'
 import { useNotificationPresentation } from '../useNotificationPresentation'
+import NotificationPanel from '../../components/notification/NotificationPanel.vue'
 
 function pane(paneId: string, latestEventSeq: string, readThroughSeq = '0') {
   return {
@@ -337,6 +339,72 @@ describe('raised envelope compatibility', () => {
     __dispatchServerMessageForTest(snapshot('1'))
     __dispatchServerMessageForTest(raised())
     expect(notif.historyCount.value).toBe(0)
+  })
+})
+
+describe('notification panel visibility', () => {
+  it('hides the panel when a notification goto emits the pane target', async () => {
+    const notif = useNotification()
+    pushNotification({ type: 'info', body: 'done', paneId: 'pane-a' })
+    notif.panelVisible.value = true
+    const wrapper = mount(NotificationPanel, {
+      props: { paneLabels: { 'pane-a': 'Pane A' } },
+    })
+
+    await wrapper.find('.notification-card').trigger('click')
+
+    expect(wrapper.emitted('goto-pane')).toEqual([['pane-a']])
+    expect(notif.panelVisible.value).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('hides 250ms after the last notification is removed', () => {
+    const notif = useNotification()
+    pushNotification({ type: 'info', body: 'done' })
+    notif.panelVisible.value = true
+
+    notif.dismissOne(notif.notifications.value[0].id)
+
+    vi.advanceTimersByTime(249)
+    expect(notif.panelVisible.value).toBe(true)
+    vi.advanceTimersByTime(1)
+    expect(notif.panelVisible.value).toBe(false)
+  })
+
+  it('stays visible when a notification arrives during the empty grace delay', () => {
+    const notif = useNotification()
+    pushNotification({ type: 'info', body: 'first' })
+    notif.panelVisible.value = true
+    notif.dismissOne(notif.notifications.value[0].id)
+
+    vi.advanceTimersByTime(100)
+    pushNotification({ type: 'info', body: 'second' })
+    vi.advanceTimersByTime(150)
+
+    expect(notif.panelVisible.value).toBe(true)
+  })
+
+  it('stays visible when opened while the notification list is already empty', () => {
+    const notif = useNotification()
+
+    notif.panelVisible.value = true
+    vi.advanceTimersByTime(251)
+
+    expect(notif.panelVisible.value).toBe(true)
+  })
+
+  it('hides after a cross-client projection prune empties the notification list', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '5')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '5' }))
+    notif.panelVisible.value = true
+
+    __dispatchServerMessageForTest(delta('2', [pane('pane-a', '5', '5')]))
+
+    expect(notif.notifications.value).toEqual([])
+    expect(notif.panelVisible.value).toBe(true)
+    vi.advanceTimersByTime(250)
+    expect(notif.panelVisible.value).toBe(false)
   })
 })
 
