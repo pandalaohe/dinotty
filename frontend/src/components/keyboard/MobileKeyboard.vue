@@ -94,17 +94,6 @@
         <FileText :size="14" />
         <span class="mkb-path-label">{{ globalSelectedPath!.split('/').pop() }}</span>
       </button>
-      <div v-if="toolbarQuickKeyDefs.length" class="mkb-toolbar-quick-strip">
-        <MkbKey
-          v-for="(key, i) in toolbarQuickKeyDefs"
-          :key="`${key.l}-${key.s ?? key.sp ?? i}-${i}`"
-          class="mkb-toolbar-quick-key"
-          :k="key"
-          :state="modState"
-          @key-press="onKeyPress"
-          @special="onSpecial"
-        />
-      </div>
       <button
         type="button"
         class="mkb-tool-btn"
@@ -138,6 +127,20 @@
       >
         {{ t('mobileKb.targetHint') }}
       </span>
+    </div>
+
+    <div v-if="toolbarQuickKeyDefs.length" v-show="textInputFocused" class="mkb-toolbar mkb-toolbar-quick-row">
+      <div class="mkb-toolbar-quick-strip">
+        <MkbKey
+          v-for="(key, i) in toolbarQuickKeyDefs"
+          :key="`${key.l}-${key.s ?? key.sp ?? i}-${i}`"
+          class="mkb-toolbar-quick-key"
+          :k="key"
+          :state="modState"
+          @key-press="onKeyPress"
+          @special="onSpecial"
+        />
+      </div>
     </div>
 
     <div v-if="phoneUploading" class="mkb-upload-progress">
