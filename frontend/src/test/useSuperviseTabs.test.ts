@@ -201,7 +201,7 @@ describe('useSuperviseTabs lifecycle', () => {
     await secondRun
 
     void supervise(activate)
-    expect(activate.mock.calls.map(([id]) => id)).toEqual(['b', 'b', 'c'])
+    expect(activate.mock.calls.map(([id]) => id)).toEqual(['b', 'b', 'b'])
   })
 
   it('does nothing when every non-current tab is pending', async () => {

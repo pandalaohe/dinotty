@@ -1,4 +1,4 @@
-import { getCurrentScope, onScopeDispose, watch } from 'vue'
+import { getCurrentScope, onScopeDispose } from 'vue'
 import { useSessionStore } from '../stores/sessionStore'
 import { getAllLeaves, type Tab } from '../types/pane'
 import { currentRevealNavGen, nextRevealNavGen } from '../utils/navGen'
@@ -15,7 +15,6 @@ export function useSuperviseTabs() {
   const session = useSessionStore()
   const { workspaces, matchWorkspace } = useWorkspaces()
   const { firstUnreadAtByPane } = useNotification()
-  const confirmedVisited = new Set<string>()
   const pending = new Map<string, number>()
   const activeWatchdogs = new Set<ReturnType<typeof setTimeout>>()
   const pendingRaceResolvers = new Set<() => void>()
@@ -72,48 +71,30 @@ export function useSuperviseTabs() {
     }))
   }
 
-  watch(
-    () => session.activePaneId,
-    (id) => {
-      const currentTabIds = new Set(session.tabs.map((tab) => tab.paneId))
-      for (const visitedId of confirmedVisited) {
-        if (!currentTabIds.has(visitedId)) confirmedVisited.delete(visitedId)
-      }
-      if (id !== null && currentTabIds.has(id) && !pending.has(id)) {
-        confirmedVisited.add(id)
-      }
-    },
-    { immediate: true },
-  )
-
   async function supervise(activate: (id: string) => Promise<boolean>): Promise<void> {
     const result = pickSupervisedTab({
       tabs: orderedCandidates(),
       currentTabId: session.activePaneId,
-      visitedTabIds: confirmedVisited,
       pendingTabIds: new Set(pending.keys()),
     })
 
-    confirmedVisited.clear()
-    for (const id of result.nextVisitedTabIds) confirmedVisited.add(id)
     if (result.targetTabId === null) return
 
     const target = result.targetTabId
     const token = ++tokenCounter
     pending.set(target, token)
 
-    const settle = (promote: boolean) => {
+    const settle = () => {
       // Token identity keeps a late attempt from mutating a newer reservation of this tab.
       if (pending.get(target) !== token) return
       pending.delete(target)
-      if (promote) confirmedVisited.add(target)
     }
 
     let activation: Promise<boolean>
     try {
       activation = activate(target)
     } catch {
-      settle(false)
+      settle()
       return
     }
     const attemptGen = currentRevealNavGen()
@@ -122,8 +103,8 @@ export function useSuperviseTabs() {
     let raceResolver: (() => void) | null = null
     const activationSettled = Promise.resolve(activation)
       .then(
-        (activated) => settle(activated === true),
-        () => settle(false),
+        () => settle(),
+        () => settle()
       )
       .finally(() => {
         if (timeoutId !== null) {
