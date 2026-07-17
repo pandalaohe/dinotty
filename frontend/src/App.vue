@@ -674,6 +674,7 @@ function onDividerDragEnd(tab: Tab) {
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 function persistNow() {
+  if (typeof localStorage === "undefined") return
   const state = tabs.value.map((t) => {
     if (t.type === 'terminal') {
       return {
