@@ -71,7 +71,7 @@
       >
         <Terminal :size="16" />
       </button>
-      <div v-if="newMenuOpen" class="new-menu-dropdown" :class="{ 'align-right': newMenuAlignRight }" @mouseleave="newMenuOpen = false">
+      <div v-if="newMenuOpen" class="new-menu-dropdown" :class="{ 'align-right': newMenuAlignRight }">
         <div
           class="new-menu-item"
           @click="emitAction('new-tab')"
@@ -135,7 +135,7 @@
       >
         <Puzzle :size="16" />
       </button>
-      <div v-if="pluginMenuOpen" class="plugin-dropdown" @mouseleave="pluginMenuOpen = false">
+      <div v-if="pluginMenuOpen" class="plugin-dropdown">
         <div
           v-for="p in plugins"
           :key="p.id"
@@ -285,11 +285,22 @@ function onDocTouchStart(e: TouchEvent) {
   }
 }
 
+function onDocMenuMouseDown(e: MouseEvent) {
+  if (pluginWrapRef.value && !pluginWrapRef.value.contains(e.target as Node)) {
+    pluginMenuOpen.value = false
+  }
+  if (newMenuWrapRef.value && !newMenuWrapRef.value.contains(e.target as Node)) {
+    newMenuOpen.value = false
+  }
+}
+
 watch([pluginMenuOpen, newMenuOpen], ([pluginOpen, newOpen]) => {
   if (pluginOpen || newOpen) {
     document.addEventListener('touchstart', onDocTouchStart, { passive: true })
+    document.addEventListener('mousedown', onDocMenuMouseDown)
   } else {
     document.removeEventListener('touchstart', onDocTouchStart)
+    document.removeEventListener('mousedown', onDocMenuMouseDown)
   }
   if (newOpen) {
     nextTick(() => {
@@ -426,6 +437,7 @@ function cleanup() {
 onBeforeUnmount(() => {
   cleanup()
   document.removeEventListener('mousedown', onDocMouseDown)
+  document.removeEventListener('mousedown', onDocMenuMouseDown)
   document.removeEventListener('touchstart', onDocTouchStart)
 })
 </script>
