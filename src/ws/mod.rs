@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
+        ws::{close_code, CloseFrame, Message, WebSocket},
         ConnectInfo, Query, State, WebSocketUpgrade,
     },
     http::StatusCode,
@@ -909,24 +909,64 @@ async fn handle_notification_socket(socket: WebSocket, notifier: Arc<Notificatio
         }
     });
 
+    let (lag_close_tx, mut lag_close_rx) = tokio::sync::oneshot::channel::<()>();
     let fwd_ws_out_tx = ws_out_tx.clone();
     let fwd = tokio::spawn(async move {
-        while let Ok(event) = rx.recv().await {
-            let json = serde_json::to_string(&event).expect("serialization is infallible");
-            if fwd_ws_out_tx.send(Message::Text(json)).is_err() {
-                break;
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let json = serde_json::to_string(&event).expect("serialization is infallible");
+                    if fwd_ws_out_tx.send(Message::Text(json)).is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(
+                        "Notification stream lagged by {} events; closing notification WebSocket",
+                        skipped
+                    );
+                    let _ = fwd_ws_out_tx.send(Message::Close(Some(CloseFrame {
+                        code: close_code::RESTART,
+                        reason: "notification stream lagged; reconnect".into(),
+                    })));
+                    let _ = lag_close_tx.send(());
+                    break;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
 
-    // Keep connection alive until client disconnects
-    while let Some(Ok(msg)) = ws_rx.next().await {
-        match msg {
-            Message::Ping(data) => {
-                let _ = ws_out_tx.send(Message::Pong(data));
+    // Keep connection alive until client disconnects or a lagged stream starts closing.
+    let lag_closing = loop {
+        tokio::select! {
+            msg = ws_rx.next() => {
+                match msg {
+                    Some(Ok(Message::Ping(data))) => {
+                        let _ = ws_out_tx.send(Message::Pong(data));
+                    }
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => break false,
+                    Some(Ok(_)) => {}
+                }
             }
-            Message::Close(_) => break,
-            _ => {}
+            res = &mut lag_close_rx => break res.is_ok(),
+        }
+    };
+
+    if lag_closing {
+        let close_handshake = async {
+            loop {
+                match ws_rx.next().await {
+                    Some(Ok(Message::Ping(data))) => {
+                        let _ = ws_out_tx.send(Message::Pong(data));
+                    }
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        };
+        if tokio::time::timeout(std::time::Duration::from_secs(5), close_handshake).await.is_err() {
+            warn!("client did not complete close handshake after lag; dropping connection");
         }
     }
     fwd.abort();
