@@ -832,6 +832,15 @@ function commitLocalActivePane(paneId: string) {
   activePaneId.value = paneId
 }
 
+async function scrollActiveTabIntoView(targetPaneId: string, navGen: number) {
+  await nextTick()
+  if (navGen !== currentRevealNavGen()) return
+  if (tabBarRef.value?.scrollTabIntoView(targetPaneId)) return
+  await nextTick()
+  if (navGen !== currentRevealNavGen()) return
+  tabBarRef.value?.scrollTabIntoView(targetPaneId)
+}
+
 async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<boolean> {
   const gen = nextRevealNavGen()
   const defer = opts?.defer === true
@@ -877,6 +886,7 @@ async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<b
   if (!defer) {
     persist()
     nextTick(() => focusActive())
+    void scrollActiveTabIntoView(tab.paneId, gen)
     return gen === currentRevealNavGen()
   }
 
@@ -887,6 +897,7 @@ async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<b
   clearResolvedTabNotifications(live)
   persist()
   nextTick(() => focusActive())
+  void scrollActiveTabIntoView(live.paneId, gen)
   return true
 }
 
