@@ -22,8 +22,19 @@ pub fn session_cookie_name(port: u16) -> String {
     format!("dinotty_session_{port}")
 }
 
+fn check_port_conflict(existing: u16, new: u16) -> bool {
+    existing != new
+}
+
 pub fn set_session_cookie_port(port: u16) {
-    let _ = SESSION_COOKIE_PORT.set(port);
+    if SESSION_COOKIE_PORT.set(port).is_err() {
+        let existing = *SESSION_COOKIE_PORT.get().expect("session cookie port must be initialized");
+        if check_port_conflict(existing, port) {
+            panic!(
+                "session cookie port already configured as {existing}; cannot reconfigure to {port}"
+            );
+        }
+    }
 }
 
 fn default_port() -> u16 {
