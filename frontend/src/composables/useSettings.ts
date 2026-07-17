@@ -84,6 +84,7 @@ export interface NotificationConfig {
   enabled: boolean
   bell: { enabled: boolean; debounce_ms: number }
   osc_notify: boolean
+  idle_reminder: boolean
   command_complete: { enabled: boolean; threshold_seconds: number }
   keyword_match: { pattern: string; notification_type: string; case_sensitive: boolean }[]
   channels: {
@@ -256,6 +257,7 @@ export const settings = reactive<SettingsData>({
     enabled: true,
     bell: { enabled: true, debounce_ms: 300 },
     osc_notify: true,
+    idle_reminder: false,
     command_complete: { enabled: false, threshold_seconds: 10 },
     keyword_match: [],
     channels: {
@@ -372,6 +374,7 @@ export async function loadSettings() {
     if (res.ok) {
       const data = await res.json()
       const notification = data?.notification as Record<string, unknown> | undefined
+      if (notification) notification.idle_reminder = notification.idle_reminder === true
       loadedNotificationPresentationEcho = {
         ...(notification && Object.prototype.hasOwnProperty.call(notification, 'channels')
           ? { channels: JSON.parse(JSON.stringify(notification.channels)) }

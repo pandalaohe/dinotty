@@ -12,7 +12,7 @@
 
     <CollapsibleSection :title="t('notification.triggers')" level="group" default-open>
         <div class="settings-row">
-          <label>Terminal Bell (\a)</label>
+          <label>{{ t('notification.bellTrigger') }}</label>
           <label class="toggle">
             <input type="checkbox" v-model="cfg.bell.enabled" @change="saveSettings()" />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -38,12 +38,19 @@
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
         </div>
+        <div class="settings-row">
+          <label>{{ t('notification.idleReminder') }}</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="cfg.idle_reminder" @change="saveSettings()" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
     </CollapsibleSection>
 
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('notification.channels') }}</h3>
       <div class="settings-row">
-        <label>Local presentation</label>
+        <label>{{ t('notification.localPresentation') }}</label>
         <label class="toggle">
           <input type="checkbox" v-model="presentation.presentation_enabled" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -80,9 +87,9 @@
     </div>
 
     <div class="settings-group">
-      <h3 class="settings-group-title">Presentation behavior</h3>
+      <h3 class="settings-group-title">{{ t('notification.presentationBehavior') }}</h3>
       <div class="settings-row">
-        <label>DND level</label>
+        <label>{{ t('notification.dndLevel') }}</label>
         <div class="segmented-control">
           <button
             v-for="level in dndLevels"
@@ -90,25 +97,25 @@
             :class="{ active: presentation.dnd_level === level.value }"
             @click="presentation.dnd_level = level.value"
           >
-            {{ level.label }}
+            {{ t(level.labelKey) }}
           </button>
         </div>
       </div>
       <div class="settings-row">
-        <label>Ignore current tab popup</label>
+        <label>{{ t('notification.ignoreCurrentTab') }}</label>
         <label class="toggle">
           <input type="checkbox" v-model="presentation.ignore_current_tab" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row quiet-hours-row">
-        <label>Quiet hours</label>
+        <label>{{ t('notification.quietHours') }}</label>
         <input type="time" v-model="presentation.quiet_hours.start" />
         <span>–</span>
         <input type="time" v-model="presentation.quiet_hours.end" />
       </div>
       <div class="settings-row">
-        <label>Coalesce window</label>
+        <label>{{ t('notification.coalesceWindow') }}</label>
         <input
           type="number"
           class="num-input coalesce-input"
@@ -120,7 +127,7 @@
         ms
       </div>
       <p v-if="isEphemeral" class="ephemeral-note">
-        Local presentation settings cannot be persisted and will reset after reload.
+        {{ t('notification.localPresentationHint') }}
       </p>
     </div>
 
@@ -183,24 +190,30 @@
           <span class="api-url">/api/notify</span>
           <div class="mode-tabs">
             <button :class="{ active: testMode === 'form' }" @click="switchMode('form')">
-              Form
+              {{ t('notification.testForm') }}
             </button>
-            <button :class="{ active: testMode === 'raw' }" @click="switchMode('raw')">Raw</button>
+            <button :class="{ active: testMode === 'raw' }" @click="switchMode('raw')">
+              {{ t('notification.testRaw') }}
+            </button>
           </div>
         </div>
 
         <template v-if="testMode === 'form'">
           <div class="api-field">
             <label>pane_id</label>
-            <input type="text" v-model="testForm.pane_id" placeholder="(optional)" />
+            <input type="text" v-model="testForm.pane_id" :placeholder="t('notification.optional')" />
           </div>
           <div class="api-field">
             <label>title</label>
-            <input type="text" v-model="testForm.title" placeholder="(optional)" />
+            <input type="text" v-model="testForm.title" :placeholder="t('notification.optional')" />
           </div>
           <div class="api-field">
             <label>body <span class="required">*</span></label>
-            <input type="text" v-model="testForm.body" placeholder="Hello from dinotty" />
+            <input
+              type="text"
+              v-model="testForm.body"
+              :placeholder="t('notification.testBodyDefault')"
+            />
           </div>
           <div class="api-field">
             <label>notification_type</label>
@@ -217,7 +230,7 @@
 
         <div class="api-actions">
           <button class="send-btn" :disabled="!canSend || sending" @click="sendTest">
-            {{ sending ? '...' : '▶ Send' }}
+            {{ sending ? '...' : `▶ ${t('notification.testSend')}` }}
           </button>
           <span v-if="testResult" class="api-result" :class="testResult.ok ? 'ok' : 'err'">{{
             testResult.text
@@ -252,17 +265,17 @@ const { settings: presentation, isEphemeral } = useNotificationPresentation()
 const builtinNames = getBuiltinSoundNames()
 const soundTypes: NotificationType[] = ['info', 'success', 'warning', 'error', 'urgent']
 const notifTypes = ['info', 'success', 'warning', 'error', 'urgent']
-const dndLevels: Array<{ value: DndLevel; label: string }> = [
-  { value: 'normal', label: 'Normal' },
-  { value: 'dot_sound', label: 'Dot + sound' },
-  { value: 'silent', label: 'Silent' },
+const dndLevels: Array<{ value: DndLevel; labelKey: string }> = [
+  { value: 'normal', labelKey: 'notification.dnd.normal' },
+  { value: 'dot_sound', labelKey: 'notification.dnd.dotSound' },
+  { value: 'silent', labelKey: 'notification.dnd.silent' },
 ]
 
 const testMode = ref<'form' | 'raw'>('form')
 const testForm = reactive({
   pane_id: '',
   title: '',
-  body: 'Hello from dinotty',
+  body: t('notification.testBodyDefault'),
   notification_type: 'info',
 })
 const rawJson = ref('')
@@ -328,7 +341,7 @@ async function sendTest() {
       const obj = JSON.parse(rawJson.value)
       payload = JSON.stringify(obj)
     } catch (e: any) {
-      rawError.value = 'Invalid JSON'
+      rawError.value = t('notification.invalidJson')
       sending.value = false
       return
     }
@@ -346,7 +359,7 @@ async function sendTest() {
       testResult.value = { ok: false, text: `${res.status} ${res.statusText}` }
     }
   } catch (e: any) {
-    testResult.value = { ok: false, text: e.message || 'Network error' }
+    testResult.value = { ok: false, text: e.message || t('notification.networkError') }
   } finally {
     sending.value = false
   }
