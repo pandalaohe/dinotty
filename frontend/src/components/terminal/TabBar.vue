@@ -13,7 +13,7 @@
     <button class="mc-trigger desktop-mc" @click="$emit('open-overview')">
       <LayoutDashboard :size="16" />
     </button>
-    <div id="tabs-list">
+    <div id="tabs-list" ref="tabsListRef">
       <div
         v-for="tab in tabs"
         :key="tab.paneId"
@@ -221,6 +221,17 @@ const emit = defineEmits<{
   'open-overview': []
 }>()
 
+const tabsListRef = ref<HTMLElement | null>(null)
+
+function findTabElement(paneId: string): HTMLElement | undefined {
+  return Array.from(tabsListRef.value?.querySelectorAll<HTMLElement>('.tab[data-pane-id]') ?? [])
+    .find((tab) => tab.dataset.paneId === paneId)
+}
+
+function hasTab(paneId: string): boolean {
+  return !!findTabElement(paneId)
+}
+
 const editingPaneId = ref<string | null>(null)
 const editValue = ref('')
 const editInputRef = ref<HTMLInputElement | null>(null)
@@ -323,6 +334,16 @@ let isTouchDrag = false
 let suppressClick = false
 const DRAG_THRESHOLD = 5
 
+function scrollTabIntoView(paneId: string): boolean {
+  const el = findTabElement(paneId)
+  if (!el) return false
+  if (!dragStarted || dragFromId === null) {
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+  }
+  return true
+}
+
+defineExpose({ hasTab, scrollTabIntoView })
 function getPointerPos(e: MouseEvent | TouchEvent): { clientX: number; clientY: number } {
   if ('touches' in e) {
     const t = e.touches[0]
