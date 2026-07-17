@@ -19,9 +19,11 @@ export function useSuperviseTabs() {
   const activeWatchdogs = new Set<ReturnType<typeof setTimeout>>()
   const pendingRaceResolvers = new Set<() => void>()
   let tokenCounter = 0
+  let disposed = false
 
   if (getCurrentScope()) {
     onScopeDispose(() => {
+      disposed = true
       for (const timeoutId of activeWatchdogs) clearTimeout(timeoutId)
       activeWatchdogs.clear()
       for (const resolve of pendingRaceResolvers) resolve()
@@ -94,6 +96,12 @@ export function useSuperviseTabs() {
     try {
       activation = activate(target)
     } catch {
+      settle()
+      return
+    }
+    // If activate() synchronously disposed the scope, skip watchdog registration —
+    // onScopeDispose has already run and would not clean up a watchdog registered now.
+    if (disposed) {
       settle()
       return
     }

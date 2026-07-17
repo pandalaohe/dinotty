@@ -177,31 +177,20 @@ describe('useSuperviseTabs lifecycle', () => {
     expect(activate.mock.calls.map(([id]) => id)).toEqual(['b', 'b'])
   })
 
-  it('does not confirm an early active-tab echo before activation settles', async () => {
-    const { supervise } = setup()
-    const first = deferred<boolean>()
-    const second = deferred<boolean>()
-    const activate = vi
-      .fn<(id: string) => Promise<boolean>>()
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise)
-      .mockImplementation(() => new Promise<boolean>(() => {}))
+  it('bails out without registering a watchdog when disposed during activation', async () => {
+    const { scope, supervise } = setup(['a', 'b'])
+    const activate = vi.fn<(id: string) => Promise<boolean>>(() => {
+      scope.stop()
+      return new Promise<boolean>(() => {})
+    })
 
-    const firstRun = supervise(activate)
-    mocks.session.activePaneId = 'b'
-    await nextTick()
-    mocks.session.activePaneId = 'a'
-    await nextTick()
-    first.resolve(false)
-    await firstRun
+    const genBefore = currentRevealNavGen()
+    await supervise(activate)
 
-    const secondRun = supervise(activate)
-    expect(activate.mock.calls.map(([id]) => id)).toEqual(['b', 'b'])
-    second.resolve(true)
-    await secondRun
-
-    void supervise(activate)
-    expect(activate.mock.calls.map(([id]) => id)).toEqual(['b', 'b', 'b'])
+    expect(activate).toHaveBeenCalledWith('b')
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(currentRevealNavGen()).toBe(genBefore)
   })
 
   it('does nothing when every non-current tab is pending', async () => {
