@@ -18,12 +18,15 @@ export function useSuperviseTabs() {
   const confirmedVisited = new Set<string>()
   const pending = new Map<string, number>()
   const activeWatchdogs = new Set<ReturnType<typeof setTimeout>>()
+  const pendingRaceResolvers = new Set<() => void>()
   let tokenCounter = 0
 
   if (getCurrentScope()) {
     onScopeDispose(() => {
       for (const timeoutId of activeWatchdogs) clearTimeout(timeoutId)
       activeWatchdogs.clear()
+      for (const resolve of pendingRaceResolvers) resolve()
+      pendingRaceResolvers.clear()
       pending.clear()
     })
   }
@@ -116,6 +119,7 @@ export function useSuperviseTabs() {
     const attemptGen = currentRevealNavGen()
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let raceResolver: (() => void) | null = null
     const activationSettled = Promise.resolve(activation)
       .then(
         (activated) => settle(activated === true),
@@ -126,8 +130,11 @@ export function useSuperviseTabs() {
           clearTimeout(timeoutId)
           activeWatchdogs.delete(timeoutId)
         }
+        if (raceResolver !== null) pendingRaceResolvers.delete(raceResolver)
       })
     const timedOut = new Promise<void>((resolve) => {
+      raceResolver = resolve
+      pendingRaceResolvers.add(resolve)
       const watchdogId = setTimeout(() => {
         activeWatchdogs.delete(watchdogId)
         timeoutId = null
@@ -138,6 +145,7 @@ export function useSuperviseTabs() {
             nextRevealNavGen()
           }
         }
+        pendingRaceResolvers.delete(resolve)
         resolve()
       }, 10_000)
       timeoutId = watchdogId

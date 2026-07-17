@@ -231,4 +231,19 @@ describe('useSuperviseTabs lifecycle', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(currentRevealNavGen()).toBe(attemptGen)
   })
+
+  it('settles an in-flight supervise promise when the scope is disposed', async () => {
+    const { scope, supervise } = setup(['a', 'b'])
+    const activate = vi.fn(() => new Promise<boolean>(() => {}))
+
+    const run = supervise(activate)
+    const settled = vi.fn()
+    void run.then(settled)
+    expect(vi.getTimerCount()).toBe(1)
+
+    scope.stop()
+    await run
+    expect(settled).toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })
