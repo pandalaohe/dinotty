@@ -474,7 +474,7 @@ describe('unhandled history pruning', () => {
     expect(notif.historyCount.value).toBe(0)
   })
 
-  it('prunes current-epoch pane and notif cards when authoritative entries disappear', () => {
+  it('retains current-epoch pane and notif cards when authoritative entries disappear', () => {
     const notif = useNotification()
     __dispatchServerMessageForTest(snapshot(
       '1',
@@ -493,7 +493,7 @@ describe('unhandled history pruning', () => {
       [{ notifId: 'notif-a', read: null, removed: true }],
     ))
 
-    expect(notif.historyCount.value).toBe(0)
+    expect(notif.historyCount.value).toBe(2)
   })
 
   it('prunes cards proven read by a reconnect snapshot', () => {
@@ -516,7 +516,7 @@ describe('unhandled history pruning', () => {
     expect(notif.historyCount.value).toBe(0)
   })
 
-  it('prunes current-epoch cards absent from a same-epoch snapshot', () => {
+  it('retains current-epoch cards absent from a same-epoch snapshot', () => {
     const notif = useNotification()
     __dispatchServerMessageForTest(snapshot(
       '1',
@@ -529,7 +529,7 @@ describe('unhandled history pruning', () => {
 
     __dispatchServerMessageForTest(snapshot('2'))
 
-    expect(notif.historyCount.value).toBe(0)
+    expect(notif.historyCount.value).toBe(2)
   })
 
   it('keeps a same-epoch local fallback card across projection refreshes', () => {

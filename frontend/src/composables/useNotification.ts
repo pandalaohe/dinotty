@@ -412,15 +412,15 @@ function pruneHistoryByAuthoritativeRead() {
     let paneRead = false
     if (card.paneId !== undefined) {
       const pane = attentionStore.panes.get(card.paneId)
-      paneRead = pane === undefined || (
-        card.eventSeq !== undefined && pane.readThroughSeq >= BigInt(card.eventSeq)
-      )
+      paneRead = pane !== undefined
+        && card.eventSeq !== undefined
+        && pane.readThroughSeq >= BigInt(card.eventSeq)
     }
 
     let notifRead = false
     if (card.notifId !== undefined) {
       const notif = attentionStore.notifs.get(card.notifId)
-      notifRead = notif === undefined || notif.read === true
+      notifRead = notif !== undefined && notif.read === true
     }
 
     return !paneRead && !notifRead
