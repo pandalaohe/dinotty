@@ -1595,10 +1595,7 @@ mod tests {
         }
         let replay = notifier.process_notify(request, |_| true);
 
-        assert_eq!(
-            replay, first,
-            "replay must return the cached global-gate outcome"
-        );
+        assert_eq!(replay, first, "replay must return the cached global-gate outcome");
         let snapshot = notifier.snapshot();
         assert_eq!(snapshot.revision, 0);
         assert!(snapshot.notifs.is_empty());

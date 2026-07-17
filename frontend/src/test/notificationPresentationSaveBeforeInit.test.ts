@@ -66,4 +66,19 @@ describe('notification presentation save boundary before presentation init', () 
       expect(payload.notification).not.toHaveProperty(key)
     }
   })
+
+  it('does not PUT settings when the initial settings load fails', async () => {
+    __resetSettingsLoadStateForTest()
+    apiMocks.authFetch.mockReset()
+    apiMocks.authFetch.mockResolvedValue(new Response('{}', { status: 500 }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await loadSettings()
+    await saveSettings()
+
+    expect(apiMocks.authFetch.mock.calls.some(
+      ([url, init]) => url === '/api/settings' && init?.method === 'PUT',
+    )).toBe(false)
+    warn.mockRestore()
+  })
 })

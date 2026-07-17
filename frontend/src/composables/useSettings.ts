@@ -399,6 +399,14 @@ export async function saveSettings() {
   try {
     // Wait for initial load to complete before saving, to avoid overwriting server data with defaults
     if (loadPromise) await loadPromise
+    // A save before any successful settings load would strip the server-owned
+    // notification.channels/sounds; the server's full-overwrite PUT (#[serde(default)])
+    // would then reset them to defaults across every device. Defer until a load has
+    // established the presentation echo.
+    if (!loadedNotificationPresentationEcho) {
+      console.warn('[settings] save skipped: settings have not loaded yet')
+      return
+    }
     // Sync action keyboard to localStorage for static mobile-keyboard.js
     syncActionKeyboardStorage()
     const payload = JSON.parse(JSON.stringify(settings)) as SettingsData
