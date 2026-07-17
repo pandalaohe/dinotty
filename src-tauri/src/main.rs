@@ -177,7 +177,11 @@ fn spawn_tauri_write_task(session: Arc<dinotty_server::session::Session>, pane_i
 /// the scrollback+snapshot via the replay transaction (pty-replay-begin →
 /// pty-output chunks → pty-replay-end). This is the Tauri side of the
 /// fit-then-snapshot handshake (proposal 3), mirroring ws/mod.rs.
-fn emit_reconnected(app: &AppHandle, pane_id: &str, session: &Arc<dinotty_server::session::Session>) {
+fn emit_reconnected(
+    app: &AppHandle,
+    pane_id: &str,
+    session: &Arc<dinotty_server::session::Session>,
+) {
     let (cols, rows) = *session.size.lock().unwrap_or_else(|e| e.into_inner());
     let _ = app.emit(
         "pty-reconnected",
@@ -290,12 +294,7 @@ async fn pty_snapshot_request(
     app: AppHandle,
     state: State<'_, Arc<SessionManager>>,
 ) -> Result<(), String> {
-    let session = state
-        .sessions
-        .get(&pane_id)
-        .ok_or("session not found")?
-        .value()
-        .clone();
+    let session = state.sessions.get(&pane_id).ok_or("session not found")?.value().clone();
     let origin_id = session
         .tauri_client_id
         .lock()
@@ -306,13 +305,10 @@ async fn pty_snapshot_request(
     // (spawn_tauri_output_forwarder) consumes the channel and emits the
     // corresponding pty-* events. So we just call it and let the forwarder
     // handle the wire events.
-    session
-        .atomic_resize_and_snapshot_for_client(origin_id, cols, rows)
-        .await
-        .map_err(|e| {
-            tracing::warn!("pty_snapshot_request failed: {e}, pane={pane_id}");
-            e
-        })?;
+    session.atomic_resize_and_snapshot_for_client(origin_id, cols, rows).await.map_err(|e| {
+        tracing::warn!("pty_snapshot_request failed: {e}, pane={pane_id}");
+        e
+    })?;
     let _ = app; // app not needed — forwarder emits events
     Ok(())
 }
@@ -530,6 +526,11 @@ async fn tauri_upload(
 }
 
 #[tauri::command]
+fn set_window_title(title: String, window: tauri::Window) -> Result<(), String> {
+    window.set_title(&title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn toggle_window(window: tauri::Window) {
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
@@ -738,6 +739,7 @@ fn main() {
             pick_workspace_dir,
             close_window,
             toggle_window,
+            set_window_title,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")

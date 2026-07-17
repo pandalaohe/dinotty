@@ -157,8 +157,12 @@ fn default_global_lockout_secs() -> u64 {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct PreviewConfig {
-    #[serde(default)]
+    #[serde(default = "default_preview_allow_external")]
     pub allow_external: bool,
+}
+
+fn default_preview_allow_external() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

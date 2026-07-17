@@ -522,20 +522,15 @@ watch(
 )
 watch(
   () => {
-    const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-    if (!tab) return 'Terminal'
-    if (tab.type === 'terminal') {
-      return findLeaf(tab.layout, tab.activePaneId)?.title ?? 'Terminal'
-    }
-    return tab.title
+    return activeWorkspaceName.value ?? 'dinotty'
   },
-  (title) => {
-    const wsName = activeWorkspaceName.value
-    const fullTitle = wsName ? `${wsName} - ${title || 'Terminal'}` : (title || 'Terminal')
-    document.title = fullTitle
+  (wsName) => {
+    document.title = wsName
     if (isTauri()) {
-      const tauriWindow = (window as any).__TAURI__?.window?.getCurrentWindow?.()
-      tauriWindow?.setTitle?.(fullTitle)
+      tauriInvoke('set_window_title', { title: wsName }).catch(() => {
+        const tauriWindow = (window as any).__TAURI__?.window?.getCurrentWindow?.()
+        tauriWindow?.setTitle?.(wsName)
+      })
     }
   },
   { immediate: true }
