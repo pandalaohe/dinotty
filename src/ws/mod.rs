@@ -1,4 +1,11 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::items_after_statements,
+    clippy::needless_pass_by_value
+)]
 use axum::{
     extract::{
         ws::{close_code, CloseFrame, Message, WebSocket},
@@ -19,7 +26,10 @@ use std::sync::{
 use tracing::{error, info, warn};
 
 use crate::history::HistoryState;
-use crate::notification::NotificationBroadcast;
+use crate::notification::{
+    MarkReadRequest, NotificationBroadcast, ServerEnvelope, CLOSE_UPGRADE_REQUIRED, DRAIN_STALL_MS,
+    MIN_PROTOCOL_VERSION,
+};
 use crate::session::{SessionClientEvent, SessionManager, SessionStatus, SyncMsg};
 use crate::settings::SettingsState;
 use crate::workspace_mgmt::WorkspacesState;
@@ -29,6 +39,11 @@ pub struct WsQuery {
     #[serde(rename = "paneId")]
     pane_id: Option<String>,
     argv: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct NotificationWsQuery {
+    v: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -395,6 +410,7 @@ async fn handle_sync_socket(
                                 .map(|layout| crate::session::collect_leaf_pane_ids(&layout))
                                 .unwrap_or_default();
                             // Kill and remove PTY sessions for all leaves in this tab
+                            // (kill_and_remove notifies the attention ledger internally).
                             for leaf_id in &leaf_ids {
                                 manager.kill_and_remove(leaf_id);
                             }
@@ -405,6 +421,7 @@ async fn handle_sync_socket(
                                 .broadcast_sync_others(&SyncMsg::TabClosed { pane_id }, &client_id);
                         }
                         SyncClientMsg::ClosePane { pane_id } => {
+                            // kill_and_remove notifies the attention ledger internally.
                             manager.kill_and_remove(&pane_id);
                             // Collect affected layouts before purging
                             let before_layouts: Vec<(String, serde_json::Value)> = manager
@@ -869,6 +886,7 @@ async fn handle_socket(
 #[allow(clippy::unused_async)]
 pub async fn notification_ws_handler(
     ws: WebSocketUpgrade,
+    Query(q): Query<NotificationWsQuery>,
     State(notifier): State<Arc<NotificationBroadcast>>,
     State(settings): State<SettingsState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -882,102 +900,160 @@ pub async fn notification_ws_handler(
     if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.on_upgrade(move |socket| handle_notification_socket(socket, notifier)).into_response()
+    let version = notification_protocol_version(q.v.as_deref());
+    ws.on_upgrade(move |socket| handle_notification_socket(socket, notifier, version))
+        .into_response()
 }
 
-async fn handle_notification_socket(socket: WebSocket, notifier: Arc<NotificationBroadcast>) {
+pub(crate) fn notification_protocol_version(value: Option<&str>) -> u64 {
+    value.and_then(|value| value.parse::<u64>().ok()).unwrap_or(0)
+}
+
+async fn handle_notification_socket(
+    mut socket: WebSocket,
+    notifier: Arc<NotificationBroadcast>,
+    version: u64,
+) {
+    if version < MIN_PROTOCOL_VERSION {
+        let _ = socket
+            .send(Message::Close(Some(CloseFrame {
+                code: CLOSE_UPGRADE_REQUIRED,
+                reason: "protocol_upgrade_required".into(),
+            })))
+            .await;
+        return;
+    }
+
+    let registration = notifier.register_client();
+    let conn_id = registration.conn_id;
     let (ws_tx, mut ws_rx) = socket.split();
-    let mut rx = notifier.subscribe();
-
-    // Channel for all outbound WS messages
-    let (ws_out_tx, mut ws_out_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
-
-    // Writer task
-    let writer_task = tokio::spawn(async move {
+    let (pong_tx, mut pong_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+    let writer_notifier = Arc::clone(&notifier);
+    let mut data_wake = registration.data_wake;
+    let mut control = registration.control;
+    let mut disconnect = registration.disconnect;
+    let mut writer_task = tokio::spawn(async move {
         let mut ws_tx = ws_tx;
-        while let Some(msg) = ws_out_rx.recv().await {
-            if ws_tx.send(msg).await.is_err() {
-                break;
+        // Send `message` with the drain-stall timeout. Returns `false` if the writer must stop
+        // (send error/timeout, or the message itself was a Close frame).
+        async fn send_one(
+            ws_tx: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+            message: Message,
+        ) -> bool {
+            let closing = matches!(message, Message::Close(_));
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(DRAIN_STALL_MS),
+                ws_tx.send(message),
+            )
+            .await
+            {
+                Ok(Ok(())) => !closing,
+                Ok(Err(_)) | Err(_) => false,
             }
         }
-    });
 
-    // Ping sender task
-    let ping_tx = ws_out_tx.clone();
-    let ping_task = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            if ping_tx.send(Message::Ping(vec![])).is_err() {
-                break;
-            }
-        }
-    });
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        ping_interval.tick().await; // skip the immediate first tick
 
-    let (lag_close_tx, mut lag_close_rx) = tokio::sync::oneshot::channel::<()>();
-    let fwd_ws_out_tx = ws_out_tx.clone();
-    let fwd = tokio::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    let json = serde_json::to_string(&event).expect("serialization is infallible");
-                    if fwd_ws_out_tx.send(Message::Text(json)).is_err() {
-                        break;
+        'outer: loop {
+            tokio::select! {
+                biased;
+                changed = disconnect.changed() => {
+                    if changed.is_err() || *disconnect.borrow() {
+                        let message = Message::Close(Some(CloseFrame {
+                            code: close_code::RESTART,
+                            reason: "notification client stalled; reconnect".into(),
+                        }));
+                        send_one(&mut ws_tx, message).await;
+                        break 'outer;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    warn!(
-                        "Notification stream lagged by {} events; closing notification WebSocket",
-                        skipped
-                    );
-                    let _ = fwd_ws_out_tx.send(Message::Close(Some(CloseFrame {
-                        code: close_code::RESTART,
-                        reason: "notification stream lagged; reconnect".into(),
-                    })));
-                    let _ = lag_close_tx.send(());
-                    break;
+                envelope = control.recv() => {
+                    let Some(envelope) = envelope else { break 'outer };
+                    if !send_one(&mut ws_tx, envelope_message(envelope)).await {
+                        break 'outer;
+                    }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                pong = pong_rx.recv() => {
+                    let Some(data) = pong else { break 'outer };
+                    if !send_one(&mut ws_tx, Message::Pong(data)).await {
+                        break 'outer;
+                    }
+                }
+                wake = data_wake.recv() => {
+                    match wake {
+                        Some(()) => {
+                            // Drain the whole queue on one wake token — `take_data` returning
+                            // `None` just means the queue is currently empty (NORMAL), never a
+                            // reason to stop the writer.
+                            while let Some(envelope) = writer_notifier.take_data(conn_id) {
+                                if !send_one(&mut ws_tx, envelope_message(envelope)).await {
+                                    break 'outer;
+                                }
+                            }
+                        }
+                        None => break 'outer, // wake channel closed: client unregistered
+                    }
+                }
+                _ = ping_interval.tick() => {
+                    if !send_one(&mut ws_tx, Message::Ping(vec![])).await {
+                        break 'outer;
+                    }
+                }
             }
         }
     });
 
-    // Keep connection alive until client disconnects or a lagged stream starts closing.
-    let lag_closing = loop {
+    loop {
         tokio::select! {
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Ping(data))) => {
-                        let _ = ws_out_tx.send(Message::Pong(data));
+                        if pong_tx.try_send(data).is_err() {
+                            break;
+                        }
                     }
-                    Some(Ok(Message::Close(_)) | Err(_)) | None => break false,
-                    Some(Ok(_)) => {}
-                }
-            }
-            res = &mut lag_close_rx => break res.is_ok(),
-        }
-    };
-
-    if lag_closing {
-        let close_handshake = async {
-            loop {
-                match ws_rx.next().await {
-                    Some(Ok(Message::Ping(data))) => {
-                        let _ = ws_out_tx.send(Message::Pong(data));
+                    Some(Ok(Message::Text(text))) => {
+                        if let Some(request) = parse_mark_read(&text) {
+                            notifier.apply_mark_read(conn_id, &request);
+                        } else {
+                            tracing::debug!("ignoring malformed notification WebSocket message");
+                        }
                     }
                     Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                     Some(Ok(_)) => {}
                 }
             }
-        };
-        if tokio::time::timeout(std::time::Duration::from_secs(5), close_handshake).await.is_err() {
-            warn!("client did not complete close handshake after lag; dropping connection");
+            _ = &mut writer_task => break,
         }
     }
-    fwd.abort();
     writer_task.abort();
-    ping_task.abort();
+    notifier.unregister_client(conn_id);
+}
+
+fn envelope_message(envelope: ServerEnvelope) -> Message {
+    Message::Text(serde_json::to_string(&envelope).expect("serialization is infallible"))
+}
+
+fn parse_mark_read(text: &str) -> Option<MarkReadRequest> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("type")?.as_str()? != "notification.mark_read" {
+        return None;
+    }
+    let request: MarkReadRequest = serde_json::from_value(value).ok()?;
+    if request.v < MIN_PROTOCOL_VERSION
+        || request.epoch.is_empty()
+        || request.client_id.is_empty()
+        || request.request_id.is_empty()
+        || request
+            .panes
+            .iter()
+            .any(|pane| pane.pane_id.is_empty() || pane.through_event_seq.parse::<u64>().is_err())
+        || request.notifs.iter().any(|notif| notif.notif_id.is_empty())
+    {
+        return None;
+    }
+    Some(request)
 }
 
 #[derive(Deserialize)]

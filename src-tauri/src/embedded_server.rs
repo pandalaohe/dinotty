@@ -92,6 +92,12 @@ impl axum::extract::FromRef<AppState> for Arc<NotificationBroadcast> {
     }
 }
 
+impl axum::extract::FromRef<AppState> for (Arc<NotificationBroadcast>, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.notifier.clone(), state.manager.clone())
+    }
+}
+
 impl axum::extract::FromRef<AppState> for HistoryState {
     fn from_ref(state: &AppState) -> Self {
         state.history.clone()
@@ -483,6 +489,21 @@ pub fn run_server(
         let notifier = Arc::new(NotificationBroadcast::new());
         let settings_state = settings::create_settings_state();
         notifier.set_settings(settings_state.clone());
+        // Registering the notifier is independent of starting the reaper: a bind failure or
+        // startup-ordering issue here must never suppress the detached-session reaper itself
+        // (mirrors src/main.rs server wiring).
+        manager.register_notifier(Arc::clone(&notifier));
+        {
+            let notifier = Arc::clone(&notifier);
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(notification::SWEEP_INTERVAL);
+                interval.tick().await;
+                loop {
+                    interval.tick().await;
+                    notifier.sweep(notification::now_ms());
+                }
+            });
+        }
         let history_state = HistoryState::new();
         let plugins = Arc::new(PluginManager::new());
         plugins.scan();

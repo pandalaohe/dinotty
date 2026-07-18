@@ -66,7 +66,7 @@
           <Settings :size="16" />
         </button>
         <button
-          v-if="notif.notifications.value.length > 0"
+          v-if="notif.notifications.value.length > 0 || notif.unreadAttentionCount.value > 0"
           type="button"
           class="tab-bar-icon-btn notif-btn"
           :title="t('notification.title')"
@@ -74,8 +74,8 @@
           @touchend.prevent="notif.togglePanel()"
         >
           <Bell :size="16" />
-          <span v-if="notif.unreadCount.value > 0" class="notif-badge">{{
-            notif.unreadCount.value > 9 ? '9+' : notif.unreadCount.value
+          <span v-if="notif.unreadAttentionCount.value > 0" class="notif-badge">{{
+            notif.unreadAttentionCount.value > 9 ? '9+' : notif.unreadAttentionCount.value
           }}</span>
         </button>
       </template>
@@ -270,6 +270,7 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
+  authFetch,
   markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
@@ -283,7 +284,17 @@ import { isWindowsClient } from './utils/clientPlatform'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useToast } from 'vue-toastification'
-import { useNotification, pushNotification, setToastInstance, aggregateSeverity } from './composables/useNotification'
+import {
+  useNotification,
+  pushNotification,
+  setToastInstance,
+  setActiveReadContext,
+  evaluateActiveRead,
+  aggregateSeverity,
+  getNotificationClientId,
+  mintNotificationRequestId,
+} from './composables/useNotification'
+import { getIsAppForeground, onAppForegroundGain } from './composables/useAppForeground'
 import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import {
@@ -344,6 +355,12 @@ const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
 setToastInstance(useToast())
+setActiveReadContext({
+  getActiveFocusedPaneId: () =>
+    activeTab.value?.type === 'terminal' ? activeTab.value.activePaneId : null,
+  isAppForeground: getIsAppForeground,
+})
+const stopForegroundGainSubscription = onAppForegroundGain(evaluateActiveRead)
 const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
 const { isMobile } = useIsMobile()
 
@@ -657,6 +674,7 @@ function onDividerDragEnd(tab: Tab) {
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 function persistNow() {
+  if (typeof localStorage === "undefined") return
   const state = tabs.value.map((t) => {
     if (t.type === 'terminal') {
       return {
@@ -786,12 +804,12 @@ function resolveTabWorkspace(tab: Tab) {
     : tab.workspaceId ? workspaces.value.find((w) => w.id === tab.workspaceId) ?? null : null
 }
 
-function clearResolvedTabNotifications(tab: Tab) {
+function clearResolvedTabNotifications(tab: Tab, reason: 'tab_activate' | 'goto' = 'tab_activate') {
   // Clear notifications for this tab on activation (terminal: tab-level + all leaves; plugin: tab-level)
   const activatedPaneIds = tab.type === 'terminal'
     ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
     : [tab.paneId]
-  notif.clearForPaneIds(activatedPaneIds)
+  notif.clearForPaneIds(activatedPaneIds, reason)
 }
 
 let revealNavGen = 0
@@ -904,7 +922,7 @@ async function revealPane(paneId: string): Promise<boolean> {
   if (!tab) return false
 
   activePaneId.value = tab.paneId
-  clearResolvedTabNotifications(tab)
+  clearResolvedTabNotifications(tab, 'goto')
   persist()
   nextTick(() => focusActive())
 
@@ -989,8 +1007,6 @@ async function closeTab(tabId: string) {
   const closedPaneIds = tab.type === 'terminal'
     ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
     : [tab.paneId]
-  notif.clearForPaneIds(closedPaneIds)
-
   // Invalidate plugin preview cache when closing a plugin tab
   if (tab.type === 'plugin') {
     invalidatePluginPreview(tab.paneId)
@@ -1009,6 +1025,8 @@ async function closeTab(tabId: string) {
       return
     }
   }
+
+  notif.clearForPaneIds(closedPaneIds, 'tab_close')
 
   // Remove tab from local array
   const idx = tabs.value.findIndex((t) => t.paneId === tabId)
@@ -1366,18 +1384,180 @@ window.__dinotty_terminal_api = {
 // Test hooks for P3 verification (focusActive + isComposing guard).
 window.__dinotty_test_focus_active = focusActive
 window.__dinotty_test_is_composing = (paneId: string) => termRefs[paneId]?.isComposing() ?? false
+const PLUGIN_NOTIFY_RETRY_DELAYS_MS = [1000, 2000, 4000] as const
+const BRIDGE_MAX_CONCURRENT = 3
+const BRIDGE_QUEUE_CAP = 64
+
+interface PluginNotifyBridgeJob {
+  readonly requestId: string
+  readonly body: string
+}
+
+const pluginNotifyBridgeQueue: PluginNotifyBridgeJob[] = []
+const pluginNotifyBridgeRetryTimers = new Map<
+  ReturnType<typeof setTimeout>,
+  (shouldContinue: boolean) => void
+>()
+const pluginNotifyBridgeAbortControllers = new Set<AbortController>()
+let pluginNotifyBridgeActiveJobs = 0
+let pluginNotifyBridgeDisposed = false
+let pluginNotifyBridgeOverflowDropped = 0
+let pluginNotifyBridgeOverflowWarnScheduled = false
+
+function waitForPluginNotifyRetry(delayMs: number) {
+  if (pluginNotifyBridgeDisposed) return Promise.resolve(false)
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      pluginNotifyBridgeRetryTimers.delete(timer)
+      resolve(!pluginNotifyBridgeDisposed)
+    }, delayMs)
+    pluginNotifyBridgeRetryTimers.set(timer, resolve)
+  })
+}
+
+async function runPluginNotifyBridgeJob(job: PluginNotifyBridgeJob) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      await getApiBase()
+      if (pluginNotifyBridgeDisposed) return
+
+      const controller = new AbortController()
+      pluginNotifyBridgeAbortControllers.add(controller)
+      let response: Awaited<ReturnType<typeof authFetch>>
+      try {
+        response = await authFetch(apiUrl('/api/notify'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: job.body,
+          signal: controller.signal,
+        })
+      } finally {
+        pluginNotifyBridgeAbortControllers.delete(controller)
+      }
+      if (pluginNotifyBridgeDisposed) return
+
+      const responseBody = await response.json().catch(() => null)
+      if (pluginNotifyBridgeDisposed) return
+
+      if (response.status === 200) {
+        const accepted =
+          responseBody?.status === 'accepted' ||
+          (typeof responseBody?.eventSeq === 'string' &&
+            (typeof responseBody?.notifId === 'string' || typeof responseBody?.paneId === 'string'))
+        if (accepted || responseBody?.status === 'suppressed') return
+        console.error('[notification] plugin notify returned an unexpected 200 response')
+        return
+      }
+
+      if (response.status === 503) {
+        if (attempt < PLUGIN_NOTIFY_RETRY_DELAYS_MS.length) {
+          if (!(await waitForPluginNotifyRetry(PLUGIN_NOTIFY_RETRY_DELAYS_MS[attempt]))) return
+          continue
+        }
+        break
+      }
+
+      console.error(`[notification] plugin notify failed with HTTP ${response.status}`)
+      return
+    } catch (error) {
+      if (pluginNotifyBridgeDisposed) return
+      if (attempt < PLUGIN_NOTIFY_RETRY_DELAYS_MS.length) {
+        if (!(await waitForPluginNotifyRetry(PLUGIN_NOTIFY_RETRY_DELAYS_MS[attempt]))) return
+        continue
+      }
+      console.error('[notification] plugin notify retry exhausted', error)
+      break
+    }
+  }
+
+  if (pluginNotifyBridgeDisposed) return
+  const request = JSON.parse(job.body) as {
+    type: 'info' | 'warning' | 'error'
+    title: string
+    body: string
+  }
+  console.error('[notification] plugin notify retry exhausted; inserting locally')
+  pushNotification({
+    type: request.type,
+    title: request.title,
+    body: request.body,
+    source: 'plugin',
+  })
+}
+
+function pumpPluginNotifyBridgeQueue() {
+  while (
+    !pluginNotifyBridgeDisposed &&
+    pluginNotifyBridgeActiveJobs < BRIDGE_MAX_CONCURRENT &&
+    pluginNotifyBridgeQueue.length > 0
+  ) {
+    const job = pluginNotifyBridgeQueue.shift()!
+    pluginNotifyBridgeActiveJobs++
+    void runPluginNotifyBridgeJob(job).finally(() => {
+      pluginNotifyBridgeActiveJobs--
+      pumpPluginNotifyBridgeQueue()
+    })
+  }
+}
+
+function enqueuePluginNotifyBridgeJob(job: PluginNotifyBridgeJob) {
+  if (pluginNotifyBridgeDisposed) return
+  if (pluginNotifyBridgeQueue.length >= BRIDGE_QUEUE_CAP) {
+    pluginNotifyBridgeQueue.shift()
+    pluginNotifyBridgeOverflowDropped++
+    if (!pluginNotifyBridgeOverflowWarnScheduled) {
+      pluginNotifyBridgeOverflowWarnScheduled = true
+      queueMicrotask(() => {
+        pluginNotifyBridgeOverflowWarnScheduled = false
+        if (pluginNotifyBridgeDisposed) {
+          pluginNotifyBridgeOverflowDropped = 0
+          return
+        }
+        const dropped = pluginNotifyBridgeOverflowDropped
+        pluginNotifyBridgeOverflowDropped = 0
+        console.warn(
+          `[notification] plugin notify bridge queue full; evicted ${dropped} oldest pending ${dropped === 1 ? 'job' : 'jobs'}`
+        )
+      })
+    }
+  }
+  pluginNotifyBridgeQueue.push(job)
+  pumpPluginNotifyBridgeQueue()
+}
+
+function disposePluginNotifyBridge() {
+  pluginNotifyBridgeDisposed = true
+  pluginNotifyBridgeQueue.length = 0
+  pluginNotifyBridgeOverflowDropped = 0
+  for (const [timer, resolve] of pluginNotifyBridgeRetryTimers) {
+    clearTimeout(timer)
+    resolve(false)
+  }
+  pluginNotifyBridgeRetryTimers.clear()
+  for (const controller of pluginNotifyBridgeAbortControllers) controller.abort()
+  pluginNotifyBridgeAbortControllers.clear()
+}
+
 window.__dinotty_ui_notify = (
   message: string,
   level?: 'info' | 'warn' | 'error',
   title?: string
 ) => {
   const type = level === 'error' ? 'error' : level === 'warn' ? 'warning' : 'info'
-  pushNotification({
-    type,
-    title: title ?? 'Plugin',
-    body: message,
-    source: 'plugin',
+  const requestId = mintNotificationRequestId()
+  const job = Object.freeze({
+    requestId,
+    body: JSON.stringify({
+      clientId: getNotificationClientId(),
+      requestId,
+      source: 'plugin',
+      type,
+      title: title ?? 'Plugin',
+      body: message,
+    }),
   })
+
+  enqueuePluginNotifyBridgeJob(job)
 }
 window.__dinotty_ui_confirm = (message: string) => uiConfirm(message)
 window.__dinotty_open_plugin = openPlugin
@@ -1736,6 +1916,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stopForegroundGainSubscription()
+  disposePluginNotifyBridge()
   unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
   document.removeEventListener('terminal-scroll', onTerminalScroll)

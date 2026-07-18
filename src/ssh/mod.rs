@@ -718,6 +718,7 @@ async fn ssh_reader_task(
 
     if session.notify_exit_and_mark_exited(&pane_id) {
         manager.sessions.remove(&pane_id);
+        manager.pane_closed_notify(&pane_id);
         manager
             .event_bus
             .publish(BusEvent::SessionClosed { pane_id: pane_id.clone(), exit_code: None });

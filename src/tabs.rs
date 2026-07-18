@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -224,7 +226,8 @@ pub async fn close_tab(
         .map(|layout| session::collect_leaf_pane_ids(&layout))
         .unwrap_or_default();
 
-    // Kill and remove all PTY sessions
+    // Kill and remove all PTY sessions (kill_and_remove notifies the attention ledger
+    // internally).
     for leaf_id in &leaf_ids {
         manager.kill_and_remove(leaf_id);
     }
@@ -420,7 +423,7 @@ pub async fn close_pane(
             .into_response();
     }
 
-    // Kill and remove PTY session
+    // Kill and remove PTY session (kill_and_remove notifies the attention ledger internally).
     manager.kill_and_remove(&pane_id);
 
     // Update layout
