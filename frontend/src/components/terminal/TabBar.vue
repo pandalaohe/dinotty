@@ -3,8 +3,7 @@
     <!-- Mobile compact mode -->
     <template v-if="isMobile">
       <button class="mc-trigger" @click="$emit('open-overview')">
-        <WorkspaceBadge v-if="activeWorkspaceColor" :abbr="activeWorkspaceAbbr" :color="activeWorkspaceColor" :size="16" card-bg-var="--tab-bg" />
-        <LayoutDashboard v-else :size="16" />
+        <LayoutDashboard :size="16" />
       </button>
       <span class="current-tab-index">{{ currentTabIndex }}</span>
       <span class="current-tab-name">{{ currentTabTitle }}</span>
@@ -12,8 +11,7 @@
     <!-- Desktop mode: full tab list -->
     <template v-else>
     <button class="mc-trigger desktop-mc" @click="$emit('open-overview')">
-      <WorkspaceBadge v-if="activeWorkspaceColor" :abbr="activeWorkspaceAbbr" :color="activeWorkspaceColor" :size="16" card-bg-var="--tab-bg" />
-      <LayoutDashboard v-else :size="16" />
+      <LayoutDashboard :size="16" />
     </button>
     <div id="tabs-list" ref="tabsListRef">
       <div
@@ -165,7 +163,6 @@ import { ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard, Globe, Server } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useKeybindings } from '../../composables/useKeybindings'
-import WorkspaceBadge from '../WorkspaceBadge.vue'
 
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
@@ -202,8 +199,6 @@ withDefaults(
     isMobile?: boolean
     currentTabTitle?: string
     currentTabIndex?: number
-    activeWorkspaceAbbr?: string
-    activeWorkspaceColor?: string
   }>(),
   {
     indicators: () => ({}),
@@ -213,8 +208,6 @@ withDefaults(
     isMobile: false,
     currentTabTitle: '',
     currentTabIndex: 0,
-    activeWorkspaceAbbr: '',
-    activeWorkspaceColor: undefined,
   }
 )
 

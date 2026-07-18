@@ -19,7 +19,7 @@
         @click="$emit('select', ws.id)"
         @contextmenu.prevent="openCtx($event, ws)"
       >
-        <WorkspaceBadge :abbr="resolveAbbr(ws)" :color="resolveColor(ws)" :size="18" />
+        <WorkspaceBadge :remote="!!ws.connection_id" :size="18" />
         <span class="mc-ws-name">{{ ws.name }}</span>
         <span v-if="tabCounts[ws.id]" class="mc-ws-count">{{ tabCounts[ws.id] }}</span>
       </button>
@@ -49,7 +49,6 @@ import { useI18n } from '../../composables/useI18n'
 import { uiConfirm } from '../../composables/useConfirm'
 import { useWorkspaces } from '../../composables/useWorkspaces'
 import type { Workspace } from '../../types/workspace'
-import { resolveAbbr, resolveColor } from '../../utils/workspaceIcon'
 import WorkspaceBadge from '../WorkspaceBadge.vue'
 import ContextMenu from '../ui/ContextMenu.vue'
 import type { ContextMenuItem } from '../ui/ContextMenu.vue'

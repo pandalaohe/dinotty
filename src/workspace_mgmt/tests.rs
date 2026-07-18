@@ -167,7 +167,7 @@ fn test_fnv1a32_vectors_and_palette_indices() {
 
 #[test]
 fn test_palette_color_for_id() {
-    assert_eq!(palette_color_for("dinotty"), "#35D07F");
+    assert_eq!(palette_color_for("dinotty"), "#98C379");
 }
 
 #[test]

@@ -1,74 +1,25 @@
 <template>
-  <span
-    class="ws-badge"
-    :style="{
-      '--wb-border': border,
-      '--wb-size': `${size}px`,
-      '--wb-width': `${Math.round(size * 1.65)}px`,
-      '--wb-font-size': `${Math.round(size * 0.56)}px`,
-    }"
-  >{{ abbr }}</span>
+  <component :is="icon" :size="size" :stroke-width="2" class="ws-icon" />
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { outlineColor } from '../utils/workspaceIcon'
+import { computed } from 'vue'
+import { Folder, Server } from 'lucide-vue-next'
 
 const props = withDefaults(defineProps<{
-  abbr: string
-  color: string
+  remote?: boolean
   size?: number
-  cardBgVar?: string
 }>(), {
-  size: 20,
-  cardBgVar: '--bg-surface',
+  remote: false,
+  size: 18,
 })
 
-const cardBg = ref('')
-let themeObserver: MutationObserver | undefined
-
-function readBg() {
-  cardBg.value = getComputedStyle(document.documentElement)
-    .getPropertyValue(props.cardBgVar)
-    .trim()
-}
-
-onMounted(() => {
-  readBg()
-  themeObserver = new MutationObserver(readBg)
-  themeObserver.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['style', 'class'],
-  })
-})
-
-onBeforeUnmount(() => {
-  themeObserver?.disconnect()
-})
-
-const border = computed(() => (
-  /^#[0-9A-Fa-f]{6}$/.test(cardBg.value)
-    ? outlineColor(props.color, cardBg.value)
-    : props.color
-))
+const icon = computed(() => (props.remote ? Server : Folder))
 </script>
 
 <style scoped>
-.ws-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--wb-width);
-  height: var(--wb-size);
-  border: 1.5px solid var(--wb-border);
-  border-radius: 5px;
+.ws-icon {
   color: var(--fg-bright);
-  font-family: inherit;
-  font-size: var(--wb-font-size);
-  font-weight: 600;
-  line-height: 1;
-  background: color-mix(in srgb, var(--wb-border) 14%, transparent);
-  overflow: hidden;
-  user-select: none;
+  flex-shrink: 0;
 }
 </style>

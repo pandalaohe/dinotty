@@ -15,9 +15,9 @@ use tracing::error;
 use crate::session::{SessionManager, SyncMsg};
 use crate::settings::{self, SettingsState};
 
-/// 7 preset workspace colors. KEEP IN SYNC with frontend/src/utils/workspaceIcon.ts `WORKSPACE_COLORS`.
+/// One Dark Pro muted palette - low saturation colors.
 pub(crate) const WORKSPACE_PALETTE: [&str; 7] =
-    ["#FF5D5D", "#FF9F45", "#FFD23F", "#35D07F", "#29D6E8", "#4D9DFF", "#B084FF"];
+    ["#E06C75", "#D19A66", "#E5C07B", "#98C379", "#56B6C2", "#61AFEF", "#C678DD"];
 
 #[cfg(test)]
 mod tests;
