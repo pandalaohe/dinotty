@@ -295,6 +295,10 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.virtualKeyboard.show': 'Show floating button',
     'settings.virtualKeyboard.hint':
       'Display a floating keyboard button at bottom-right for quick access to the virtual keyboard',
+    'settings.workspaceBadge': 'Workspace badge on tabs',
+    'settings.workspaceBadge.show': 'Show workspace badge on tabs',
+    'settings.workspaceBadge.hint':
+      'Display a colored dot and short abbreviation on each tab to indicate its workspace',
     'settings.monitor.cpu': 'CPU',
     'settings.monitor.memory': 'Memory',
     'settings.monitor.disk': 'Disk',
@@ -922,6 +926,9 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.virtualKeyboard': '虚拟键盘',
     'settings.virtualKeyboard.show': '显示悬浮按钮',
     'settings.virtualKeyboard.hint': '在右下角显示虚拟键盘悬浮按钮，方便快速呼出虚拟键盘',
+    'settings.workspaceBadge': 'Tab 工作区标识',
+    'settings.workspaceBadge.show': '在 Tab 上显示工作区标识',
+    'settings.workspaceBadge.hint': '在每个 Tab 上显示色点和工作区缩写，便于识别所属工作区',
     'settings.monitor.cpu': 'CPU',
     'settings.monitor.memory': '内存',
     'settings.monitor.disk': '磁盘',

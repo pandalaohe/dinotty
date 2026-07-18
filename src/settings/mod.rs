@@ -60,6 +60,8 @@ pub struct Settings {
     pub keyboard_sound: bool,
     #[serde(default)]
     pub show_virtual_keyboard: bool,
+    #[serde(default = "default_true")]
+    pub show_workspace_badge_on_tab: bool,
     #[serde(default, rename = "windowsAltAsCmd")]
     pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
@@ -883,6 +885,7 @@ impl Default for Settings {
             upload_file_cap_mb: 0,
             keyboard_sound: false,
             show_virtual_keyboard: false,
+            show_workspace_badge_on_tab: true,
             windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
             space_confirms_dialogs: false,

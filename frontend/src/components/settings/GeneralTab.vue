@@ -52,6 +52,22 @@
         </div>
         <p class="settings-hint">{{ t('settings.virtualKeyboard.hint') }}</p>
       </section>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.workspaceBadge') }}</h3>
+        <div class="settings-row">
+          <label>{{ t('settings.workspaceBadge.show') }}</label>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              v-model="settings.show_workspace_badge_on_tab"
+              @change="saveSettings()"
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint">{{ t('settings.workspaceBadge.hint') }}</p>
+      </section>
     </div>
 
     <div class="settings-group">
