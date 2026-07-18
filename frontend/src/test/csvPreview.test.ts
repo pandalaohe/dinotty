@@ -124,6 +124,53 @@ describe('CsvPreview', function csvPreviewComponentSuite() {
     expect(wrapper.find('tbody').text()).not.toContain('Carol')
   })
 
+  it('excludes rows whose selected column contains the filter text', async function excludesContainedText() {
+    // 步骤1：挂载包含不同城市的 CSV 表格并打开筛选面板。
+    const wrapper = mount(CsvPreview, {
+      props: {
+        content: 'name,city\nAlice,Shanghai\nBob,Beijing\nCarol,Shanghai',
+        filePath: 'people.csv',
+        truncated: false,
+      },
+    })
+    await wrapper.get('[data-testid="csv-filter-toggle"]').trigger('click')
+
+    // 步骤2：确认存在“不包含”运算符，再设置城市列不包含 hai。
+    expect(wrapper.find('option[value="notContains"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="csv-filter-column-0"]').setValue('1')
+    await wrapper.get('[data-testid="csv-filter-operator-0"]').setValue('notContains')
+    await wrapper.get('[data-testid="csv-filter-value-0"]').setValue('hai')
+
+    // 步骤3：确认排除包含 hai 的上海记录，只保留北京记录。
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.find('tbody').text()).toContain('Bob')
+    expect(wrapper.find('tbody').text()).not.toContain('Alice')
+    expect(wrapper.find('tbody').text()).not.toContain('Carol')
+  })
+
+  it('excludes a row when any column contains the filter text', async function excludesAcrossAllColumns() {
+    // 步骤1：挂载在不同列中包含 Shanghai 的 CSV 表格并打开筛选面板。
+    const wrapper = mount(CsvPreview, {
+      props: {
+        content:
+          'name,city,note\nAlice,Shanghai,active\nBob,Beijing,Shanghai trip\nCarol,Shenzhen,active',
+        filePath: 'people.csv',
+        truncated: false,
+      },
+    })
+    await wrapper.get('[data-testid="csv-filter-toggle"]').trigger('click')
+
+    // 步骤2：保持默认“所有列”，设置不包含 Shanghai。
+    await wrapper.get('[data-testid="csv-filter-operator-0"]').setValue('notContains')
+    await wrapper.get('[data-testid="csv-filter-value-0"]').setValue('Shanghai')
+
+    // 步骤3：确认城市列或备注列命中的记录都被排除。
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.find('tbody').text()).toContain('Carol')
+    expect(wrapper.find('tbody').text()).not.toContain('Alice')
+    expect(wrapper.find('tbody').text()).not.toContain('Bob')
+  })
+
   it('applies column choices only after confirming the dialog', async function confirmsColumns() {
     // 步骤1：挂载包含三列的 CSV 表格并打开列显示弹窗。
     const wrapper = mount(CsvPreview, {

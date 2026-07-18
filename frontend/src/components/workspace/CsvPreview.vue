@@ -190,6 +190,7 @@
               @change="resetPage"
             >
               <option value="contains">{{ t('csvPreview.contains') }}</option>
+              <option value="notContains">{{ t('csvPreview.notContains') }}</option>
               <option value="equals">{{ t('csvPreview.equals') }}</option>
               <option value="notEquals">{{ t('csvPreview.notEquals') }}</option>
               <option value="startsWith">{{ t('csvPreview.startsWith') }}</option>
@@ -448,6 +449,7 @@ interface CsvFilterCondition {
 
 type CsvFilterOperator =
   | 'contains'
+  | 'notContains'
   | 'equals'
   | 'notEquals'
   | 'startsWith'
@@ -750,6 +752,8 @@ function cellMatchesCondition(cellValue: string, condition: CsvFilterCondition):
 
   // 步骤3：按当前文本匹配方式判断单元格。
   switch (condition.operator) {
+    case 'notContains':
+      return !normalizedCellValue.includes(normalizedFilterValue)
     case 'equals':
       return normalizedCellValue === normalizedFilterValue
     case 'notEquals':
@@ -772,8 +776,17 @@ function rowMatchesCondition(row: CsvRow, condition: CsvFilterCondition): boolea
   let conditionMatches = false
   if (condition.columnIndex >= 0) {
     conditionMatches = cellMatchesCondition(cellText(row, condition.columnIndex), condition)
+  } else if (condition.operator === 'notContains') {
+    // 步骤2：“所有列不包含”要求每一列都不含筛选文本。
+    conditionMatches = true
+    for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
+      if (!cellMatchesCondition(cellText(row, columnIndex), condition)) {
+        conditionMatches = false
+        break
+      }
+    }
   } else {
-    // 步骤2：选择全部列时，任意一列满足条件即匹配。
+    // 步骤3：其他运算符选择全部列时，任意一列满足条件即匹配。
     for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
       if (cellMatchesCondition(cellText(row, columnIndex), condition)) {
         conditionMatches = true
@@ -782,7 +795,7 @@ function rowMatchesCondition(row: CsvRow, condition: CsvFilterCondition): boolea
     }
   }
 
-  // 步骤3：启用“非”时对整条条件结果取反。
+  // 步骤4：启用“非”时对整条条件结果取反。
   if (condition.negated) return !conditionMatches
   return conditionMatches
 }
