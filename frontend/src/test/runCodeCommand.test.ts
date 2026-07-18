@@ -76,6 +76,19 @@ describe('run code commands', function runCodeCommandSuite() {
       'python3 /home/user/scripts/report.py'
     )
   })
+
+  it('uses PowerShell rules for a Windows path before shell metadata arrives', function infersWindowsShell() {
+    // 步骤1：模拟终端刚连接、shell 类型还没有写回 Pane 的瞬间。
+    const command = buildRunCodeCommand(
+      'C:\\Users\\Administrator\\Desktop\\新建文件夹 (5)\\generate_sample_data.py',
+      ''
+    )
+
+    // 步骤2：Windows 路径仍应使用 python 和 PowerShell 引号规则。
+    expect(command).toBe(
+      "python 'C:\\Users\\Administrator\\Desktop\\新建文件夹 (5)\\generate_sample_data.py'"
+    )
+  })
 })
 
 describe('tree run code action', function treeRunCodeActionSuite() {

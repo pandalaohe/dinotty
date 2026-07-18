@@ -101,6 +101,7 @@
             :allow-close="getAllLeaves(tab.layout).length > 1"
             @register="registerTermRef"
             @title-change="onTitleChange"
+            @shell-info="onShellInfo"
             @focus="(id: string) => splitPane.focusPane(id)"
             @close="(id: string) => onClosePane(tab.paneId, id)"
             @input="(id: string, data: string) => splitPane.onTerminalInput(id, data)"
@@ -260,7 +261,7 @@ import ServerList from './components/ServerList.vue'
 import SshHostsPanel from './components/ssh/SshHostsPanel.vue'
 import SshAuthPromptDialog from './components/ssh/SshAuthPromptDialog.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
-import type { Tab, TerminalTab, PluginTab, PaneLayout, DropPosition } from './types/pane'
+import type { Tab, TerminalTab, PluginTab, PaneLayout, LeafPane, DropPosition } from './types/pane'
 import { getAllLeaves, findLeaf, findFirstLeaf, ensureSplitRoot } from './types/pane'
 import { initializePaneMru } from './types/paneMru'
 // useSettings replaced by useSettingsStore
@@ -1138,6 +1139,22 @@ function onTitleChange(paneId: string, title: string) {
       persist()
     }
   }
+}
+
+function onShellInfo(paneId: string, shellType: string) {
+  // 步骤1：找到终端 Pane 所属的标签页和叶子节点。
+  let matchingLeaf: LeafPane | null = null
+  for (let tabIndex = 0; tabIndex < tabs.value.length; tabIndex += 1) {
+    const candidateTab = tabs.value[tabIndex]
+    if (candidateTab.type !== 'terminal') continue
+    matchingLeaf = findLeaf(candidateTab.layout, paneId)
+    if (matchingLeaf) break
+  }
+  if (!matchingLeaf || matchingLeaf.shell_type === shellType) return
+
+  // 步骤2：保存后端识别出的 shell，供运行代码等功能生成正确命令。
+  matchingLeaf.shell_type = shellType
+  persist()
 }
 
 function onPreviewLink(leafPaneId: string, url: string) {

@@ -75,6 +75,11 @@ function normalizeWindowsRunPath(filePath: string): string {
   return normalizedPath
 }
 
+function isWindowsRunPath(filePath: string): boolean {
+  // 步骤1：盘符绝对路径和 UNC 路径都只能在 Windows shell 中直接运行。
+  return /^[A-Za-z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\')
+}
+
 function quotedPathForShell(filePath: string, shellType: string): string {
   // 步骤1：根据活动终端的 shell 使用对应路径引用方式。
   if (shellType === 'powershell') return quotePowerShellPath(filePath)
@@ -87,10 +92,11 @@ export function buildRunCodeCommand(filePath: string, shellType: string): string
   const extension = fileExtension(filePath)
   if (!isRunnableCodeFile(filePath)) return null
 
-  // 步骤2：Windows shell 先移除扩展路径前缀，再生成安全路径参数。
-  const windowsShell = shellType === 'powershell' || shellType === 'cmd'
+  // 步骤2：shell 元数据尚未到达时，根据绝对路径识别 Windows 本地终端。
+  const effectiveShellType = shellType || (isWindowsRunPath(filePath) ? 'powershell' : '')
+  const windowsShell = effectiveShellType === 'powershell' || effectiveShellType === 'cmd'
   const commandPath = windowsShell ? normalizeWindowsRunPath(filePath) : filePath
-  const quotedPath = quotedPathForShell(commandPath, shellType)
+  const quotedPath = quotedPathForShell(commandPath, effectiveShellType)
 
   // 步骤3：脚本类文件使用对应解释器直接运行。
   switch (extension) {
@@ -109,13 +115,15 @@ export function buildRunCodeCommand(filePath: string, shellType: string): string
     case 'sh':
       return `bash ${quotedPath}`
     case 'ps1':
-      if (shellType === 'powershell') return `& ${quotedPath}`
-      if (shellType === 'cmd') return `powershell -ExecutionPolicy Bypass -File ${quotedPath}`
+      if (effectiveShellType === 'powershell') return `& ${quotedPath}`
+      if (effectiveShellType === 'cmd') {
+        return `powershell -ExecutionPolicy Bypass -File ${quotedPath}`
+      }
       return `pwsh -File ${quotedPath}`
     case 'bat':
     case 'cmd':
-      if (shellType === 'powershell') return `& ${quotedPath}`
-      if (shellType === 'cmd') return `call ${quotedPath}`
+      if (effectiveShellType === 'powershell') return `& ${quotedPath}`
+      if (effectiveShellType === 'cmd') return `call ${quotedPath}`
       return `cmd.exe /c ${quotedPath}`
     case 'go':
       return `go run ${quotedPath}`

@@ -260,10 +260,12 @@ import type { Tab } from '../types/pane'
 // the inline arrow handler runs against the live `tabs` state.
 const SplitContainerStub = defineComponent({
   name: 'SplitContainer',
+  props: ['layout'],
   emits: [
     'close',
     'register',
     'title-change',
+    'shell-info',
     'focus',
     'input',
     'file-click',
@@ -1001,6 +1003,24 @@ describe('App.vue - plugin notification bridge', () => {
     )
     expect(startedBodies).toEqual(['dispose-0', 'dispose-1', 'dispose-2'])
     expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+})
+
+describe('App.vue - records terminal shell type', () => {
+  it('writes shell info into the matching leaf pane', async () => {
+    // 步骤1：挂载包含两个本地终端 Pane 的应用。
+    const wrapper = await mountWithTabs()
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    const layout = splitContainer.props('layout') as {
+      children: Array<{ paneId: string; shell_type?: string }>
+    }
+
+    // 步骤2：模拟 PowerShell 终端上报 shell 类型。
+    await splitContainer.vm.$emit('shell-info', 'pane-1', 'powershell')
+    await nextTick()
+
+    // 步骤3：应用状态应记录该类型，供“运行代码”选择正确解释器。
+    expect(layout.children[0].shell_type).toBe('powershell')
   })
 })
 
