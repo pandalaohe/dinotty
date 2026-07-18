@@ -133,6 +133,10 @@ import type { TabCard, PanePreviewNode } from '../../composables/useTabPreview'
 import SplitPreviewNode from './SplitPreviewNode.vue'
 import ContextMenu from '../ui/ContextMenu.vue'
 import type { ContextMenuItem } from '../ui/ContextMenu.vue'
+import { useI18n } from '../../composables/useI18n'
+import { uiPrompt } from '../../composables/usePrompt'
+
+const { t } = useI18n()
 
 function isSplitPreview(content: string | PanePreviewNode): content is PanePreviewNode {
   return typeof content === 'object' && content !== null && 'direction' in content
@@ -171,11 +175,14 @@ function openCardCtx(e: MouseEvent, card: TabCard) {
   ctxY.value = e.clientY
   ctxItems.value = [
     {
-      label: 'Rename',
+      label: t('palette.rename'),
       icon: Pencil,
-      action: () => {
-        const name = prompt('Rename tab', card.title)
-        if (name !== null && name.trim()) {
+      action: async () => {
+        const name = await uiPrompt(t('palette.rename'), card.title, {
+          confirmText: t('settings.token.save'),
+          cancelText: t('confirm.closeWindowCancel'),
+        })
+        if (name && name.trim()) {
           emit('rename-tab', card.paneId, name.trim())
         }
       },

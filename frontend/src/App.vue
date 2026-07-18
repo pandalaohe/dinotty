@@ -179,6 +179,17 @@
       @cancel="confirmCancel"
     />
 
+    <PromptModal
+      :visible="promptState.visible"
+      :title="promptState.title"
+      :default-value="promptState.defaultValue"
+      :placeholder="promptState.placeholder"
+      :confirm-text="promptState.confirmText"
+      :cancel-text="promptState.cancelText"
+      @confirm="promptResolve"
+      @cancel="promptCancel"
+    />
+
     <ConfirmModal
       :visible="windowCloseConfirmVisible"
       :title="t('confirm.closeWindowTitle')"
@@ -255,6 +266,8 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
 import ConfirmModal from './components/ui/ConfirmModal.vue'
 import { confirmState, uiConfirm, confirmResolve, confirmCancel } from './composables/useConfirm'
+import PromptModal from './components/ui/PromptModal.vue'
+import { promptState, promptResolve, promptCancel } from './composables/usePrompt'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
