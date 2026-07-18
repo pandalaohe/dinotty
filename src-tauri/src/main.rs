@@ -18,9 +18,12 @@ mod embedded_server;
 
 static EMBEDDED_HTTP_PORT: OnceLock<u16> = OnceLock::new();
 static DESKTOP_SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
+const BUILT_IN_DEFAULT_PORT: u16 = 8999;
 
 fn default_port() -> u16 {
-    option_env!("DINOTTY_DEFAULT_PORT").and_then(|s| s.parse().ok()).unwrap_or(8999)
+    option_env!("DINOTTY_DEFAULT_PORT")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(BUILT_IN_DEFAULT_PORT)
 }
 
 #[derive(Clone, Serialize)]
@@ -634,7 +637,17 @@ fn main() {
     let _log_guard = dinotty_server::settings::init_logging();
 
     let args: Vec<String> = std::env::args().collect();
-    let port = parse_port(&args);
+    let requested_port = parse_port(&args);
+    let port = if requested_port == 0 {
+        let port = match default_port() {
+            0 => BUILT_IN_DEFAULT_PORT,
+            port => port,
+        };
+        tracing::warn!("Port 0 is not supported; falling back to default port {port}");
+        port
+    } else {
+        requested_port
+    };
     let _ = EMBEDDED_HTTP_PORT.set(port);
 
     let manager = Arc::new(SessionManager::new());
