@@ -219,6 +219,8 @@ pub struct NotificationConfig {
     #[serde(default = "default_true")]
     pub osc_notify: bool,
     #[serde(default)]
+    pub idle_reminder: bool,
+    #[serde(default)]
     pub command_complete: CommandCompleteConfig,
     #[serde(default)]
     pub keyword_match: Vec<KeywordRule>,
@@ -236,6 +238,7 @@ impl Default for NotificationConfig {
             enabled: true,
             bell: BellNotificationConfig::default(),
             osc_notify: true,
+            idle_reminder: false,
             command_complete: CommandCompleteConfig::default(),
             keyword_match: vec![],
             channels: NotificationChannels::default(),

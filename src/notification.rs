@@ -402,6 +402,12 @@ impl NotificationBroadcast {
         if req.source.as_deref().is_some_and(|source| source != "plugin") {
             return ProducerProcessResult::Malformed("invalid source".into());
         }
+        let cfg = self.notification_config();
+        if cfg.enabled && req.category.as_deref() == Some("idle_reminder") && !cfg.idle_reminder {
+            return ProducerProcessResult::Outcome(ProducerOutcome::Suppressed {
+                reason: "idle_reminder_disabled".into(),
+            });
+        }
         if req.client_id.is_some() != req.request_id.is_some() {
             return ProducerProcessResult::Malformed(
                 "clientId and requestId must be provided together".into(),
@@ -419,7 +425,6 @@ impl NotificationBroadcast {
         }
         let payload_hash = payload_hash(&("producer.notify", &req));
         let key = (client_id.clone(), request_id.clone());
-        let cfg = self.notification_config();
         let now = now_ms();
         let mut pane_is_live = Some(pane_is_live);
         // Hooks (spec §10) must fire exactly once, ONLY on a newly-accepted event — never on
@@ -862,6 +867,8 @@ pub struct NotifyRequest {
     pub request_id: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
     // camelCase's own name for this field is "paneId"; documented legacy callers
     // (docs/notifications.en.md, scripts/notify-done.sh, users' Claude Code hooks) send the
     // original snake_case "pane_id" — accept both.
@@ -962,6 +969,7 @@ mod tests {
             client_id: client_id.map(str::to_string),
             request_id: request_id.map(str::to_string),
             source: Some("plugin".into()),
+            category: None,
             pane_id: pane_id.map(str::to_string),
             title: Some("Test".into()),
             body: "Body".into(),
@@ -1522,6 +1530,112 @@ mod tests {
             "replay must return the cached suppressed outcome verbatim"
         );
         assert_eq!(notifier.hook_invocation_count(), 1);
+    }
+
+    #[test]
+    fn idle_reminder_is_suppressed_without_broadcast_when_disabled() {
+        let notifier = NotificationBroadcast::new();
+        let settings_state: SettingsState =
+            Arc::new(tokio::sync::RwLock::new(crate::settings::Settings::default()));
+        notifier.set_settings(settings_state.clone());
+        settings_state.try_write().unwrap().notification.idle_reminder = false;
+
+        let mut registration = notifier.register_client();
+        assert!(matches!(
+            notifier.take_data(registration.conn_id),
+            Some(ServerEnvelope::Snapshot { .. })
+        ));
+        registration.data_wake.try_recv().unwrap();
+
+        let mut request = notify_request(Some("idle-client"), Some("idle-disabled"), None);
+        request.category = Some("idle_reminder".into());
+        let result = notifier.process_notify(request, |_| true);
+
+        assert_eq!(
+            result,
+            ProducerProcessResult::Outcome(ProducerOutcome::Suppressed {
+                reason: "idle_reminder_disabled".into(),
+            })
+        );
+        assert!(notifier.take_data(registration.conn_id).is_none());
+        assert!(matches!(registration.data_wake.try_recv(), Err(TryRecvError::Empty)));
+        let snapshot = notifier.snapshot();
+        assert_eq!(snapshot.revision, 0);
+        assert!(snapshot.panes.is_empty());
+        assert!(snapshot.notifs.is_empty());
+    }
+
+    #[test]
+    fn notification_disabled_precedes_idle_reminder_disabled_and_replays() {
+        let notifier = NotificationBroadcast::new();
+        let settings_state: SettingsState =
+            Arc::new(tokio::sync::RwLock::new(crate::settings::Settings::default()));
+        notifier.set_settings(settings_state.clone());
+        {
+            let mut settings = settings_state.try_write().unwrap();
+            settings.notification.enabled = false;
+            settings.notification.idle_reminder = false;
+        }
+
+        let mut request = notify_request(Some("idle-client"), Some("global-disabled"), None);
+        request.category = Some("idle_reminder".into());
+        let first = notifier.process_notify(request.clone(), |_| true);
+
+        assert_eq!(
+            first,
+            ProducerProcessResult::Outcome(ProducerOutcome::Suppressed {
+                reason: "notification_disabled".into(),
+            })
+        );
+
+        {
+            let mut settings = settings_state.try_write().unwrap();
+            settings.notification.enabled = true;
+            settings.notification.idle_reminder = true;
+        }
+        let replay = notifier.process_notify(request, |_| true);
+
+        assert_eq!(replay, first, "replay must return the cached global-gate outcome");
+        let snapshot = notifier.snapshot();
+        assert_eq!(snapshot.revision, 0);
+        assert!(snapshot.notifs.is_empty());
+    }
+
+    #[test]
+    fn idle_reminder_is_accepted_when_enabled() {
+        let notifier = NotificationBroadcast::new();
+        let settings_state: SettingsState =
+            Arc::new(tokio::sync::RwLock::new(crate::settings::Settings::default()));
+        notifier.set_settings(settings_state.clone());
+        settings_state.try_write().unwrap().notification.idle_reminder = true;
+
+        let mut request = notify_request(Some("idle-client"), Some("idle-enabled"), None);
+        request.category = Some("idle_reminder".into());
+        let result = notifier.process_notify(request, |_| true);
+
+        assert!(matches!(
+            result,
+            ProducerProcessResult::Outcome(ProducerOutcome::AcceptedNotif { .. })
+        ));
+        assert_eq!(notifier.snapshot().notifs.len(), 1);
+    }
+
+    #[test]
+    fn notification_without_category_is_unaffected_when_idle_reminder_is_disabled() {
+        let notifier = NotificationBroadcast::new();
+        let settings_state: SettingsState =
+            Arc::new(tokio::sync::RwLock::new(crate::settings::Settings::default()));
+        notifier.set_settings(settings_state.clone());
+        settings_state.try_write().unwrap().notification.idle_reminder = false;
+
+        let request = notify_request(Some("idle-client"), Some("uncategorized"), None);
+        let result = notifier.process_notify(request, |_| true);
+
+        assert!(matches!(
+            result,
+            ProducerProcessResult::Outcome(ProducerOutcome::AcceptedNotif { .. })
+        ));
+        assert_eq!(notifier.snapshot().notifs.len(), 1);
     }
 
     #[test]

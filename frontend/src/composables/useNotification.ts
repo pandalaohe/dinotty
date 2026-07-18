@@ -1,5 +1,6 @@
-import { ref, shallowReactive, computed, h } from 'vue'
+import { ref, shallowReactive, computed, h, watch } from 'vue'
 import { TYPE } from 'vue-toastification'
+import type { ToastInterface } from 'vue-toastification'
 import { getApiBase, wsUrlWithToken } from './apiBase'
 import { isTauri } from './useTransport'
 import { settings } from './useSettings'
@@ -10,6 +11,14 @@ import {
   type MarkReadResultWire,
   type OverlayTarget,
 } from './attentionReconcile'
+import {
+  __resetNotificationPresentationForTest,
+  createPresentationScheduler,
+  getNotificationPresentationSettings,
+  presentationGate,
+  type PresentationEvent,
+  type PresentationOutput,
+} from './useNotificationPresentation'
 
 // ── Sound ──────────────────────────────────────────────
 
@@ -81,6 +90,19 @@ export function playSound(config: SoundConfig) {
   }
 }
 
+const productionNotificationPresentationEffects = { playSound }
+const notificationPresentationEffects = { ...productionNotificationPresentationEffects }
+
+export function __setPresentationEffectsForTest(
+  overrides: Partial<typeof notificationPresentationEffects>,
+) {
+  Object.assign(notificationPresentationEffects, overrides)
+}
+
+function resetPresentationEffects() {
+  Object.assign(notificationPresentationEffects, productionNotificationPresentationEffects)
+}
+
 export function getBuiltinSoundNames(): string[] {
   return Object.keys(BUILTIN_SOUNDS)
 }
@@ -96,6 +118,7 @@ export interface NotificationItem {
   eventSeq?: string
   notifId?: string
   epoch?: string
+  presentationIdentity?: { kind: 'pane' | 'notif'; id: string }
 }
 
 export type MarkReadReason =
@@ -144,11 +167,48 @@ const ACK_TIMEOUT_MS = 5000
 const MAX_SEND_ATTEMPTS = 4
 const PENDING_CAP = 64
 const HISTORY_DEDUP_CAP = 512
+const PANEL_EMPTY_AUTOHIDE_MS = 250
 const CLIENT_ID_KEY = 'dinotty.notifClientId'
 const PROTO_RELOAD_KEY = 'dinotty.protoReloadAt'
 
 const notifications = ref<NotificationItem[]>([])
 const panelVisible = ref(false)
+let panelEmptyAutohideTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearPanelEmptyAutohide() {
+  if (panelEmptyAutohideTimer === null) return
+  clearTimeout(panelEmptyAutohideTimer)
+  panelEmptyAutohideTimer = null
+}
+
+watch(
+  () => notifications.value.length,
+  (length, previousLength) => {
+    if (length > 0) {
+      clearPanelEmptyAutohide()
+      return
+    }
+    if (!panelVisible.value || previousLength === 0) return
+
+    clearPanelEmptyAutohide()
+    panelEmptyAutohideTimer = setTimeout(() => {
+      panelEmptyAutohideTimer = null
+      if (panelVisible.value && notifications.value.length === 0) {
+        panelVisible.value = false
+      }
+    }, PANEL_EMPTY_AUTOHIDE_MS)
+  },
+  { flush: 'sync' },
+)
+
+watch(
+  panelVisible,
+  (visible) => {
+    if (!visible) clearPanelEmptyAutohide()
+  },
+  { flush: 'sync' },
+)
+
 const unreadByPane = shallowReactive<Record<string, NotificationType>>({})
 const firstUnreadAtByPane = shallowReactive<Record<string, number | null>>({})
 const projectionVersion = ref(0)
@@ -176,9 +236,84 @@ const historyDedup = new Set<string>()
 interface ActiveReadContext {
   getActiveFocusedPaneId: () => string | null
   isAppForeground: () => boolean
+  getActiveTabPaneIds: () => string[]
 }
 
 let activeReadContext: ActiveReadContext | null = null
+
+function gateNotification(item: NotificationItem): PresentationOutput {
+  return presentationGate(
+    { paneId: item.paneId, eventSeq: item.eventSeq, severity: item.type },
+    {
+      settings: getNotificationPresentationSettings(),
+      focusedPaneId: activeReadContext?.getActiveFocusedPaneId() ?? null,
+      activeTabPaneIds: activeReadContext?.getActiveTabPaneIds() ?? [],
+      isAppForeground: activeReadContext?.isAppForeground() ?? false,
+      now: () => new Date(),
+    },
+  )
+}
+
+function emitPresentation(
+  item: NotificationItem,
+  output: PresentationOutput,
+  retire: () => void,
+) {
+  const presentation = getNotificationPresentationSettings()
+  if (output.playSound) {
+    const soundCfg = presentation.sounds[item.type]
+    if (soundCfg) notificationPresentationEffects.playSound(soundCfg)
+  }
+  if (output.vibrate && typeof navigator !== 'undefined' && navigator.vibrate) {
+    navigator.vibrate(item.type === 'urgent' ? [100, 50, 100, 50, 100] : [100])
+  }
+  if (output.showPopup) return showToast(item, retire)
+}
+
+type ScheduledNotification = NotificationItem & PresentationEvent
+
+const presentationScheduler = createPresentationScheduler<ScheduledNotification>({
+  getWindowMs: () => getNotificationPresentationSettings().coalesce_window_ms,
+  evaluate: gateNotification,
+  fire: emitPresentation,
+})
+
+function presentNotification(item: NotificationItem, initialOutput: PresentationOutput) {
+  const identity = item.presentationIdentity ?? stampPresentationIdentity(item)
+  presentationScheduler.enqueue({
+    ...item,
+    paneId: identity.kind === 'pane' ? identity.id : undefined,
+    notifId: identity.kind === 'notif' ? identity.id : undefined,
+    severity: item.type,
+  }, initialOutput)
+}
+
+function stampPresentationIdentity(item: NotificationItem) {
+  const identity = item.paneId
+    ? { kind: 'pane' as const, id: item.paneId }
+    : { kind: 'notif' as const, id: item.notifId ?? item.id }
+  item.presentationIdentity = identity
+  return identity
+}
+
+function cancelPresentationForItem(item: NotificationItem) {
+  const identity = item.presentationIdentity ?? stampPresentationIdentity(item)
+  if (identity.kind === 'pane') presentationScheduler.cancelPane(identity.id)
+  else presentationScheduler.cancelNotif(identity.id)
+}
+
+function cancelPresentationForState(envelope: AttentionStateEnvelope) {
+  for (const pane of envelope.panes) {
+    if (pane.removed) {
+      presentationScheduler.removePane(pane.paneId)
+    } else if (pane.readThroughSeq !== null) {
+      presentationScheduler.cancelPane(pane.paneId, pane.readThroughSeq)
+    }
+  }
+  for (const notif of envelope.notifs) {
+    if (notif.read === true || notif.removed) presentationScheduler.cancelNotif(notif.notifId)
+  }
+}
 
 function randomToken(): string {
   try {
@@ -249,7 +384,51 @@ export function aggregateSeverity(paneIds: string[]): NotificationType | null {
   return highest
 }
 
+function historyItemMatchesReadTarget(card: NotificationItem, target: OverlayTarget): boolean {
+  if ('paneId' in target) {
+    return card.paneId === target.paneId
+      && card.eventSeq !== undefined
+      && BigInt(card.eventSeq) <= target.throughEventSeq
+  }
+  return card.notifId === target.notifId
+}
+
+function pruneHistoryByReadTargets(targets: OverlayTarget[]) {
+  const epoch = attentionStore.epoch
+  if (epoch === null || targets.length === 0) return
+  notifications.value = notifications.value.filter(
+    (card) => card.epoch !== epoch || !targets.some((target) =>
+      historyItemMatchesReadTarget(card, target)
+    )
+  )
+}
+
+function pruneHistoryByAuthoritativeRead() {
+  const epoch = attentionStore.epoch
+  if (epoch === null) return
+  notifications.value = notifications.value.filter((card) => {
+    if (card.epoch !== epoch) return true
+
+    let paneRead = false
+    if (card.paneId !== undefined) {
+      const pane = attentionStore.panes.get(card.paneId)
+      paneRead = pane !== undefined
+        && card.eventSeq !== undefined
+        && pane.readThroughSeq >= BigInt(card.eventSeq)
+    }
+
+    let notifRead = false
+    if (card.notifId !== undefined) {
+      const notif = attentionStore.notifs.get(card.notifId)
+      notifRead = notif !== undefined && notif.read === true
+    }
+
+    return !paneRead && !notifRead
+  })
+}
+
 function refreshProjection() {
+  pruneHistoryByAuthoritativeRead()
   const next = attentionStore.unreadPaneSeverities()
   delete next['']
   for (const paneId of Object.keys(unreadByPane)) {
@@ -283,6 +462,19 @@ function rememberHistoryKey(key: string): boolean {
 }
 
 function insertHistory(item: NotificationItem) {
+  const epoch = attentionStore.epoch
+  if (epoch !== null && item.epoch === epoch) {
+    const pane = item.paneId === undefined ? undefined : attentionStore.panes.get(item.paneId)
+    const paneRead = pane !== undefined
+      && item.eventSeq !== undefined
+      && pane.readThroughSeq >= BigInt(item.eventSeq)
+    const notifRead = item.notifId !== undefined
+      && attentionStore.notifs.get(item.notifId)?.read === true
+    const overlayRead = [...attentionStore.overlays.values()].some((overlay) =>
+      overlay.targets.some((target) => historyItemMatchesReadTarget(item, target))
+    )
+    if (paneRead || notifRead || overlayRead) return
+  }
   notifications.value.unshift(item)
   if (notifications.value.length > 100) notifications.value.length = 100
 }
@@ -291,7 +483,7 @@ function handleEvent(event: LegacyEvent) {
   const cfg = getNotifConfig()
   if (!cfg || !cfg.enabled) return
 
-  let notifType: NotificationType = 'info'
+  let notifType: NotificationType = event.severity || 'info'
   let title: string | null = null
   let body = ''
 
@@ -302,7 +494,7 @@ function handleEvent(event: LegacyEvent) {
     if (!event.notifId && !cfg.osc_notify) return
     title = event.title ?? null
     body = event.body ?? ''
-    notifType = (event.notification_type as NotificationType) || 'info'
+    notifType = event.severity || (event.notification_type as NotificationType) || 'info'
   } else {
     return
   }
@@ -324,29 +516,14 @@ function handleEvent(event: LegacyEvent) {
     notifId: event.notifId,
     epoch: attentionStore.epoch ?? undefined,
   }
-  insertHistory(item)
-
-  // Sound
-  if (cfg.channels?.sound) {
-    const soundCfg: SoundConfig | undefined = cfg.sounds?.[notifType]
-    if (soundCfg) playSound(soundCfg)
-  }
-
-  // Vibration
-  if (cfg.channels?.vibration && navigator.vibrate) {
-    navigator.vibrate(notifType === 'urgent' ? [100, 50, 100, 50, 100] : [100])
-  }
-
-  // Toast notification (reuses panel channel config)
-  if (cfg.channels?.panel) {
-    showToast(item)
-  }
+  stampPresentationIdentity(item)
+  const output = gateNotification(item)
+  if (output.storeHistory) insertHistory(item)
+  presentNotification(item, output)
 }
 
-// Direct push for non-terminal sources (e.g. plugins). Bypasses bell/osc_notify
-// sub-switches; still respects the master `enabled` switch, sound and vibration
-// channels. Toast is always shown (not gated by `panel` channel, which is meant
-// for terminal bell/OSC events) - plugin notify() is an explicit user-facing call.
+// Direct push for local fallback sources. It bypasses bell/osc_notify ingest
+// sub-switches, but presentation follows the same per-surface gate as raised events.
 export function pushNotification(opts: {
   type: NotificationType
   title?: string | null
@@ -367,18 +544,10 @@ export function pushNotification(opts: {
     source: opts.source ?? 'terminal',
     epoch: attentionStore.epoch ?? undefined,
   }
-  insertHistory(item)
-
-  if (cfg.channels?.sound) {
-    const soundCfg: SoundConfig | undefined = cfg.sounds?.[item.type]
-    if (soundCfg) playSound(soundCfg)
-  }
-
-  if (cfg.channels?.vibration && navigator.vibrate) {
-    navigator.vibrate(item.type === 'urgent' ? [100, 50, 100, 50, 100] : [100])
-  }
-
-  showToast(item)
+  stampPresentationIdentity(item)
+  const output = gateNotification(item)
+  if (output.storeHistory) insertHistory(item)
+  presentNotification(item, output)
 }
 
 const toastTypeMap: Record<NotificationType, any> = {
@@ -392,10 +561,22 @@ const toastTypeMap: Record<NotificationType, any> = {
 // Toast instance must be captured from a component setup context (App.vue) and
 // injected here - vue-toastification v2's useToast() called outside component
 // context returns an interface that doesn't reach the mounted container reliably.
-let toastInstance: ((content: any, options?: any) => void) | null = null
+type ToastID = ReturnType<ToastInterface>
+type ToastInstance = ((content: any, options?: any) => ToastID) & {
+  dismiss(id: ToastID): void
+}
+type LegacyToastInstance = (content: any, options?: any) => void
+type StoredToastInstance = ((content: any, options?: any) => ToastID | void) & {
+  dismiss?: (id: ToastID) => void
+}
 
-export function setToastInstance(toast: (content: any, options?: any) => void) {
+let toastInstance: StoredToastInstance | null = null
+
+export function setToastInstance(toast: ToastInstance | LegacyToastInstance | null) {
   toastInstance = toast
+  return () => {
+    if (toastInstance === toast) toastInstance = null
+  }
 }
 
 let goToHandler: ((paneId: string) => void) | null = null
@@ -406,6 +587,13 @@ export function setGoToPaneHandler(handler: (paneId: string) => void) {
 
 export function setActiveReadContext(context: ActiveReadContext | null) {
   activeReadContext = context
+  return () => {
+    if (activeReadContext === context) activeReadContext = null
+  }
+}
+
+export function disposeNotificationPresentationScheduler() {
+  presentationScheduler.dispose()
 }
 
 export function evaluateActiveRead() {
@@ -415,15 +603,19 @@ export function evaluateActiveRead() {
   markPaneReadIfUnread(paneId, 'active_observed')
 }
 
-function showToast(item: NotificationItem) {
+function showToast(item: NotificationItem, retire: () => void) {
   if (!toastInstance) {
     console.warn(
       '[notification] toast instance not set; call setToastInstance() from App.vue setup'
     )
     return
   }
+  const toast = toastInstance
   const { t } = useI18n()
   const paneId = item.paneId
+  let dismissToast: (() => void) | undefined
+  let closed = false
+  let dismissRequested = false
   const children = [
     item.title ? h('strong', { class: 'notif-toast-title' }, item.title) : null,
     h('span', { class: 'notif-toast-body' }, item.body),
@@ -433,6 +625,7 @@ function showToast(item: NotificationItem) {
           {
             class: 'notif-toast-btn',
             onClick: () => {
+              dismissToast?.()
               if (goToHandler) {
                 goToHandler(paneId)
               } else {
@@ -448,6 +641,7 @@ function showToast(item: NotificationItem) {
       {
         class: 'notif-toast-btn',
         onClick: () => {
+          dismissToast?.()
           panelVisible.value = true
         },
       },
@@ -455,10 +649,23 @@ function showToast(item: NotificationItem) {
     ),
   ].filter(Boolean)
   const content = h('div', { class: 'notif-toast-content' }, children)
-  toastInstance(content, {
+  const id = toast(content, {
     type: toastTypeMap[item.type] ?? TYPE.INFO,
     timeout: item.type === 'urgent' ? 8000 : 5000,
+    onClose: () => {
+      if (closed) return
+      closed = true
+      retire()
+    },
   })
+  if (id !== undefined && 'dismiss' in toast && typeof toast.dismiss === 'function') {
+    dismissToast = () => {
+      if (closed || dismissRequested) return
+      dismissRequested = true
+      toast.dismiss?.(id)
+    }
+  }
+  return dismissToast
 }
 
 function isSocketOpen(): boolean {
@@ -556,25 +763,33 @@ export function markPanesRead(
   const targets: OverlayTarget[] = []
   for (const requested of panes) {
     const pane = attentionStore.panes.get(requested.paneId)
-    if (!pane) continue
-    const throughEventSeq = requested.throughEventSeq ?? pane.latestEventSeq.toString()
+    const throughEventSeq = requested.throughEventSeq ?? pane?.latestEventSeq.toString()
+    presentationScheduler.cancelPane(requested.paneId, throughEventSeq)
+    if (!pane || throughEventSeq === undefined) continue
     wirePanes.push({ paneId: requested.paneId, throughEventSeq })
     targets.push({ paneId: requested.paneId, throughEventSeq: BigInt(throughEventSeq) })
   }
+  pruneHistoryByReadTargets(targets)
   createPending(targets, reason, wirePanes, [])
 }
 
 export function markPaneReadIfUnread(paneId: string, reason: MarkReadReason) {
-  if (!paneId || !unreadByPane[paneId]) return
+  if (!paneId) return
+  presentationScheduler.cancelPane(paneId)
+  if (!unreadByPane[paneId]) return
   const pane = attentionStore.panes.get(paneId)
   if (!pane) return
   markPanesRead([{ paneId, throughEventSeq: pane.latestEventSeq.toString() }], reason)
 }
 
 export function markNotifsRead(notifIds: string[], reason: MarkReadReason) {
-  const ids = [...new Set(notifIds)].filter((notifId) => attentionStore.notifs.has(notifId))
+  const requestedIds = [...new Set(notifIds)]
+  for (const notifId of requestedIds) presentationScheduler.cancelNotif(notifId)
+  const ids = requestedIds.filter((notifId) => attentionStore.notifs.has(notifId))
+  const targets: OverlayTarget[] = ids.map((notifId) => ({ notifId }))
+  pruneHistoryByReadTargets(targets)
   createPending(
-    ids.map((notifId) => ({ notifId })),
+    targets,
     reason,
     [],
     ids.map((notifId) => ({ notifId }))
@@ -647,7 +862,9 @@ export function __dispatchServerMessageForTest(msg: unknown) {
   switch (envelope.type) {
     case 'state_delta':
       {
-        const applied = attentionStore.applyDelta(msg as unknown as AttentionStateEnvelope)
+        const delta = msg as unknown as AttentionStateEnvelope
+        const applied = attentionStore.applyDelta(delta)
+        if (applied) cancelPresentationForState(delta)
         prunePendingWithoutOverlay()
         refreshProjection()
         if (applied) evaluateActiveRead()
@@ -655,7 +872,11 @@ export function __dispatchServerMessageForTest(msg: unknown) {
       break
     case 'snapshot': {
       const snapshot = msg as unknown as AttentionStateEnvelope
+      if (attentionStore.epoch !== null && attentionStore.epoch !== snapshot.epoch) {
+        presentationScheduler.clear()
+      }
       const applied = attentionStore.applySnapshot(snapshot)
+      if (applied) cancelPresentationForState(snapshot)
       prunePendingWithoutOverlay()
       refreshProjection()
       if (applied) evaluateActiveRead()
@@ -667,6 +888,15 @@ export function __dispatchServerMessageForTest(msg: unknown) {
     }
     case 'mark_read_result': {
       const result = msg as MarkReadResultWire & { type: string }
+      const pending = pendingRequests.get(result.requestId)
+      for (const { target } of result.results) {
+        if ('paneId' in target) {
+          const pane = pending?.payload.panes.find(({ paneId }) => paneId === target.paneId)
+          presentationScheduler.cancelPane(target.paneId, pane?.throughEventSeq)
+        } else if ('notifId' in target) {
+          presentationScheduler.cancelNotif(target.notifId)
+        }
+      }
       const staleEpoch = result.results.some(({ status }) => status === 'stale_epoch')
       if (staleEpoch) cancelAllPending()
       else cancelPending(result.requestId)
@@ -687,6 +917,10 @@ export function __dispatchServerMessageForTest(msg: unknown) {
 
 export function __pendingRequestCountForTest(): number {
   return pendingRequests.size
+}
+
+export function __pendingPresentationCountForTest(): number {
+  return presentationScheduler.pendingCount()
 }
 
 function connectWs() {
@@ -720,6 +954,8 @@ function connectWs() {
 }
 
 export function __resetForTest() {
+  resetPresentationEffects()
+  clearPanelEmptyAutohide()
   connectGeneration++
   if (reconnectTimer !== null) clearTimeout(reconnectTimer)
   reconnectTimer = null
@@ -748,6 +984,8 @@ export function __resetForTest() {
   toastInstance = null
   goToHandler = null
   activeReadContext = null
+  presentationScheduler.clear()
+  __resetNotificationPresentationForTest()
 }
 
 export function useNotification() {
@@ -768,6 +1006,7 @@ export function useNotification() {
     markNotifsRead,
     dismissOne(id: string) {
       const item = notifications.value.find((notification) => notification.id === id)
+      if (item) cancelPresentationForItem(item)
       notifications.value = notifications.value.filter((notification) => notification.id !== id)
       if (!item || item.epoch !== attentionStore.epoch) return
       if (item?.paneId && item.eventSeq) {
@@ -777,8 +1016,9 @@ export function useNotification() {
       }
     },
     clearAll() {
+      presentationScheduler.cancelAllPanes()
+      presentationScheduler.cancelAllNotifs()
       notifications.value = []
-      panelVisible.value = false
       const panes = [...attentionStore.panes.entries()]
         .filter(([, pane]) => pane.latestEventSeq > pane.readThroughSeq)
         .map(([paneId, pane]) => ({ paneId, throughEventSeq: pane.latestEventSeq.toString() }))

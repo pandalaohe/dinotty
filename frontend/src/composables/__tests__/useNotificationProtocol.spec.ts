@@ -147,7 +147,7 @@ beforeEach(() => {
     enabled: true,
     osc_notify: true,
     bell: { enabled: true },
-    channels: { sound: false, vibration: false, panel: false },
+    channels: { sound: false, vibration: false, panel: true, tab_indicator: false },
     sounds: {},
   }
 })
@@ -206,7 +206,7 @@ describe('useNotification protocol dispatcher', () => {
     )
     expect(notif.unreadAttentionCount.value).toBe(0)
 
-    __dispatchServerMessageForTest(legacyEvent())
+    __dispatchServerMessageForTest(legacyEvent({ eventSeq: '3' }))
     expect(notif.historyCount.value).toBe(1)
   })
 
