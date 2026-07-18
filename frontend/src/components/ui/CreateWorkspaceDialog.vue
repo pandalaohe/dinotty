@@ -70,7 +70,7 @@
             @keydown.enter="onSubmit"
           />
 
-          <label class="cw-label">{{ t('workspace.abbr') }}</label>
+          <label class="cw-label">{{ t('workspace.abbr') }} <span class="cw-optional">{{ t('workspace.abbrHint') }}</span></label>
           <input
             v-model="abbr"
             class="cw-input"
