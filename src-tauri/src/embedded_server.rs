@@ -325,11 +325,9 @@ async fn check_auth(
             .into_response();
     }
     let session_id = state.sessions.create(Some(real_ip), None);
-    let cookie = format!(
-        "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800",
-        auth::SESSION_COOKIE_NAME,
-        session_id
-    );
+    let cookie_name = auth::session_cookie_name(state.port);
+    let cookie =
+        format!("{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800", cookie_name, session_id);
     (
         StatusCode::OK,
         [(header::SET_COOKIE, axum::http::HeaderValue::from_str(&cookie).unwrap())],
@@ -347,17 +345,17 @@ async fn logout(
     AxumState(state): AxumState<AppState>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
+    let cookie_name = auth::session_cookie_name(state.port);
     if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
         for pair in cookie_header.split(';') {
             let pair = pair.trim();
-            if let Some(sid) = pair.strip_prefix(&format!("{}=", auth::SESSION_COOKIE_NAME)) {
+            if let Some(sid) = pair.strip_prefix(&format!("{cookie_name}=")) {
                 let _ = state.sessions.revoke(sid);
                 break;
             }
         }
     }
-    let clear_cookie =
-        format!("{}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0", auth::SESSION_COOKIE_NAME);
+    let clear_cookie = format!("{cookie_name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
     (
         [(header::SET_COOKIE, axum::http::HeaderValue::from_str(&clear_cookie).unwrap())],
         StatusCode::OK,
@@ -482,6 +480,7 @@ pub fn run_server(
             }
         };
         let local_port = listener.local_addr().expect("bound listener").port();
+        auth::set_session_cookie_port(local_port);
         manager.set_notify_port(local_port);
         let monitor_state = MonitorState::new();
         monitor_state.clone().start_collector();
@@ -685,8 +684,16 @@ pub fn run_server(
                         .get::<axum::extract::ConnectInfo<SocketAddr>>()
                         .map(|ci| ci.ip())
                         .unwrap_or_else(|| "127.0.0.1".parse().unwrap());
-                    auth::auth_middleware(req, next, &token, &s.settings, &s.sessions, client_ip)
-                        .await
+                    auth::auth_middleware(
+                        req,
+                        next,
+                        &token,
+                        &s.settings,
+                        &s.sessions,
+                        client_ip,
+                        s.port,
+                    )
+                    .await
                 },
             ))
             .layer(middleware::from_fn(

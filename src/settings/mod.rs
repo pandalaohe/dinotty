@@ -904,7 +904,9 @@ impl Default for Settings {
 
 #[must_use]
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("dinotty")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(format!("dinotty{}", option_env!("DINOTTY_CONFIG_SUFFIX").unwrap_or("")))
 }
 
 fn settings_path() -> PathBuf {

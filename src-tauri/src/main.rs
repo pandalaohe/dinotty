@@ -19,6 +19,10 @@ mod embedded_server;
 static EMBEDDED_HTTP_PORT: OnceLock<u16> = OnceLock::new();
 static DESKTOP_SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
 
+fn default_port() -> u16 {
+    option_env!("DINOTTY_DEFAULT_PORT").and_then(|s| s.parse().ok()).unwrap_or(8999)
+}
+
 #[derive(Clone, Serialize)]
 struct PtyOutput {
     pane_id: String,
@@ -358,7 +362,7 @@ fn pty_detach(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<
 
 #[tauri::command]
 fn embedded_http_origin() -> String {
-    let port = EMBEDDED_HTTP_PORT.get().copied().unwrap_or(8999);
+    let port = EMBEDDED_HTTP_PORT.get().copied().unwrap_or_else(default_port);
     format!("http://127.0.0.1:{port}")
 }
 
@@ -482,7 +486,7 @@ async fn tauri_upload(
     cwd: Option<String>,
     token: Option<String>,
 ) -> Result<FetchResponse, String> {
-    let port = EMBEDDED_HTTP_PORT.get().copied().unwrap_or(8999);
+    let port = EMBEDDED_HTTP_PORT.get().copied().unwrap_or_else(default_port);
     let mut url = format!(
         "http://127.0.0.1:{port}/api/workspace/upload?pane_id={}&dir={}",
         urlencoding::encode(&pane_id),
@@ -811,15 +815,15 @@ fn parse_port(args: &[String]) -> u16 {
         match args[i].as_str() {
             "--port" | "-p" => {
                 if let Some(v) = args.get(i + 1) {
-                    return v.parse().unwrap_or(8999);
+                    return v.parse().unwrap_or_else(|_| default_port());
                 }
             }
             s if s.starts_with("--port=") => {
-                return s[7..].parse().unwrap_or(8999);
+                return s[7..].parse().unwrap_or_else(|_| default_port());
             }
             _ => {}
         }
         i += 1;
     }
-    8999
+    default_port()
 }

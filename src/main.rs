@@ -342,6 +342,10 @@ fn generate_random_token() -> String {
     })
 }
 
+fn default_port() -> u16 {
+    option_env!("DINOTTY_DEFAULT_PORT").and_then(|s| s.parse().ok()).unwrap_or(8999)
+}
+
 fn parse_port() -> u16 {
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -359,7 +363,7 @@ fn parse_port() -> u16 {
         }
         i += 1;
     }
-    8999
+    default_port()
 }
 
 async fn server_info(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -383,17 +387,20 @@ struct LoginRequest {
     token: String,
 }
 
-fn build_session_cookie(session_id: &str, ttl_days: u64) -> String {
+fn build_session_cookie(session_id: &str, ttl_days: u64, port: u16) -> String {
     let max_age = ttl_days * 86_400;
     format!(
         "{name}={value}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age}",
-        name = auth::SESSION_COOKIE_NAME,
+        name = auth::session_cookie_name(port),
         value = session_id,
     )
 }
 
-fn clear_session_cookie() -> String {
-    format!("{name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0", name = auth::SESSION_COOKIE_NAME)
+fn clear_session_cookie(port: u16) -> String {
+    format!(
+        "{name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+        name = auth::session_cookie_name(port)
+    )
 }
 
 /// Login endpoint: validate the posted token, create a session, set cookie.
@@ -473,7 +480,7 @@ async fn login(
         let s = state.settings.read().await;
         s.auth.session_ttl_days
     };
-    let cookie = build_session_cookie(&session_id, ttl_days);
+    let cookie = build_session_cookie(&session_id, ttl_days, state.port);
 
     // Audit log
     let () = state.audit.record(
@@ -502,7 +509,8 @@ async fn logout(
     if let Some(cookie_hdr) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
         for pair in cookie_hdr.split(';') {
             let pair = pair.trim();
-            if let Some(rest) = pair.strip_prefix(&format!("{}=", auth::SESSION_COOKIE_NAME)) {
+            let cookie_prefix = format!("{}=", auth::session_cookie_name(state.port));
+            if let Some(rest) = pair.strip_prefix(&cookie_prefix) {
                 let sid = rest.to_string();
                 let () = state.audit.record(&sid, "logout", "session", serde_json::json!({}));
                 let _ = state.sessions.revoke(&sid);
@@ -513,7 +521,7 @@ async fn logout(
     (
         StatusCode::OK,
         [
-            (header::SET_COOKIE, HeaderValue::from_str(&clear_session_cookie()).unwrap()),
+            (header::SET_COOKIE, HeaderValue::from_str(&clear_session_cookie(state.port)).unwrap()),
             (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
         ],
         Json(serde_json::json!({"ok": true})),
@@ -558,7 +566,8 @@ async fn revoke_other_sessions(
     let current = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()).and_then(|raw| {
         for pair in raw.split(';') {
             let pair = pair.trim();
-            if let Some(rest) = pair.strip_prefix(&format!("{}=", auth::SESSION_COOKIE_NAME)) {
+            let cookie_prefix = format!("{}=", auth::session_cookie_name(state.port));
+            if let Some(rest) = pair.strip_prefix(&cookie_prefix) {
                 return Some(rest.to_string());
             }
         }
@@ -645,7 +654,10 @@ async fn update_token(
 async fn main() {
     let _guard = settings::init_logging();
 
-    let port = parse_port();
+    let addr = SocketAddr::from(([0, 0, 0, 0], parse_port()));
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let port = listener.local_addr().expect("bound listener").port();
+    auth::set_session_cookie_port(port);
     let manager = Arc::new(SessionManager::new());
 
     let monitor_state = MonitorState::new();
@@ -922,17 +934,23 @@ async fn main() {
                  req,
                  next| async move {
                     let token = s.auth_token.read().await.clone();
-                    auth::auth_middleware(req, next, &token, &s.settings, &s.sessions, addr.ip())
-                        .await
+                    auth::auth_middleware(
+                        req,
+                        next,
+                        &token,
+                        &s.settings,
+                        &s.sessions,
+                        addr.ip(),
+                        s.port,
+                    )
+                    .await
                 },
             ))
             .layer(middleware::from_fn_with_state(state.clone(), dynamic_cors_middleware))
             .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Listening on http://0.0.0.0:{}", port);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    notify_manager.set_notify_port(listener.local_addr().expect("bound listener").port());
+    notify_manager.set_notify_port(port);
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }
