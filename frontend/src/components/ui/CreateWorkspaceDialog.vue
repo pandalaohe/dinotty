@@ -70,16 +70,16 @@
             @keydown.enter="onSubmit"
           />
 
-          <label class="cw-label">Abbr</label>
+          <label class="cw-label">{{ t('workspace.abbr') }}</label>
           <input
             v-model="abbr"
             class="cw-input"
             :placeholder="monogramPlaceholder"
-            maxlength="12"
+            maxlength="3"
             @keydown.enter="onSubmit"
           />
 
-          <label class="cw-label">Color</label>
+          <label class="cw-label">{{ t('workspace.color') }}</label>
           <div class="cw-color-row">
             <button
               v-for="preset in WORKSPACE_COLORS"
@@ -97,7 +97,7 @@
               maxlength="7"
               @keydown.enter="onSubmit"
             />
-            <button type="button" class="cw-default-btn" @click="color = ''">Default</button>
+            <button type="button" class="cw-default-btn" @click="color = ''">{{ t('workspace.colorDefault') }}</button>
           </div>
           <p v-if="error" class="cw-error">{{ error }}</p>
         </div>

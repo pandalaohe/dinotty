@@ -4,7 +4,8 @@
     :style="{
       '--wb-border': border,
       '--wb-size': `${size}px`,
-      '--wb-font-size': `${size * 0.5}px`,
+      '--wb-width': `${Math.round(size * 1.65)}px`,
+      '--wb-font-size': `${Math.round(size * 0.56)}px`,
     }"
   >{{ abbr }}</span>
 </template>
@@ -57,7 +58,7 @@ const border = computed(() => (
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--wb-size);
+  width: var(--wb-width);
   height: var(--wb-size);
   border: 1.5px solid var(--wb-border);
   border-radius: 5px;

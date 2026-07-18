@@ -9,6 +9,8 @@ export const WORKSPACE_COLORS = [
   '#B084FF',
 ] as const
 
+const WIDE_RE = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[！-｠￠-￦]/u
+
 export function fnv1a32(s: string): number {
   const bytes = new TextEncoder().encode(s)
   let h = 0x811c9dc5
@@ -31,30 +33,32 @@ export function stripMeaningless(s: string): string {
   return s.replace(/[\s\p{Cc}\p{Cf}]/gu, '')
 }
 
-export function autoMonogram(name: string): string {
+export function capMonogram(str: string): string {
   type SegmenterConstructor = new (
     locales?: string | string[],
     options?: { granularity: 'grapheme' },
   ) => { segment(input: string): Iterable<{ segment: string }> }
   const Segmenter = (Intl as unknown as { Segmenter: SegmenterConstructor }).Segmenter
   const segmenter = new Segmenter(undefined, { granularity: 'grapheme' })
-  const clusters = [...segmenter.segment(name)]
+  const clusters = [...segmenter.segment(str)]
     .map(({ segment }) => segment)
     .filter((cluster) => stripMeaningless(cluster) !== '')
 
-  if (clusters.length === 0) return '?'
+  if (clusters.length === 0) return ''
 
-  if (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[！-｠￠-￦]/u.test(clusters[0])) {
+  if (WIDE_RE.test(clusters[0])) {
     return clusters.slice(0, 2).join('')
   }
 
-  const result = clusters.slice(0, 3).join('').toLocaleUpperCase()
-  return [...result].slice(0, 3).join('') || '?'
+  return [...clusters.slice(0, 3).join('').toLocaleUpperCase()].slice(0, 3).join('')
+}
+
+export function autoMonogram(name: string): string {
+  return capMonogram(name) || '?'
 }
 
 export function resolveAbbr(ws: { abbr?: string; name: string }): string {
-  const stripped = ws.abbr ? stripMeaningless(ws.abbr) : ''
-  return stripped ? [...stripped].slice(0, 3).join('') : autoMonogram(ws.name)
+  return capMonogram(ws.abbr ?? '') || autoMonogram(ws.name)
 }
 
 export function resolveColor(ws: { color?: string; id: string }): string {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   WORKSPACE_COLORS,
   autoMonogram,
+  capMonogram,
   contrastRatio,
   fnv1a32,
   isValidHex,
@@ -48,10 +49,27 @@ describe('workspace icon helpers', () => {
     expect(autoMonogram(name)).toBe(expected)
   })
 
+  it.each([
+    ['ﬁnance', 'FIN'],
+    ['straße', 'STR'],
+    ['工作区', '工作'],
+    ['abcd', 'ABC'],
+    ['  ', ''],
+  ])('caps %j to a width-aware monogram', (value, expected) => {
+    expect(capMonogram(value)).toBe(expected)
+  })
+
+  it('keeps the CJK auto-monogram cap at two grapheme clusters', () => {
+    expect(autoMonogram('工作区')).toBe('工作')
+  })
+
   it('resolves meaningful abbreviations and falls back for empty ones', () => {
     expect(resolveAbbr({ abbr: '\u200B\u200B', name: 'hello' })).toBe('HEL')
     expect(resolveAbbr({ abbr: 'XY', name: 'hello' })).toBe('XY')
-    expect(resolveAbbr({ abbr: 'abcd', name: 'x' })).toBe('abc')
+    expect(resolveAbbr({ abbr: 'abcd', name: 'x' })).toBe('ABC')
+    expect(resolveAbbr({ abbr: '工作区', name: 'x' })).toBe('工作')
+    expect(resolveAbbr({ abbr: 'ab', name: 'ignored' })).toBe('AB')
+    expect(resolveAbbr({ abbr: '', name: 'Dinotty' })).toBe('DIN')
   })
 
   it('resolves valid colors and deterministic fallbacks', () => {
