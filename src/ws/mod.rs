@@ -1,4 +1,11 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::items_after_statements,
+    clippy::needless_pass_by_value
+)]
 use axum::{
     extract::{
         ws::{close_code, CloseFrame, Message, WebSocket},
@@ -16,7 +23,7 @@ use std::sync::{
     Arc,
 };
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::history::HistoryState;
 use crate::notification::{

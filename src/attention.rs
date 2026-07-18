@@ -3,6 +3,16 @@
 //! This module deliberately contains only data and deterministic ledger logic. Transport,
 //! locking, blocking dedup waiters, and producer validation belong to integration layers.
 
+#![allow(
+    clippy::expect_used,
+    clippy::field_reassign_with_default,
+    clippy::match_same_arms,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::ref_option,
+    clippy::trivially_copy_pass_by_ref
+)]
+
 use std::collections::{HashMap, VecDeque};
 
 use serde::{Deserialize, Serialize};

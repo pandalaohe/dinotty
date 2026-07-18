@@ -1,3 +1,14 @@
+#![allow(
+    clippy::duration_suboptimal_units,
+    clippy::expect_used,
+    clippy::if_not_else,
+    clippy::manual_let_else,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines,
+    clippy::unused_async
+)]
+
 use axum::{
     extract::{rejection::JsonRejection, State},
     http::StatusCode,
@@ -894,11 +905,10 @@ pub async fn post_notify(
             (StatusCode::CONFLICT, Json(serde_json::json!({ "status": "conflict" })))
                 .into_response()
         }
-        ProducerProcessResult::Retry => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "status": "retry" })),
-        )
-            .into_response(),
+        ProducerProcessResult::Retry => {
+            (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({ "status": "retry" })))
+                .into_response()
+        }
         ProducerProcessResult::Malformed(error) => {
             (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": error }))).into_response()
         }
@@ -1491,10 +1501,17 @@ mod tests {
         let suppressed_request = notify_request(Some("hook-client"), Some("hook-suppressed"), None);
         let suppressed = notifier.process_notify(suppressed_request.clone(), |_| true);
         assert!(
-            matches!(suppressed, ProducerProcessResult::Outcome(ProducerOutcome::Suppressed { .. })),
+            matches!(
+                suppressed,
+                ProducerProcessResult::Outcome(ProducerOutcome::Suppressed { .. })
+            ),
             "expected a suppressed outcome, got {suppressed:?}"
         );
-        assert_eq!(notifier.hook_invocation_count(), 1, "suppressed events must never invoke hooks");
+        assert_eq!(
+            notifier.hook_invocation_count(),
+            1,
+            "suppressed events must never invoke hooks"
+        );
 
         // Re-enable, then replay the SAME suppressed key — must return the cached suppressed
         // outcome (not re-evaluate the gate), and must still never invoke hooks.
