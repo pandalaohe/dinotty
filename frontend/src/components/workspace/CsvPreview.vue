@@ -340,7 +340,7 @@
       </section>
     </div>
 
-    <div v-if="truncated" class="csv-preview-notice" role="status">
+    <div v-if="displayedContentIsTruncated" class="csv-preview-notice" role="status">
       {{ t('csvPreview.truncated') }}
     </div>
 
@@ -493,6 +493,7 @@ const firstRowIsHeader = ref(true)
 const currentPage = ref(1)
 const selectedEncoding = ref('utf-8')
 const displayedContent = ref(props.content)
+const displayedContentIsTruncated = ref(props.truncated)
 const rawBytes = ref<ArrayBuffer | null>(null)
 const encodingLoading = ref(false)
 const encodingError = ref('')
@@ -934,13 +935,11 @@ async function loadRawBytes(): Promise<ArrayBuffer> {
   // 步骤2：没有原始文件地址时给出明确错误。
   if (!props.rawUrl) throw new Error(t('csvPreview.rawUnavailable'))
 
-  // 步骤3：只请求前 512 KB，避免大文件占满浏览器内存。
-  const response = await fetch(props.rawUrl, {
-    headers: { Range: 'bytes=0-524287' },
-  })
+  // 步骤3：读取完整文件，保证表格行数、搜索和筛选覆盖全部记录。
+  const response = await fetch(props.rawUrl)
   if (!response.ok) throw new Error(t('csvPreview.rawLoadFailed'))
 
-  // 步骤4：缓存响应字节供后续编码切换使用。
+  // 步骤4：缓存完整响应字节供后续编码切换使用。
   rawBytes.value = await response.arrayBuffer()
   return rawBytes.value
 }
@@ -950,18 +949,26 @@ async function changeEncoding(): Promise<void> {
   resetPage()
   encodingError.value = ''
 
-  // 步骤2：UTF-8 直接使用后端已经解码的文本。
+  // 步骤2：UTF-8 优先复用已加载的完整原始字节。
   if (selectedEncoding.value === 'utf-8') {
-    displayedContent.value = props.content
+    if (rawBytes.value) {
+      const textDecoder = new TextDecoder('utf-8')
+      displayedContent.value = textDecoder.decode(rawBytes.value)
+      displayedContentIsTruncated.value = false
+    } else {
+      displayedContent.value = props.content
+      displayedContentIsTruncated.value = props.truncated
+    }
     return
   }
 
-  // 步骤3：其他编码读取受限原始字节并在浏览器解码。
+  // 步骤3：其他编码读取完整原始字节并在浏览器解码。
   encodingLoading.value = true
   try {
     const bytes = await loadRawBytes()
     const textDecoder = new TextDecoder(selectedEncoding.value)
     displayedContent.value = textDecoder.decode(bytes)
+    displayedContentIsTruncated.value = false
   } catch (error) {
     encodingError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -969,17 +976,19 @@ async function changeEncoding(): Promise<void> {
   }
 }
 
-async function loadMissingContent(): Promise<void> {
-  // 步骤1：已有后端文本或没有原始地址时无需额外读取。
-  if (props.content !== '' || !props.rawUrl) return
+async function loadCompleteContent(): Promise<void> {
+  // 步骤1：元数据内容完整或没有原始地址时无需额外读取。
+  const contentIsComplete = props.content !== '' && !props.truncated
+  if (contentIsComplete || !props.rawUrl) return
 
-  // 步骤2：读取受限原始字节并先按 UTF-8 展示。
+  // 步骤2：读取完整原始字节并先按 UTF-8 展示。
   encodingLoading.value = true
   encodingError.value = ''
   try {
     const bytes = await loadRawBytes()
     const textDecoder = new TextDecoder('utf-8')
     displayedContent.value = textDecoder.decode(bytes)
+    displayedContentIsTruncated.value = false
   } catch (error) {
     encodingError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -987,9 +996,9 @@ async function loadMissingContent(): Promise<void> {
   }
 }
 
-onMounted(function initializeMissingContent() {
-  // 步骤1：后端无法解码时从原始文件初始化预览。
-  void loadMissingContent()
+onMounted(function initializeCompleteContent() {
+  // 步骤1：元数据缺失或被截断时从原始文件初始化完整预览。
+  void loadCompleteContent()
 })
 
 function currentContent(): string {
@@ -1002,27 +1011,37 @@ function currentFilePath(): string {
   return props.filePath
 }
 
-watch([currentContent, currentFilePath], function synchronizeSelectedFile(values) {
-  // 步骤1：读取新文件内容并清空旧文件缓存。
-  const newContent = values[0]
-  displayedContent.value = newContent
-  rawBytes.value = null
+function currentTruncatedState(): boolean {
+  // 步骤1：向 Vue 提供可监听的截断状态。
+  return props.truncated
+}
 
-  // 步骤2：恢复新文件的默认筛选、分页和编码状态。
-  searchText.value = ''
-  currentPage.value = 1
-  selectedEncoding.value = 'utf-8'
-  encodingError.value = ''
-  filterPanelOpen.value = false
-  filterLogicMode.value = 'and'
-  filterConditions.value = [createFilterCondition()]
-  hiddenColumnIndexes.value = []
-  columnDialogOpen.value = false
-  draftVisibleColumnIndexes.value = []
+watch(
+  [currentContent, currentFilePath, currentTruncatedState],
+  function synchronizeSelectedFile(values) {
+    // 步骤1：读取新文件内容并清空旧文件缓存。
+    const newContent = values[0]
+    const newContentIsTruncated = values[2]
+    displayedContent.value = newContent
+    displayedContentIsTruncated.value = newContentIsTruncated
+    rawBytes.value = null
 
-  // 步骤3：后端没有文本时重新读取当前文件原始字节。
-  if (newContent === '') void loadMissingContent()
-})
+    // 步骤2：恢复新文件的默认筛选、分页和编码状态。
+    searchText.value = ''
+    currentPage.value = 1
+    selectedEncoding.value = 'utf-8'
+    encodingError.value = ''
+    filterPanelOpen.value = false
+    filterLogicMode.value = 'and'
+    filterConditions.value = [createFilterCondition()]
+    hiddenColumnIndexes.value = []
+    columnDialogOpen.value = false
+    draftVisibleColumnIndexes.value = []
+
+    // 步骤3：元数据缺失或被截断时重新读取当前文件完整原始字节。
+    if (newContent === '' || newContentIsTruncated) void loadCompleteContent()
+  }
+)
 
 function goToPreviousPage(): void {
   // 步骤1：尚有上一页时减少页码。

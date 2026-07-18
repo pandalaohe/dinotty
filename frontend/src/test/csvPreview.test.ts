@@ -234,7 +234,7 @@ describe('CsvPreview', function csvPreviewComponentSuite() {
     expect(wrapper.emitted('showSource')).toHaveLength(1)
   })
 
-  it('loads a bounded raw range and decodes GBK', async function decodesGbk() {
+  it('loads raw bytes and decodes GBK', async function decodesGbk() {
     // 步骤1：准备包含“中文”的 GBK 原始字节。
     const gbkBytes = new Uint8Array([0x6e, 0x61, 0x6d, 0x65, 0x0a, 0xd6, 0xd0, 0xce, 0xc4])
     const fetchMock = vi.fn(async function fetchRawCsv() {
@@ -259,10 +259,8 @@ describe('CsvPreview', function csvPreviewComponentSuite() {
     await wrapper.get('[data-testid="csv-encoding-select"]').setValue('gbk')
     await flushPromises()
 
-    // 步骤3：确认请求范围受限并显示 GBK 文本。
-    expect(fetchMock).toHaveBeenCalledWith('/api/workspace/raw?path=people.csv', {
-      headers: { Range: 'bytes=0-524287' },
-    })
+    // 步骤3：确认读取原文件并显示 GBK 文本。
+    expect(fetchMock).toHaveBeenCalledWith('/api/workspace/raw?path=people.csv')
     expect(wrapper.find('tbody').text()).toContain('中文')
   })
 
@@ -293,6 +291,36 @@ describe('CsvPreview', function csvPreviewComponentSuite() {
     // 步骤3：确认表格显示原始 UTF-8 内容。
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(wrapper.find('tbody').text()).toContain('Alice')
+  })
+
+  it('loads the full raw file when metadata content is truncated', async function loadsTruncatedContent() {
+    // 步骤1：准备比元数据预览多一行的完整 CSV 内容。
+    const completeBytes = new TextEncoder().encode('name\nAlice\nBob')
+    const fetchMock = vi.fn(async function fetchRawCsv() {
+      return {
+        ok: true,
+        arrayBuffer: async function readRawBuffer() {
+          return completeBytes.buffer
+        },
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // 步骤2：用已截断的元数据内容挂载表格并等待原文件加载。
+    const wrapper = mount(CsvPreview, {
+      props: {
+        content: 'name\nAlice',
+        filePath: 'people.csv',
+        rawUrl: '/api/workspace/raw?path=people.csv',
+        truncated: true,
+      },
+    })
+    await flushPromises()
+
+    // 步骤3：确认读取完整文件、显示后续记录并移除截断提示。
+    expect(fetchMock).toHaveBeenCalledWith('/api/workspace/raw?path=people.csv')
+    expect(wrapper.find('tbody').text()).toContain('Bob')
+    expect(wrapper.find('.csv-preview-notice').exists()).toBe(false)
   })
 
   it('replaces table data when the selected file changes', async function replacesFileContent() {
