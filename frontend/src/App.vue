@@ -1088,6 +1088,9 @@ async function closeTab(tabId: string) {
 
   if (activePaneId.value === tabId) {
     const newIdx = Math.min(idx, tabs.value.length - 1)
+    // Close-induced reselection is the newest navigation: supersede any in-flight
+    // deferred/supervised hop so a late older-generation commit cannot clobber it.
+    nextRevealNavGen()
     activePaneId.value = tabs.value[newIdx].paneId
   }
 
@@ -1710,7 +1713,10 @@ const paletteCommands = computed<Command[]>(() => {
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
   const altAsCmd = appSettings.windowsAltAsCmd && isWindowsClient
-  const appCmd = (cmd || (altAsCmd && e.altKey)) && !(altAsCmd && e.ctrlKey && e.altKey)
+  // On Windows, Ctrl+Alt is AltGr (a layout-character modifier), never an app command —
+  // exclude it regardless of Alt-as-Cmd so AltGr keeps producing its character. macOS
+  // (isWindowsClient=false) is unaffected.
+  const appCmd = (cmd || (altAsCmd && e.altKey)) && !(isWindowsClient && e.ctrlKey && e.altKey)
   if (!appCmd) return
 
   const keyActions: Record<string, () => void> = {
