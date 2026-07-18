@@ -60,8 +60,8 @@
           <label class="toggle">
             <input
               type="checkbox"
-              v-model="settings.show_workspace_badge_on_tab"
-              @change="saveSettings()"
+              :checked="wsBadgeEffective"
+              @change="onWsBadgeToggle($event)"
             />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
@@ -505,6 +505,7 @@ import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X, FolderOpen } from
 import { invoke } from '@tauri-apps/api/core'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
+import { useIsMobile } from '../../composables/useIsMobile'
 import { uiConfirm } from '../../composables/useConfirm'
 import CollapsibleSection from './CollapsibleSection.vue'
 import { copyToClipboard } from '../../utils/clipboard'
@@ -523,7 +524,17 @@ import type { UploadResponse } from '../../types/uploads'
 const emit = defineEmits<{ 'token-changed': [] }>()
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
+const { isMobile } = useIsMobile()
 const toast = useToast()
+
+const wsBadgeEffective = computed(
+  () => settings.show_workspace_badge_on_tab ?? isMobile.value
+)
+
+function onWsBadgeToggle(e: Event) {
+  settings.show_workspace_badge_on_tab = (e.target as HTMLInputElement).checked
+  saveSettings()
+}
 
 const accessUrl = ref('')
 const logModalVisible = ref(false)

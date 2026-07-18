@@ -16,7 +16,7 @@ use zeroize::Zeroize;
 
 use crate::session::SessionManager;
 
-pub const CURRENT_SETTINGS_VERSION: u32 = 3;
+pub const CURRENT_SETTINGS_VERSION: u32 = 4;
 const LEGACY_UPLOAD_DIR: &str = "~/.dinotty/uploads";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -60,8 +60,8 @@ pub struct Settings {
     pub keyboard_sound: bool,
     #[serde(default)]
     pub show_virtual_keyboard: bool,
-    #[serde(default = "default_true")]
-    pub show_workspace_badge_on_tab: bool,
+    #[serde(default)]
+    pub show_workspace_badge_on_tab: Option<bool>,
     #[serde(default, rename = "windowsAltAsCmd")]
     pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
@@ -885,7 +885,7 @@ impl Default for Settings {
             upload_file_cap_mb: 0,
             keyboard_sound: false,
             show_virtual_keyboard: false,
-            show_workspace_badge_on_tab: true,
+            show_workspace_badge_on_tab: None,
             windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
             space_confirms_dialogs: false,
@@ -1005,6 +1005,12 @@ fn migrate_settings(settings: &mut Settings) -> bool {
         settings.upload_dir = default_upload_dir();
     }
     // v3: auth + preview sections added with serde defaults - no explicit migration needed.
+    // v4: show_workspace_badge_on_tab is now Option<bool>. The previous default was `true`
+    // for all clients; treat that legacy default as "not explicitly set" so the device-based
+    // default (mobile portrait on, desktop off) applies. An explicit `Some(false)` is kept.
+    if settings.show_workspace_badge_on_tab == Some(true) {
+        settings.show_workspace_badge_on_tab = None;
+    }
     settings.settings_version = CURRENT_SETTINGS_VERSION;
     true
 }

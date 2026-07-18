@@ -248,7 +248,9 @@ const props = withDefaults(
   }
 )
 
-const showWsBadge = computed(() => settingsStore.settings.show_workspace_badge_on_tab)
+const showWsBadge = computed(
+  () => settingsStore.settings.show_workspace_badge_on_tab ?? props.isMobile
+)
 
 const currentWorkspace = computed(() => {
   const tab = props.tabs.find((t) => t.paneId === props.activePaneId)
