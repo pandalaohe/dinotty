@@ -36,6 +36,7 @@ export function useTreeContextMenu(opts: {
   onSelectDir: (rel: string) => void
   triggerUpload: () => void
   downloadFile: (rel: string) => Promise<void>
+  paneId: () => string
   t: (key: string) => string
 }) {
   const contextMenu = ref<{ x: number; y: number; rel: string; isDir: boolean } | null>(null)
@@ -204,6 +205,18 @@ export function useTreeContextMenu(opts: {
     await opts.downloadFile(targetRel)
   }
 
+  async function ctxReveal() {
+    if (!contextMenu.value) return
+    const { rel } = contextMenu.value
+    closeContextMenu()
+    const targetRel = rel || opts.selectedRel.value
+    if (!targetRel) return
+    const { getApiBase, apiUrl, authFetch } = await import('./apiBase')
+    await getApiBase()
+    const q = new URLSearchParams({ pane_id: opts.paneId(), path: targetRel })
+    await authFetch(apiUrl(`/api/workspace/reveal?${q}`), { method: 'GET' })
+  }
+
   function ctxCopyPath() {
     if (!contextMenu.value) return
     const { rel } = contextMenu.value
@@ -313,6 +326,7 @@ export function useTreeContextMenu(opts: {
     ctxCopyPath,
     ctxInsertToTerminal,
     ctxRunCode,
+    ctxReveal,
     onMoveEntry,
     onMoveConfirm,
     onMoveCancel,

@@ -1038,6 +1038,46 @@ pub async fn workspace_put_file(
 }
 
 #[allow(clippy::unused_async)]
+pub async fn workspace_reveal(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<PanePathQuery>,
+) -> Response {
+    if ssh_session(&manager, &q.pane_id).is_some() {
+        return json_err(StatusCode::BAD_REQUEST, "reveal not supported for SSH sessions");
+    }
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let target = try_res!(normalize_join(&root, &q.path));
+    if !target.exists() {
+        return json_err(StatusCode::NOT_FOUND, "not found");
+    }
+    try_res!(path_must_be_under(&root, &target));
+    let target = dunce::simplified(&target);
+    if let Err(e) = reveal_in_file_manager(target) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+#[cfg(target_os = "windows")]
+fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
+    std::process::Command::new("explorer.exe")
+        .arg(format!("/select,{}", path.display()))
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
+    std::process::Command::new("open").arg("-R").arg(path).spawn().map(|_| ())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or(path);
+    std::process::Command::new("xdg-open").arg(parent).spawn().map(|_| ())
+}
+
+#[allow(clippy::unused_async)]
 pub async fn workspace_delete(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,

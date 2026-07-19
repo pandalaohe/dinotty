@@ -291,6 +291,15 @@
           <span class="tree-ctx-label">{{ t('filePreview.ctxCopyPath') }}</span>
         </button>
         <button
+          type="button"
+          class="tree-ctx-item"
+          role="menuitem"
+          :disabled="!ctxMenu.contextMenu.value?.rel && !selectedRel"
+          @click="ctxMenu.ctxReveal"
+        >
+          <span class="tree-ctx-label">{{ t('filePreview.ctxReveal') }}</span>
+        </button>
+        <button
           v-if="ctxMenu.canRunCode.value"
           type="button"
           class="tree-ctx-item"
@@ -474,6 +483,7 @@ const ctxMenu = useTreeContextMenu({
   onSelectDir,
   triggerUpload: ops.triggerUpload,
   downloadFile: ops.downloadFile,
+  paneId: () => props.paneId,
   t,
 })
 
