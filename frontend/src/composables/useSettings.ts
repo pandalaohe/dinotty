@@ -8,6 +8,8 @@ import OpencodeLogo from '../components/icons/OpencodeLogo.vue'
 import { isWindowsClient } from '../utils/clientPlatform'
 import type { KeyBinding } from './useKeybindings'
 import type { SavedTheme } from './useDeviceThemeSelection'
+export type WorkspaceBadgeMode = 'off' | 'tab' | 'icon' | 'both'
+
 export interface SettingsData {
   theme: {
     preset: string
@@ -42,7 +44,7 @@ export interface SettingsData {
   upload_cap_count: number
   keyboard_sound: boolean
   show_virtual_keyboard: boolean
-  show_workspace_badge_on_tab: boolean | null
+  workspace_badge_mode: WorkspaceBadgeMode | null
   confirm_before_close_tab: boolean
   space_confirms_dialogs: boolean
   windowsAltAsCmd: boolean
@@ -243,7 +245,7 @@ export const settings = reactive<SettingsData>({
   upload_cap_count: 100,
   keyboard_sound: false,
   show_virtual_keyboard: false,
-  show_workspace_badge_on_tab: null,
+  workspace_badge_mode: null,
   confirm_before_close_tab: true,
   space_confirms_dialogs: false,
   windowsAltAsCmd: isWindowsClient,

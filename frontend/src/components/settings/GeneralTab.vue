@@ -55,17 +55,14 @@
 
       <section class="settings-section">
         <h3>{{ t('settings.workspaceBadge') }}</h3>
-        <div class="settings-row">
-          <label>{{ t('settings.workspaceBadge.show') }}</label>
-          <label class="toggle">
-            <input
-              type="checkbox"
-              :checked="wsBadgeEffective"
-              @change="onWsBadgeToggle($event)"
-            />
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          </label>
-        </div>
+        <SegmentedControl
+          class="ws-badge-control"
+          data-setting="workspace-badge-mode"
+          :model-value="wsBadgeEffective.mode"
+          :options="wsBadgeModeOptions"
+          :aria-label="t('settings.workspaceBadge.mode')"
+          @update:model-value="onWsBadgeModeChange"
+        />
         <p class="settings-hint">{{ t('settings.workspaceBadge.hint') }}</p>
       </section>
     </div>
@@ -504,10 +501,13 @@ import QRCode from 'qrcode'
 import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X, FolderOpen } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
 import { useSettings } from '../../composables/useSettings'
+import type { WorkspaceBadgeMode } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { useIsMobile } from '../../composables/useIsMobile'
+import { resolveWorkspaceBadgeMode } from '../../composables/useWorkspaceBadgeMode'
 import { uiConfirm } from '../../composables/useConfirm'
 import CollapsibleSection from './CollapsibleSection.vue'
+import SegmentedControl from '../ui/SegmentedControl.vue'
 import { copyToClipboard } from '../../utils/clipboard'
 import { useToast } from 'vue-toastification'
 import { isTauri } from '../../composables/useTransport'
@@ -527,12 +527,18 @@ const { t } = useI18n()
 const { isMobile } = useIsMobile()
 const toast = useToast()
 
-const wsBadgeEffective = computed(
-  () => settings.show_workspace_badge_on_tab ?? isMobile.value
+const wsBadgeEffective = computed(() =>
+  resolveWorkspaceBadgeMode(settings.workspace_badge_mode, isMobile.value)
 )
+const wsBadgeModeOptions = computed(() => [
+  { value: 'off', label: t('settings.workspaceBadge.mode.off') },
+  { value: 'tab', label: t('settings.workspaceBadge.mode.tab') },
+  { value: 'icon', label: t('settings.workspaceBadge.mode.icon') },
+  { value: 'both', label: t('settings.workspaceBadge.mode.both') },
+])
 
-function onWsBadgeToggle(e: Event) {
-  settings.show_workspace_badge_on_tab = (e.target as HTMLInputElement).checked
+function onWsBadgeModeChange(value: string) {
+  settings.workspace_badge_mode = value as WorkspaceBadgeMode
   saveSettings()
 }
 
@@ -1083,5 +1089,10 @@ async function refreshLog() {
   padding: 6px 8px;
   font-size: 12px;
   text-align: center;
+}
+
+/* match SettingsPanel .settings-row gap rhythm (10px) removed when the wrapping row was dropped */
+.ws-badge-control {
+  margin-bottom: 10px;
 }
 </style>
