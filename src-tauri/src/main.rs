@@ -470,7 +470,7 @@ async fn pick_workspace_dir(base: Option<String>) -> Option<String> {
                 Some(std::path::PathBuf::from(base))
             }
         })
-        .and_then(|path| path.canonicalize().ok())
+        .and_then(|path| path.canonicalize().ok().map(|c| dunce::simplified(&c).to_path_buf()))
         .filter(|path| path.is_dir())
         .or_else(|| {
             std::env::var_os("HOME").map(std::path::PathBuf::from).filter(|path| path.is_dir())

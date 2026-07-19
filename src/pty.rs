@@ -266,7 +266,13 @@ pub fn create_session(
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer: Box<dyn Write + Send> = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    let initial_cwd = home_for_cwd.canonicalize().unwrap_or_else(|_| home_for_cwd.clone());
+    // Strip the \\?\ verbatim prefix that std::canonicalize adds on Windows.
+    // PowerShell renders verbatim paths as `Microsoft.PowerShell.Core\FileSystem::\\?\D:\...`
+    // which breaks tools that parse $PWD (e.g. pi agent). dunce::simplified is a
+    // no-op on non-Windows.
+    let initial_cwd =
+        dunce::simplified(&home_for_cwd.canonicalize().unwrap_or_else(|_| home_for_cwd.clone()))
+            .to_path_buf();
     let (resize_tx, resize_rx) = tokio::sync::watch::channel(None);
     let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel();
 
