@@ -427,6 +427,23 @@ export class TerminalInstance {
           }
         }
 
+        // Windows: Ctrl+C with an active selection copies (cmd.exe behavior);
+        // without a selection it falls through and xterm sends SIGINT (\x03).
+        // Matches the Ctrl+C hint shown in the terminal context menu.
+        if (
+          isWindowsClient &&
+          e.ctrlKey &&
+          !e.shiftKey &&
+          !e.altKey &&
+          !e.metaKey &&
+          e.code === 'KeyC' &&
+          xt.hasSelection()
+        ) {
+          navigator.clipboard.writeText(xt.getSelection()).catch(() => {})
+          e.preventDefault()
+          return false
+        }
+
         const virtualMeta = settings.windowsAltAsCmd && isWindowsClient && e.altKey && !e.ctrlKey
         if (virtualMeta && !e.shiftKey) {
           if (e.code === 'KeyC' && xt.hasSelection()) {
