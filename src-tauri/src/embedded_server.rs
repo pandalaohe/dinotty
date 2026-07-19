@@ -625,6 +625,7 @@ pub fn run_server(
             .route("/api/plugins/market", get(plugin::get_market_registry))
             .route("/api/plugins/market/:id/readme", get(plugin::get_market_readme))
             .route("/api/plugins/dev-link", post(plugin::dev_link_plugin))
+            .route("/api/plugins/install-dir", post(plugin::install_from_dir))
             .merge(
                 Router::new()
                     .route("/api/plugins/install", post(plugin::install_plugin))
