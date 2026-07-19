@@ -115,6 +115,7 @@ export interface MonitorConfig {
   disk: boolean
   network: boolean
   gpu: boolean
+  plugin_series: Record<string, boolean>
 }
 
 export interface TextConfig {
@@ -258,6 +259,7 @@ export const settings = reactive<SettingsData>({
     disk: false,
     network: true,
     gpu: true,
+    plugin_series: {},
   },
   notification: {
     enabled: true,

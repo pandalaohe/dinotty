@@ -1,6 +1,8 @@
 import type { Component } from 'vue'
 import { reactive, ref, computed, watch, onMounted, onUnmounted, h } from 'vue'
 import { authFetch, apiUrl, wsUrlWithToken, getApiBase } from './apiBase'
+import { usePluginMonitorStore } from '../stores/pluginMonitor'
+import type { MonitorSeries } from '../stores/pluginMonitor'
 
 // Bypass Vite's static analysis of import()
 // eslint-disable-next-line no-new-func
@@ -121,6 +123,7 @@ export interface ProcessHandle {
 export interface PluginExports {
   component?: Component
   dispose?: () => void
+  monitor?: { series: MonitorSeries[] }
 }
 
 export interface PluginModule {
@@ -395,7 +398,20 @@ async function loadPlugin(id: string): Promise<LoadedPlugin> {
     ])
     exports = (result as PluginExports) || null
   } catch (e: any) {
+    // Roll back side effects injected before activate() (CSS, commands, quickPicks)
+    removePluginCSS(id)
+    for (const [cmdId, entry] of pluginCommands) {
+      if (entry.pluginId === id) pluginCommands.delete(cmdId)
+    }
+    for (const [qpId, entry] of pluginQuickPicks) {
+      if (entry.pluginId === id) pluginQuickPicks.delete(qpId)
+    }
     throw new Error(`Plugin ${id}: activate() threw: ${e.message}`)
+  }
+
+  // 5. Register monitor series contributions
+  if (exports?.monitor?.series?.length) {
+    usePluginMonitorStore().register(id, exports.monitor.series)
   }
 
   const plugin: LoadedPlugin = { id, manifest, module: mod, exports, state: 'active' }
@@ -406,6 +422,9 @@ async function loadPlugin(id: string): Promise<LoadedPlugin> {
 async function unloadPlugin(id: string) {
   const plugin = loadedPlugins.get(id)
   if (!plugin) return
+
+  // Unregister monitor series first so sampling stops touching plugin state
+  usePluginMonitorStore().unregister(id)
 
   try {
     plugin.module.deactivate?.()

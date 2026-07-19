@@ -16,7 +16,7 @@ use zeroize::Zeroize;
 
 use crate::session::SessionManager;
 
-pub const CURRENT_SETTINGS_VERSION: u32 = 5;
+pub const CURRENT_SETTINGS_VERSION: u32 = 6;
 const LEGACY_UPLOAD_DIR: &str = "~/.dinotty/uploads";
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -419,11 +419,23 @@ pub struct MonitorConfig {
     pub network: bool,
     #[serde(default = "default_true")]
     pub gpu: bool,
+    /// Per-plugin-series visibility overrides. Keyed by series id.
+    /// Absent key falls back to the series' `defaultVisible`.
+    #[serde(default)]
+    pub plugin_series: std::collections::HashMap<String, bool>,
 }
 
 impl Default for MonitorConfig {
     fn default() -> Self {
-        Self { enabled: true, cpu: true, memory: true, disk: true, network: true, gpu: true }
+        Self {
+            enabled: true,
+            cpu: true,
+            memory: true,
+            disk: true,
+            network: true,
+            gpu: true,
+            plugin_series: std::collections::HashMap::new(),
+        }
     }
 }
 
@@ -1038,6 +1050,9 @@ fn migrate_settings(settings: &mut Settings) -> bool {
         }
         settings.show_workspace_badge_on_tab = None;
     }
+    // v6: drop `status_bar` field (StatusBarSettings struct removed); plugin series
+    // visibility moved to `monitor.plugin_series`. serde silently ignores the legacy
+    // `status_bar` key on old configs. No data to migrate - plugin series start fresh.
     settings.settings_version = CURRENT_SETTINGS_VERSION;
     true
 }

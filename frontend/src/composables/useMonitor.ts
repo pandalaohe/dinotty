@@ -224,5 +224,11 @@ export function initMonitorHistory() {
     }
   })
 
-  onMonitorData(processEntry)
+  onMonitorData((d) => {
+    processEntry(d)
+    // Plugin-contributed series sample on the same cadence as system metrics.
+    // Lazy import avoids a circular dep: pluginMonitor store imports from useSettings
+    // which transitively reads monitorData.
+    void import('../stores/pluginMonitor').then((m) => m.usePluginMonitorStore().sample())
+  })
 }
