@@ -2,7 +2,7 @@ import { nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { SyncServerMsg, SyncClientMsg } from '../types/protocol'
 import type { TerminalTab } from '../types/pane'
-import { getAllLeaves, findLeaf, migrateTab, ensureSplitRoot } from '../types/pane'
+import { getAllLeaves, findLeaf, migrateTab, migratePreviewToLeaf, ensureSplitRoot } from '../types/pane'
 import {
   initializePaneMru,
   reconcilePaneMru,
@@ -144,7 +144,8 @@ export function useSyncWebSocket(opts: {
           ) {
             const serverLayout = tab.layout ?? null
             const saved = !serverLayout ? getSavedTab(tab.pane_id) : null
-            const migrated = saved ? migrateTab(saved) : null
+            const migratedRaw = saved ? migrateTab(saved) : null
+            const migrated = migratedRaw ? migratePreviewToLeaf(migratedRaw) : null
             tabs.value.push({
               type: 'terminal',
               paneId: tab.tab_id,

@@ -1,5 +1,5 @@
 <template>
-  <div id="tab-bar">
+  <div id="tab-bar" class="tab-bar">
     <!-- Mobile compact mode -->
     <template v-if="isMobile">
       <button class="mc-trigger" @click="$emit('open-overview')">
@@ -48,6 +48,7 @@
         class="tab"
         :class="{ active: tab.paneId === activePaneId, 'drag-over': dragOverId === tab.paneId }"
         :data-pane-id="tab.paneId"
+        :data-tab-id="tab.paneId"
         @mousedown.prevent="onTabMouseDown($event, tab.paneId)"
         @touchstart="onTabTouchStart($event, tab.paneId)"
         @click="onTabClick($event, tab.paneId)"
@@ -142,6 +143,31 @@
           <span class="new-menu-label">{{ t('keybinding.splitVertical') }}</span>
           <kbd class="new-menu-kbd">{{ kbdSplitV }}</kbd>
         </div>
+        <div class="new-menu-sep" />
+        <div
+          class="new-menu-item"
+          @click="emitAction('add-plugin-pane')"
+          @touchend.prevent="emitAction('add-plugin-pane')"
+        >
+          <Puzzle :size="14" class="new-menu-icon" />
+          <span class="new-menu-label">{{ t('split.addPluginPane') }}</span>
+        </div>
+        <div
+          class="new-menu-item"
+          @click="emitAction('add-files-pane')"
+          @touchend.prevent="emitAction('add-files-pane')"
+        >
+          <Folder :size="14" class="new-menu-icon" />
+          <span class="new-menu-label">{{ t('split.addFilesPane') }}</span>
+        </div>
+        <div
+          class="new-menu-item"
+          @click="emitAction('add-web-pane')"
+          @touchend.prevent="emitAction('add-web-pane')"
+        >
+          <Globe :size="14" class="new-menu-icon" />
+          <span class="new-menu-label">{{ t('split.addWebPane') }}</span>
+        </div>
         <template v-if="canBroadcast">
           <div class="new-menu-sep" />
           <div
@@ -202,11 +228,12 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
-import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard, Globe, Server } from 'lucide-vue-next'
+import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard, Globe, Server, Folder } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useKeybindings } from '../../composables/useKeybindings'
 import { useSettingsStore } from '../../stores'
 import { resolveWorkspaceBadgeMode } from '../../composables/useWorkspaceBadgeMode'
+import { usePaneDrag, type DropZone } from '../../composables/paneDragContext'
 import WorkspaceBadge from '../WorkspaceBadge.vue'
 
 const { t } = useI18n()
@@ -282,8 +309,19 @@ const currentWorkspace = computed(() => {
 const emit = defineEmits<{
   activate: [paneId: string]
   close: [paneId: string]
-  action: [type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect']
+  action: [
+    type:
+      | 'new-tab'
+      | 'split-h'
+      | 'split-v'
+      | 'broadcast'
+      | 'ssh-connect'
+      | 'add-plugin-pane'
+      | 'add-files-pane'
+      | 'add-web-pane',
+  ]
   reorder: [fromId: string, toId: string]
+  'merge-tab-into-pane': [srcTabId: string, targetPaneId: string, direction: 'left' | 'right' | 'top' | 'bottom']
   'open-plugin': [pluginId: string]
   rename: [paneId: string, title: string]
   'open-overview': []
@@ -350,7 +388,17 @@ const newMenuOpen = ref(false)
 const newMenuAlignRight = ref(false)
 const newMenuWrapRef = ref<HTMLElement>()
 
-function emitAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect') {
+function emitAction(
+  type:
+    | 'new-tab'
+    | 'split-h'
+    | 'split-v'
+    | 'broadcast'
+    | 'ssh-connect'
+    | 'add-plugin-pane'
+    | 'add-files-pane'
+    | 'add-web-pane'
+) {
   emit('action', type)
   newMenuOpen.value = false
 }
@@ -394,12 +442,19 @@ watch([pluginMenuOpen, newMenuOpen], ([pluginOpen, newOpen]) => {
 
 const dragOverId = ref<string | null>(null)
 
+const drag = usePaneDrag()
+
 let dragFromId: string | null = null
 let dragStarted = false
 let startX = 0
 let startY = 0
 let isTouchDrag = false
 let suppressClick = false
+// Pane drop target (Mode A: merge whole source tab into a pane of another tab).
+// Cleared on every pointermove so the latest hit wins; persisted across the
+// drag via paneDragContext for DropPreview rendering.
+let paneTargetId: string | null = null
+let paneTargetZone: 'left' | 'right' | 'top' | 'bottom' | null = null
 const DRAG_THRESHOLD = 5
 
 function scrollTabIntoView(paneId: string): boolean {
@@ -457,6 +512,8 @@ function startDrag(e: MouseEvent | TouchEvent, paneId: string, isTouch: boolean)
   dragStarted = false
   isTouchDrag = isTouch
   dragFromId = paneId
+  paneTargetId = null
+  paneTargetZone = null
 
   const moveEvent = isTouch ? 'touchmove' : 'mousemove'
   const endEvent = isTouch ? 'touchend' : 'mouseup'
@@ -467,6 +524,53 @@ function startDrag(e: MouseEvent | TouchEvent, paneId: string, isTouch: boolean)
     { passive: !isTouch } as AddEventListenerOptions
   )
   window.addEventListener(endEvent, onPointerEnd)
+  if (!isTouch) {
+    document.addEventListener('keydown', onKeydown, true)
+    document.addEventListener('mouseleave', onMouseLeave)
+  }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && dragStarted) {
+    cancelDrag()
+  }
+}
+
+function onMouseLeave(_e: MouseEvent) {
+  if (dragStarted) {
+    cancelDrag()
+  }
+}
+
+function cancelDrag() {
+  paneTargetId = null
+  paneTargetZone = null
+  dragOverId.value = null
+  drag.clearTarget()
+  cleanup()
+}
+
+function computePaneZone(
+  rect: DOMRect,
+  clientX: number,
+  clientY: number
+): 'left' | 'right' | 'top' | 'bottom' {
+  const relX = (clientX - rect.left) / rect.width
+  const relY = (clientY - rect.top) / rect.height
+  if (relY < 0.25) return 'top'
+  if (relY > 0.75) return 'bottom'
+  if (relX < 0.25) return 'left'
+  if (relX > 0.75) return 'right'
+  // Center band: pick the closest edge.
+  const distTop = relY
+  const distBottom = 1 - relY
+  const distLeft = relX
+  const distRight = 1 - relX
+  const minDist = Math.min(distTop, distBottom, distLeft, distRight)
+  if (minDist === distTop) return 'top'
+  if (minDist === distBottom) return 'bottom'
+  if (minDist === distLeft) return 'left'
+  return 'right'
 }
 
 function onPointerMove(e: MouseEvent | TouchEvent) {
@@ -483,30 +587,68 @@ function onPointerMove(e: MouseEvent | TouchEvent) {
     if (isTouchDrag) {
       e.preventDefault()
     }
+    // Engage shared drag context with wholeTab=true so DropPreview renders
+    // and downstream Mode A merge can be dispatched on drop.
+    drag.startDrag({ sourcePaneId: dragFromId!, sourceTabId: dragFromId!, wholeTab: true })
   } else if (isTouchDrag) {
     e.preventDefault()
   }
 
-  // Find tab element under cursor
-  const el = document.elementFromPoint(pos.clientX, pos.clientY)
-  let targetId: string | null = null
-  if (el) {
-    const tabEl = el.closest('.tab[data-pane-id]') as HTMLElement | null
-    if (tabEl) {
-      const pid = tabEl.dataset.paneId
-      if (pid && pid !== dragFromId) {
-        targetId = pid
+  // Reset transient hit state; recompute each move.
+  paneTargetId = null
+  paneTargetZone = null
+  let tabTargetId: string | null = null
+
+  const elements = document.elementsFromPoint(pos.clientX, pos.clientY)
+  for (const el of elements) {
+    const htmlEl = el as HTMLElement
+    if (!paneTargetId) {
+      const leaf = htmlEl.closest('.split-leaf[data-pane-id]') as HTMLElement | null
+      if (leaf) {
+        const leafPaneId = leaf.dataset.paneId
+        if (leafPaneId) {
+          // Mode A merges the whole source tab into a pane of ANOTHER tab.
+          // Visible panes live in the active tab; if the source is active,
+          // every visible pane belongs to the source -> self-loop, skip.
+          if (dragFromId !== props.activePaneId) {
+            const rect = leaf.getBoundingClientRect()
+            paneTargetId = leafPaneId
+            paneTargetZone = computePaneZone(rect, pos.clientX, pos.clientY)
+          }
+        }
       }
     }
+    if (!tabTargetId) {
+      const tabEl = htmlEl.closest('.tab[data-pane-id]') as HTMLElement | null
+      if (tabEl) {
+        const pid = tabEl.dataset.paneId
+        if (pid && pid !== dragFromId) {
+          tabTargetId = pid
+        }
+      }
+    }
+    if (paneTargetId && tabTargetId) break
   }
 
-  dragOverId.value = targetId
+  // Priority: pane (Mode A merge) > tab-label (reorder).
+  if (paneTargetId && paneTargetZone) {
+    dragOverId.value = null
+    drag.setTarget(paneTargetId, paneTargetZone as DropZone, 'pane')
+  } else {
+    drag.clearTarget()
+    dragOverId.value = tabTargetId
+  }
 }
 
 function onPointerEnd() {
-  if (dragStarted && dragFromId && dragOverId.value && dragFromId !== dragOverId.value) {
-    suppressClick = true
-    emit('reorder', dragFromId, dragOverId.value)
+  if (dragStarted && dragFromId) {
+    if (paneTargetId && paneTargetZone) {
+      suppressClick = true
+      emit('merge-tab-into-pane', dragFromId, paneTargetId, paneTargetZone)
+    } else if (dragOverId.value && dragFromId !== dragOverId.value) {
+      suppressClick = true
+      emit('reorder', dragFromId, dragOverId.value)
+    }
   }
 
   cleanup()
@@ -516,11 +658,17 @@ function cleanup() {
   dragStarted = false
   dragFromId = null
   dragOverId.value = null
+  paneTargetId = null
+  paneTargetZone = null
 
   window.removeEventListener('mousemove', onPointerMove as EventListener)
   window.removeEventListener('mouseup', onPointerEnd)
   window.removeEventListener('touchmove', onPointerMove as EventListener)
   window.removeEventListener('touchend', onPointerEnd)
+  document.removeEventListener('keydown', onKeydown, true)
+  document.removeEventListener('mouseleave', onMouseLeave)
+
+  drag.endDrag()
 }
 
 onBeforeUnmount(() => {

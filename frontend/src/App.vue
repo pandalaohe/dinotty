@@ -22,6 +22,7 @@
       @close="requestCloseTab"
       @action="onNewMenuAction"
       @reorder="reorderTab"
+      @merge-tab-into-pane="onMergeTabIntoPane"
       @open-plugin="openPlugin"
       @rename="onRenameTab"
       @open-overview="openOverview"
@@ -101,6 +102,7 @@
             :broadcast-mode="tab.broadcastMode"
             :broadcast-activity="tab.broadcastActivity"
             :allow-close="getAllLeaves(tab.layout).length > 1"
+            :tab-id="tab.paneId"
             @register="registerTermRef"
             @title-change="onTitleChange"
             @shell-info="onShellInfo"
@@ -118,6 +120,11 @@
               (src: string, tgt: string, pos: DropPosition) =>
                 splitPane.reorderPane(src, tgt, pos)
             "
+            @drop-on-tab="
+              (srcTab: string, srcPane: string, dstTab: string, pos: DropPosition) =>
+                onDropOnTab(srcTab, srcPane, dstTab, pos)
+            "
+            @drop-extract="(srcTab: string, srcPane: string, idx: number) => onDropExtract(srcTab, srcPane, idx)"
             @divider-drag-end="onDividerDragEnd(tab)"
             @reconnect="onSshReconnect"
           />
@@ -162,6 +169,8 @@
     </div>
 
     <NotificationPanel :pane-labels="notificationPaneLabels" @goto-pane="revealPane" />
+
+    <DropPreview />
 
     <StatusBar />
 
@@ -269,6 +278,7 @@ import TabBar from './components/terminal/TabBar.vue'
 import type { TabInfo } from './components/terminal/TabBar.vue'
 import TerminalPane from './components/terminal/TerminalPane.vue'
 import SplitContainer from './components/split/SplitContainer.vue'
+import DropPreview from './components/split/DropPreview.vue'
 import CommandPalette from './components/command/CommandPalette.vue'
 import type { Command } from './components/command/CommandPalette.vue'
 import MobileKeyboard from './components/keyboard/MobileKeyboard.vue'
@@ -729,6 +739,47 @@ function onDividerDragEnd(tab: Tab) {
   }
 }
 
+function onDropOnTab(
+  srcTabId: string,
+  srcPaneId: string,
+  dstTabId: string,
+  pos: DropPosition
+) {
+  // Find the active pane in dst tab as the drop target
+  const dstTab = tabs.value.find((t) => t.paneId === dstTabId)
+  if (!dstTab || dstTab.type !== 'terminal') return
+  const direction = pos === 'left' || pos === 'right' ? 'left' : 'right' as const
+  void splitPane.movePaneToTab(srcTabId, srcPaneId, dstTabId, dstTab.activePaneId, direction)
+}
+
+function onDropExtract(srcTabId: string, srcPaneId: string, _targetIndex: number) {
+  void splitPane.promotePaneToTab(srcTabId, srcPaneId)
+}
+
+function onMergeTabIntoPane(
+  srcTabId: string,
+  targetPaneId: string,
+  direction: 'left' | 'right' | 'top' | 'bottom'
+) {
+  // Mode A: merge whole source tab as subtree into a pane of another tab.
+  // The drop target is a leaf paneId; locate its containing tab.
+  const dstTab = tabs.value.find(
+    (t) => t.type === 'terminal' && !!findLeaf(t.layout, targetPaneId)
+  ) as TerminalTab | undefined
+  if (!dstTab) return
+  if (dstTab.paneId === srcTabId) return // self-loop guard
+  void splitPane.moveTabToPane(srcTabId, dstTab.paneId, targetPaneId, direction)
+}
+
+function onPaneDragHoverSwitch(e: Event) {
+  const detail = (e as CustomEvent).detail as { tabId: string } | undefined
+  if (!detail?.tabId) return
+  // Switch active tab to allow dropping into its panes
+  const tab = tabs.value.find((t) => t.paneId === detail.tabId)
+  if (!tab) return
+  activePaneId.value = tab.paneId
+}
+
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 function persistNow() {
   if (typeof localStorage === "undefined") return
@@ -828,7 +879,17 @@ async function newTab(cwd?: string, argv?: string[], title?: string): Promise<st
   }
 }
 
-function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect') {
+function onNewMenuAction(
+  type:
+    | 'new-tab'
+    | 'split-h'
+    | 'split-v'
+    | 'broadcast'
+    | 'ssh-connect'
+    | 'add-plugin-pane'
+    | 'add-files-pane'
+    | 'add-web-pane'
+) {
   switch (type) {
     case 'new-tab':
       return newTab()
@@ -840,6 +901,24 @@ function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' |
       return splitPane.toggleBroadcast()
     case 'ssh-connect':
       return sshPanelRef.value?.open()
+    case 'add-plugin-pane': {
+      const first = pluginList.value[0]
+      if (!first) return
+      void splitPane.insertNonTerminalPane('plugin', { pluginId: first.id })
+      return
+    }
+    case 'add-files-pane': {
+      const path = window.prompt(t('split.addFilesPane'), activeWorkspacePath.value ?? '')
+      if (!path) return
+      void splitPane.insertNonTerminalPane('files', { path })
+      return
+    }
+    case 'add-web-pane': {
+      const url = window.prompt(t('split.addWebPane'), 'http://localhost:')
+      if (!url) return
+      void splitPane.insertNonTerminalPane('web', { url })
+      return
+    }
   }
 }
 
@@ -2040,6 +2119,7 @@ onMounted(async () => {
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
   window.addEventListener('terminal-insert-text', onTerminalInsertText)
   window.addEventListener('terminal-run-code', onTerminalRunCode)
+  window.addEventListener('pane-drag-hover-switch', onPaneDragHoverSwitch)
   if (window.visualViewport) {
     naturalVH = window.visualViewport.height
     window.visualViewport.addEventListener('resize', onViewportResize)
@@ -2165,6 +2245,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
   window.removeEventListener('terminal-insert-text', onTerminalInsertText)
   window.removeEventListener('terminal-run-code', onTerminalRunCode)
+  window.removeEventListener('pane-drag-hover-switch', onPaneDragHoverSwitch)
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', onViewportResize)
   }
