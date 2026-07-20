@@ -138,6 +138,7 @@
           :k="key"
           :state="modState"
           @key-press="onKeyPress"
+          @app-action="onAppAction"
           @special="onSpecial"
         />
       </div>
@@ -156,14 +157,15 @@
         <!-- Main keyboard panel -->
         <div id="mkb-main-panel">
           <!-- Row 1: ` 1-0 - = ⌫ -->
-          <MkbRow :keys="row1" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbRow :keys="row1" :state="modState" @key-press="onKeyPress" @app-action="onAppAction" @special="onSpecial" />
           <!-- Row 2: tab q-p [ ] \ -->
-          <MkbRow :keys="row2" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbRow :keys="row2" :state="modState" @key-press="onKeyPress" @app-action="onAppAction" @special="onSpecial" />
           <!-- Row 3: ⌨ a-l ; ' ↵ (stagger) -->
           <MkbRow
             :keys="row3"
             :state="modState"
             @key-press="onKeyPress"
+            @app-action="onAppAction"
             @special="onSpecial"
             stagger="asdf"
           />
@@ -174,34 +176,39 @@
                 :keys="row4zxcv"
                 :state="modState"
                 @key-press="onKeyPress"
+                @app-action="onAppAction"
                 @special="onSpecial"
               />
               <MkbRow
                 :keys="row5bottom"
                 :state="modState"
                 @key-press="onKeyPress"
+                @app-action="onAppAction"
                 @special="onSpecial"
               />
             </div>
             <div class="mkb-arrow-cluster">
-              <MkbKey :k="arrowUp" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+              <MkbKey :k="arrowUp" :state="modState" @key-press="onKeyPress" @app-action="onAppAction" @special="onSpecial" />
               <div class="mkb-arrow-cluster-bot">
                 <MkbKey
                   :k="arrowLeft"
                   :state="modState"
                   @key-press="onKeyPress"
+                  @app-action="onAppAction"
                   @special="onSpecial"
                 />
                 <MkbKey
                   :k="arrowDown"
                   :state="modState"
                   @key-press="onKeyPress"
+                  @app-action="onAppAction"
                   @special="onSpecial"
                 />
                 <MkbKey
                   :k="arrowRight"
                   :state="modState"
                   @key-press="onKeyPress"
+                  @app-action="onAppAction"
                   @special="onSpecial"
                 />
               </div>
@@ -215,6 +222,7 @@
             :keys="actionFirstRow"
             :state="modState"
             @key-press="onKeyPress"
+            @app-action="onAppAction"
             @special="onSpecial"
           />
           <MkbRow
@@ -223,45 +231,31 @@
             :keys="r"
             :state="modState"
             @key-press="onKeyPress"
+            @app-action="onAppAction"
             @special="onSpecial"
           />
-          <div class="mkb-action-bottom">
+          <div
+            class="mkb-action-bottom"
+            :style="{ '--ak-enter-width': (actionBottom.enter_width ?? 0.28) * 100 + '%' }"
+          >
             <div class="mkb-action-grid">
-              <MkbKey
-                :k="actionYes"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
-              <MkbKey
-                :k="actionNo"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
-              <MkbKey
-                :k="actionArrowUp"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
-              <MkbKey
-                :k="actionContinue"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
-              <MkbKey
-                :k="actionArrowBot[0]"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
+              <div v-for="(row, ri) in actionBottomRows" :key="ri" class="mkb-action-grid-row">
+                <MkbKey
+                  v-for="(key, ki) in row"
+                  :key="ki"
+                  :k="key"
+                  :state="modState"
+                  @key-press="onKeyPress"
+                  @app-action="onAppAction"
+                  @special="onSpecial"
+                />
+              </div>
             </div>
             <MkbKey
               :k="actionEnter"
               :state="modState"
               @key-press="onKeyPress"
+              @app-action="onAppAction"
               @special="onSpecial"
             />
           </div>
@@ -318,10 +312,12 @@ import FilePickerModal from '../preview/FilePickerModal.vue'
 import type { KeyDef, ModState } from './mkbTypes'
 import {
   useSettings,
-  DEFAULT_ACTION_KEYBOARD,
+  DEFAULT_ACTION_BOTTOM,
+  effectiveActionKeyboard,
   onThemeChange,
   onTextChange,
 } from '../../composables/useSettings'
+import type { ActionBottomCluster, ActionKey } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { useHistory } from '../../composables/useHistory'
 import { actionKeyToKeyDef, mapActionKeys } from '../../utils/actionKeyDef'
@@ -352,6 +348,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:visible': [val: boolean]
   bookmarks: []
+  'app-action': [id: string]
 }>()
 
 const { settings } = useSettings()
@@ -647,19 +644,42 @@ const kbswitchAction = computed<KeyDef>(() => ({
 }))
 
 const actionFirstRow = computed(() => {
-  const cfg = settings.action_keyboard ?? DEFAULT_ACTION_KEYBOARD
-  const rows = cfg.rows?.length ? cfg.rows : DEFAULT_ACTION_KEYBOARD.rows
+  const rows = effectiveActionKeyboard().rows
   const first = rows[0] ?? []
   return [kbswitchAction.value, ...mapActionKeys(first, false)]
 })
 
 const actionFollowingRows = computed(() => {
-  const cfg = settings.action_keyboard ?? DEFAULT_ACTION_KEYBOARD
-  const rows = cfg.rows?.length ? cfg.rows : DEFAULT_ACTION_KEYBOARD.rows
+  const rows = effectiveActionKeyboard().rows
   if (rows.length < 2) return []
   const tail = rows.slice(1)
   return tail.map((r, i) => mapActionKeys(r ?? [], i === tail.length - 1))
 })
+
+const actionBottom = computed<ActionBottomCluster>(() =>
+  effectiveActionKeyboard().bottom ?? DEFAULT_ACTION_BOTTOM
+)
+
+function withActionFooterClass(def: KeyDef, cls: string): KeyDef {
+  return { ...def, cls: [def.cls, cls].filter(Boolean).join(' ') }
+}
+
+function mapActionFooterRow(row: ActionKey[]): KeyDef[] {
+  return mapActionKeys(row, false).map((def, i) =>
+    withActionFooterClass(
+      def,
+      Array.from(row[i].label).length === 1 ? 'mkb-action-arrow' : 'mkb-action-btn',
+    )
+  )
+}
+
+const actionBottomRows = computed(() => actionBottom.value.rows.map(mapActionFooterRow))
+const actionEnter = computed(() =>
+  withActionFooterClass(
+    actionKeyToKeyDef(actionBottom.value.enter),
+    'mkb-action-enter mkb-return',
+  )
+)
 
 const pasteSupported = computed(
   () => window.isSecureContext && typeof navigator.clipboard?.readText === 'function'
@@ -668,22 +688,6 @@ const pasteSupported = computed(
 const toolbarQuickKeyDefs = computed(() =>
   (settings.toolbar_quick_keys ?? []).slice(0, 5).map((key) => actionKeyToKeyDef(key))
 )
-
-const actionArrowUp: KeyDef = { l: '↑', s: '\x1b[A', cls: 'mkb-mod mkb-action-arrow', repeat: true }
-
-const actionArrowBot: KeyDef[] = [
-  { l: '↓', s: '\x1b[B', cls: 'mkb-mod mkb-action-arrow', repeat: true },
-]
-
-const actionEnter: KeyDef = { l: '↵', s: '\r', cls: 'mkb-mod mkb-action-enter mkb-return' }
-
-const actionYes: KeyDef = { l: 'yes', s: 'yes\r', cls: 'mkb-mod mkb-action-btn' }
-const actionNo: KeyDef = { l: 'no', s: 'no\r', cls: 'mkb-mod mkb-action-btn' }
-const actionContinue: KeyDef = {
-  l: 'continue',
-  s: 'continue\r',
-  cls: 'mkb-mod mkb-action-btn mkb-action-continue',
-}
 
 function onTextInputFocus() {
   if (blurTimer) {
@@ -756,6 +760,10 @@ function onKeyPress(ch: string) {
 
   props.getSendFn()?.(data)
   if (kbMode.value === 'default') fetchDebounced(inputBuffer.value || undefined)
+}
+
+function onAppAction(id: string) {
+  emit('app-action', id)
 }
 
 function onSpecial(sp: string) {
