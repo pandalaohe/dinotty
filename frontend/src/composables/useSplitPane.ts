@@ -293,6 +293,19 @@ export function useSplitPane(opts: {
 
   /** Promote a single pane to a new tab. */
   async function promotePaneToTab(srcTabId: string, paneId: string) {
+    // Capture the source leaf BEFORE extraction. After `apiExtractPane`
+    // returns, `result.source_layout` no longer contains this paneId, so the
+    // non-terminal metadata (kind/pluginId/path/url/title) can only be
+    // recovered from the pre-extraction layout. Without this capture, the
+    // fallback below would hardcode `title: 'Terminal'` and drop plugin/files/
+    // web metadata - producing an empty "Terminal" tab when the source was a
+    // non-terminal pane and the REST response wins the race against the
+    // TabCreated broadcast (which would otherwise restore the layout).
+    const srcBefore = tabs.value.find(
+      (t) => t.type === 'terminal' && t.paneId === srcTabId
+    ) as TerminalTab | undefined
+    const sourceLeaf = srcBefore ? findLeaf(srcBefore.layout, paneId) : null
+
     try {
       const result = await apiExtractPane(srcTabId, paneId)
       // Update source tab local layout
@@ -330,16 +343,22 @@ export function useSplitPane(opts: {
           existing.workspaceId = inheritedWorkspaceId
         }
       } else {
+        // Build the new tab's root leaf from the captured source leaf so
+        // kind/title/pluginId/path/url survive the extraction. Falls back to
+        // a plain terminal leaf only when the source was already gone.
+        const fallbackLeaf: LeafPane = sourceLeaf
+          ? { ...sourceLeaf, ratio: 1, zoomed: false }
+          : {
+              type: 'leaf',
+              paneId: result.pane_id,
+              title: 'Terminal',
+              ratio: 1,
+              zoomed: false,
+            }
         tabs.value.push({
           type: 'terminal',
           paneId: result.new_tab_id,
-          layout: ensureSplitRoot({
-            type: 'leaf',
-            paneId: result.pane_id,
-            title: 'Terminal',
-            ratio: 1,
-            zoomed: false,
-          }),
+          layout: ensureSplitRoot(fallbackLeaf),
           activePaneId: result.pane_id,
           paneMru: [result.pane_id],
           broadcastMode: false,
