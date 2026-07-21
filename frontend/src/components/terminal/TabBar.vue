@@ -236,10 +236,11 @@ import { useKeybindings } from '../../composables/useKeybindings'
 import { useSettingsStore } from '../../stores'
 import { resolveWorkspaceBadgeMode } from '../../composables/useWorkspaceBadgeMode'
 import { uiConfirm } from '../../composables/useConfirm'
-import { usePaneDrag, type DropZone } from '../../composables/paneDragContext'
+import { usePaneDrag } from '../../composables/paneDragContext'
 import WorkspaceBadge from '../WorkspaceBadge.vue'
 import ContextMenu from '../ui/ContextMenu.vue'
 import type { ContextMenuItem } from '../ui/ContextMenu.vue'
+import { useTabDrag } from '../../composables/useTabDrag'
 
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
@@ -576,239 +577,30 @@ watch([pluginMenuOpen, newMenuOpen], ([pluginOpen, newOpen]) => {
   }
 })
 
-const dragOverId = ref<string | null>(null)
-
 const drag = usePaneDrag()
 
-let dragFromId: string | null = null
-let dragStarted = false
-let startX = 0
-let startY = 0
-let isTouchDrag = false
-let suppressClick = false
-// Pane drop target (Mode A: merge whole source tab into a pane of another tab).
-// Cleared on every pointermove so the latest hit wins; persisted across the
-// drag via paneDragContext for DropPreview rendering.
-let paneTargetId: string | null = null
-let paneTargetZone: 'left' | 'right' | 'top' | 'bottom' | null = null
-const DRAG_THRESHOLD = 5
-
-function scrollTabIntoView(paneId: string): boolean {
-  const el = findTabElement(paneId)
-  if (!el) return false
-  if (!dragStarted || dragFromId === null) {
-    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
-  }
-  return true
-}
+const {
+  dragOverId,
+  scrollTabIntoView,
+  onTabMouseDown,
+  onTabTouchStart,
+  onTabClick,
+  onTabTouchEnd,
+  cleanup: cleanupDrag,
+} = useTabDrag({
+  drag,
+  activePaneId: computed(() => props.activePaneId),
+  findTabElement,
+  onActivate: (paneId: string) => emit('activate', paneId),
+  onReorder: (fromId: string, toId: string) => emit('reorder', fromId, toId),
+  onMergeTabIntoPane: (tabId: string, paneId: string, zone) =>
+    emit('merge-tab-into-pane', tabId, paneId, zone),
+})
 
 defineExpose({ hasTab, scrollTabIntoView })
-function getPointerPos(e: MouseEvent | TouchEvent): { clientX: number; clientY: number } {
-  if ('touches' in e) {
-    const t = e.touches[0]
-    return { clientX: t.clientX, clientY: t.clientY }
-  }
-  return { clientX: e.clientX, clientY: e.clientY }
-}
-
-function onTabMouseDown(e: MouseEvent, paneId: string) {
-  if (e.button !== 0 || e.ctrlKey) return
-  suppressClick = false
-  startDrag(e, paneId, false)
-}
-
-function onTabTouchStart(e: TouchEvent, paneId: string) {
-  if (e.touches.length !== 1) return
-  suppressClick = false
-  startDrag(e, paneId, true)
-}
-
-function onTabClick(e: MouseEvent, paneId: string) {
-  if (suppressClick) {
-    e.preventDefault()
-    e.stopPropagation()
-    suppressClick = false
-    return
-  }
-  emit('activate', paneId)
-}
-
-function onTabTouchEnd(e: TouchEvent, paneId: string) {
-  if (suppressClick) {
-    suppressClick = false
-    return
-  }
-  emit('activate', paneId)
-}
-
-function startDrag(e: MouseEvent | TouchEvent, paneId: string, isTouch: boolean) {
-  const pos = getPointerPos(e)
-  startX = pos.clientX
-  startY = pos.clientY
-  dragStarted = false
-  isTouchDrag = isTouch
-  dragFromId = paneId
-  paneTargetId = null
-  paneTargetZone = null
-
-  const moveEvent = isTouch ? 'touchmove' : 'mousemove'
-  const endEvent = isTouch ? 'touchend' : 'mouseup'
-
-  window.addEventListener(
-    moveEvent,
-    onPointerMove as EventListener,
-    { passive: !isTouch } as AddEventListenerOptions
-  )
-  window.addEventListener(endEvent, onPointerEnd)
-  if (!isTouch) {
-    document.addEventListener('keydown', onKeydown, true)
-    document.addEventListener('mouseleave', onMouseLeave)
-  }
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && dragStarted) {
-    cancelDrag()
-  }
-}
-
-function onMouseLeave(_e: MouseEvent) {
-  if (dragStarted) {
-    cancelDrag()
-  }
-}
-
-function cancelDrag() {
-  paneTargetId = null
-  paneTargetZone = null
-  dragOverId.value = null
-  drag.clearTarget()
-  cleanup()
-}
-
-function computePaneZone(
-  rect: DOMRect,
-  clientX: number,
-  clientY: number
-): 'left' | 'right' | 'top' | 'bottom' {
-  const relX = (clientX - rect.left) / rect.width
-  const relY = (clientY - rect.top) / rect.height
-  if (relY < 0.25) return 'top'
-  if (relY > 0.75) return 'bottom'
-  if (relX < 0.25) return 'left'
-  if (relX > 0.75) return 'right'
-  // Center band: pick the closest edge.
-  const distTop = relY
-  const distBottom = 1 - relY
-  const distLeft = relX
-  const distRight = 1 - relX
-  const minDist = Math.min(distTop, distBottom, distLeft, distRight)
-  if (minDist === distTop) return 'top'
-  if (minDist === distBottom) return 'bottom'
-  if (minDist === distLeft) return 'left'
-  return 'right'
-}
-
-function onPointerMove(e: MouseEvent | TouchEvent) {
-  const pos = getPointerPos(e)
-  if (!dragStarted) {
-    if (
-      Math.abs(pos.clientX - startX) < DRAG_THRESHOLD &&
-      Math.abs(pos.clientY - startY) < DRAG_THRESHOLD
-    ) {
-      return
-    }
-    dragStarted = true
-    // Only prevent scroll once drag gesture is confirmed
-    if (isTouchDrag) {
-      e.preventDefault()
-    }
-    // Engage shared drag context with wholeTab=true so DropPreview renders
-    // and downstream Mode A merge can be dispatched on drop.
-    drag.startDrag({ sourcePaneId: dragFromId!, sourceTabId: dragFromId!, wholeTab: true })
-  } else if (isTouchDrag) {
-    e.preventDefault()
-  }
-
-  // Reset transient hit state; recompute each move.
-  paneTargetId = null
-  paneTargetZone = null
-  let tabTargetId: string | null = null
-
-  const elements = document.elementsFromPoint(pos.clientX, pos.clientY)
-  for (const el of elements) {
-    const htmlEl = el as HTMLElement
-    if (!paneTargetId) {
-      const leaf = htmlEl.closest('.split-leaf[data-pane-id]') as HTMLElement | null
-      if (leaf) {
-        const leafPaneId = leaf.dataset.paneId
-        if (leafPaneId) {
-          // Mode A merges the whole source tab into a pane of ANOTHER tab.
-          // Visible panes live in the active tab; if the source is active,
-          // every visible pane belongs to the source -> self-loop, skip.
-          if (dragFromId !== props.activePaneId) {
-            const rect = leaf.getBoundingClientRect()
-            paneTargetId = leafPaneId
-            paneTargetZone = computePaneZone(rect, pos.clientX, pos.clientY)
-          }
-        }
-      }
-    }
-    if (!tabTargetId) {
-      const tabEl = htmlEl.closest('.tab[data-pane-id]') as HTMLElement | null
-      if (tabEl) {
-        const pid = tabEl.dataset.paneId
-        if (pid && pid !== dragFromId) {
-          tabTargetId = pid
-        }
-      }
-    }
-    if (paneTargetId && tabTargetId) break
-  }
-
-  // Priority: pane (Mode A merge) > tab-label (reorder).
-  if (paneTargetId && paneTargetZone) {
-    dragOverId.value = null
-    drag.setTarget(paneTargetId, paneTargetZone as DropZone, 'pane')
-  } else {
-    drag.clearTarget()
-    dragOverId.value = tabTargetId
-  }
-}
-
-function onPointerEnd() {
-  if (dragStarted && dragFromId) {
-    if (paneTargetId && paneTargetZone) {
-      suppressClick = true
-      emit('merge-tab-into-pane', dragFromId, paneTargetId, paneTargetZone)
-    } else if (dragOverId.value && dragFromId !== dragOverId.value) {
-      suppressClick = true
-      emit('reorder', dragFromId, dragOverId.value)
-    }
-  }
-
-  cleanup()
-}
-
-function cleanup() {
-  dragStarted = false
-  dragFromId = null
-  dragOverId.value = null
-  paneTargetId = null
-  paneTargetZone = null
-
-  window.removeEventListener('mousemove', onPointerMove as EventListener)
-  window.removeEventListener('mouseup', onPointerEnd)
-  window.removeEventListener('touchmove', onPointerMove as EventListener)
-  window.removeEventListener('touchend', onPointerEnd)
-  document.removeEventListener('keydown', onKeydown, true)
-  document.removeEventListener('mouseleave', onMouseLeave)
-
-  drag.endDrag()
-}
 
 onBeforeUnmount(() => {
-  cleanup()
+  cleanupDrag()
   tabsListRef.value?.removeEventListener('scroll', updateFades)
   tabsListRef.value?.removeEventListener('wheel', onTabsWheel)
   window.removeEventListener('resize', updateFades)
