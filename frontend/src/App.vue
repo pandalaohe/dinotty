@@ -309,8 +309,10 @@ import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
-import { getEditor, getActiveLeaf } from './composables/useEditorRegistry'
-import { useCursorGroup, type SearchMatch, type PickerItem } from './composables/useCursorGroup'
+import { usePluginNotifyBridge } from './composables/usePluginNotifyBridge'
+import { useSshAuth } from './composables/useSshAuth'
+import { useCursorPicker } from './composables/useCursorPicker'
+import { useOverviewCallbacks } from './composables/useOverviewCallbacks'
 import { clearFileWorkspaceState } from './composables/useFileWorkspaceState'
 import { useSplitPane } from './composables/useSplitPane'
 import { useSuperviseTabs } from './composables/useSuperviseTabs'
@@ -392,20 +394,24 @@ function setPreviewPanelRef(el: any) {
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
 const serverListRef = ref<InstanceType<typeof ServerList>>()
 const sshPanelRef = ref<InstanceType<typeof SshHostsPanel>>()
-const cursorPickerVisible = ref(false)
-const cursorPickerItems = ref<PickerItem[]>([])
-const cursorPickerMatches = ref<Map<string, SearchMatch>>(new Map())
-const cursorGroupApi = useCursorGroup()
-const sshAuthVisible = ref(false)
-const sshAuthHost = ref('')
-const sshAuthPaneId = ref('')
-const sshAuthPrompts = ref<Array<{ prompt: string; echo: boolean }>>([])
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
 const presentationSettings = useNotificationPresentation().settings
 const { supervise } = useSuperviseTabs()
 const toast = useToast()
+const cursorPicker = useCursorPicker({
+  tabs,
+  activePaneId,
+  toast,
+  t,
+})
+const {
+  cursorPickerVisible,
+  cursorPickerItems,
+  triggerAddCursors,
+  onCursorPickerConfirm,
+} = cursorPicker
 const clearToastInstance = setToastInstance(toast)
 const clearActiveReadContext = setActiveReadContext({
   getActiveFocusedPaneId: () =>
@@ -501,7 +507,30 @@ const notificationPaneLabels = computed(() => {
 const isLandscape = ref(window.innerWidth > window.innerHeight)
 
 // Mission Control
-const overviewOpen = ref(false)
+const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
+const {
+  overviewOpen,
+  openOverview,
+  onOverviewActivate,
+  onOverviewCloseTab,
+  onCloseTabsBulk,
+  onOverviewNewTab,
+  onOverviewNewTabSsh,
+  onOverviewRenameTab,
+} = useOverviewCallbacks({
+  tabs,
+  activePaneId,
+  activeWorkspaceId,
+  termRefs,
+  session,
+  activateTab,
+  closeTab,
+  requestCloseTab,
+  newTab,
+  persist,
+  commitLocalActivePane,
+  focusActive,
+})
 const currentTabIndex = computed(() =>
   visibleTabList.value.findIndex((t) => t.paneId === activePaneId.value) + 1
 )
@@ -511,10 +540,6 @@ const currentTabTitle = computed(() => {
   if (tab.type === 'terminal') return tab.customTitle ?? findLeaf(tab.layout, tab.activePaneId)?.title ?? 'Terminal'
   return tab.title
 })
-
-function openOverview() {
-  overviewOpen.value = true
-}
 
 function adjustActiveTerminalFontSize(delta: number) {
   if (!activePaneId.value) return
@@ -527,71 +552,6 @@ function adjustActiveTerminalFontSize(delta: number) {
   } else {
     ref.adjustFontSize(delta)
   }
-}
-
-function onOverviewActivate(paneId: string) {
-  activateTab(paneId)
-  overviewOpen.value = false
-  nextTick(() => {
-    const ref = termRefs[paneId]
-    ref?.focus()
-  })
-}
-
-function onOverviewCloseTab(tabId: string) {
-  requestCloseTab(tabId)
-}
-
-async function onCloseTabsBulk(paneIds: string[]) {
-  // Confirmation already happened in the caller; close directly, bypass per-tab confirm.
-  // Reverse order keeps successor selection stable.
-  for (const id of [...paneIds].reverse()) {
-    await closeTab(id)
-  }
-}
-
-async function onOverviewNewTab(cwd?: string) {
-  overviewOpen.value = false
-  await newTab(cwd)
-}
-
-async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
-  overviewOpen.value = false
-  try {
-    const result = await apiCreateSshTab(connectionId, initialCwd)
-    const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
-    if (existing) {
-      commitLocalActivePane(result.tab_id)
-      persist()
-      nextTick(() => focusActive())
-      return
-    }
-    const layout = ensureSplitRoot(result.layout)
-    tabs.value.push({
-      type: 'terminal',
-      paneId: result.tab_id,
-      layout,
-      activePaneId: result.pane_id,
-      paneMru: [result.pane_id],
-      broadcastMode: false,
-      broadcastActivity: 0,
-      previewVisible: false,
-      previewAddress: '',
-      previewUrl: '',
-      previewKind: 'web',
-      connectionId,
-    })
-    commitLocalActivePane(result.tab_id)
-    persist()
-    nextTick(() => focusActive())
-  } catch (e) {
-    console.error('Failed to create SSH tab:', e)
-  }
-}
-
-function onOverviewRenameTab(paneId: string, title: string) {
-  session.renameTab(paneId, title)
-  persist()
 }
 
 // Capture plugin preview when active tab changes to a plugin tab (handles initial load)
@@ -658,7 +618,6 @@ watch(
   (paneId) => setActivePaneId(paneId),
 )
 
-const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
 const outputListeners = new Set<(paneId: string, data: string) => void>()
 
 const syncWs = useSyncWebSocket({
@@ -668,22 +627,26 @@ const syncWs = useSyncWebSocket({
   newTab: async () => { await newTab() },
 })
 
+const sshAuth = useSshAuth({ syncWs })
+const {
+  sshAuthVisible,
+  sshAuthHost,
+  sshAuthPrompts,
+} = sshAuth
+
 // Set up SSH keyboard-interactive auth handler
 syncWs.setSshAuthPromptHandler((paneId: string, prompts: Array<{ prompt: string; echo: boolean }>) => {
-  sshAuthPaneId.value = paneId
-  sshAuthPrompts.value = prompts
   // Find the host info from tabs
   const tab = tabs.value.find((t) => {
     if (t.type !== 'terminal') return false
     return t.paneId === paneId || !!findLeaf(t.layout, paneId)
   })
+  let host = paneId
   if (tab && tab.type === 'terminal') {
     const leaf = findLeaf(tab.layout, paneId)
-    sshAuthHost.value = leaf?.title || paneId
-  } else {
-    sshAuthHost.value = paneId
+    host = leaf?.title || paneId
   }
-  sshAuthVisible.value = true
+  sshAuth.showPrompt(paneId, prompts, host)
 })
 
 const splitPane = useSplitPane({
@@ -1521,14 +1484,8 @@ function onSshReconnect() {
   sshPanelRef.value?.open()
 }
 
-function onSshAuthSubmit(responses: string[]) {
-  syncWs.sendSshAuthResponse(sshAuthPaneId.value, responses)
-  sshAuthVisible.value = false
-}
-
-function onSshAuthCancel() {
-  sshAuthVisible.value = false
-}
+const onSshAuthSubmit = (responses: string[]) => sshAuth.submit(responses)
+const onSshAuthCancel = () => sshAuth.cancel()
 
 async function openPlugin(pluginId: string) {
   try {
@@ -1642,159 +1599,9 @@ window.__dinotty_terminal_api = {
 // Test hooks for P3 verification (focusActive + isComposing guard).
 window.__dinotty_test_focus_active = focusActive
 window.__dinotty_test_is_composing = (paneId: string) => termRefs[paneId]?.isComposing() ?? false
-const PLUGIN_NOTIFY_RETRY_DELAYS_MS = [1000, 2000, 4000] as const
-const BRIDGE_MAX_CONCURRENT = 3
-const BRIDGE_QUEUE_CAP = 64
-
-interface PluginNotifyBridgeJob {
-  readonly requestId: string
-  readonly body: string
-}
-
-const pluginNotifyBridgeQueue: PluginNotifyBridgeJob[] = []
-const pluginNotifyBridgeRetryTimers = new Map<
-  ReturnType<typeof setTimeout>,
-  (shouldContinue: boolean) => void
->()
-const pluginNotifyBridgeAbortControllers = new Set<AbortController>()
-let pluginNotifyBridgeActiveJobs = 0
-let pluginNotifyBridgeDisposed = false
-let pluginNotifyBridgeOverflowDropped = 0
-let pluginNotifyBridgeOverflowWarnScheduled = false
-
-function waitForPluginNotifyRetry(delayMs: number) {
-  if (pluginNotifyBridgeDisposed) return Promise.resolve(false)
-  return new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => {
-      pluginNotifyBridgeRetryTimers.delete(timer)
-      resolve(!pluginNotifyBridgeDisposed)
-    }, delayMs)
-    pluginNotifyBridgeRetryTimers.set(timer, resolve)
-  })
-}
-
-async function runPluginNotifyBridgeJob(job: PluginNotifyBridgeJob) {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      await getApiBase()
-      if (pluginNotifyBridgeDisposed) return
-
-      const controller = new AbortController()
-      pluginNotifyBridgeAbortControllers.add(controller)
-      let response: Awaited<ReturnType<typeof authFetch>>
-      try {
-        response = await authFetch(apiUrl('/api/notify'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: job.body,
-          signal: controller.signal,
-        })
-      } finally {
-        pluginNotifyBridgeAbortControllers.delete(controller)
-      }
-      if (pluginNotifyBridgeDisposed) return
-
-      const responseBody = await response.json().catch(() => null)
-      if (pluginNotifyBridgeDisposed) return
-
-      if (response.status === 200) {
-        const accepted =
-          responseBody?.status === 'accepted' ||
-          (typeof responseBody?.eventSeq === 'string' &&
-            (typeof responseBody?.notifId === 'string' || typeof responseBody?.paneId === 'string'))
-        if (accepted || responseBody?.status === 'suppressed') return
-        console.error('[notification] plugin notify returned an unexpected 200 response')
-        return
-      }
-
-      if (response.status === 503) {
-        if (attempt < PLUGIN_NOTIFY_RETRY_DELAYS_MS.length) {
-          if (!(await waitForPluginNotifyRetry(PLUGIN_NOTIFY_RETRY_DELAYS_MS[attempt]))) return
-          continue
-        }
-        break
-      }
-
-      console.error(`[notification] plugin notify failed with HTTP ${response.status}`)
-      return
-    } catch (error) {
-      if (pluginNotifyBridgeDisposed) return
-      if (attempt < PLUGIN_NOTIFY_RETRY_DELAYS_MS.length) {
-        if (!(await waitForPluginNotifyRetry(PLUGIN_NOTIFY_RETRY_DELAYS_MS[attempt]))) return
-        continue
-      }
-      console.error('[notification] plugin notify retry exhausted', error)
-      break
-    }
-  }
-
-  if (pluginNotifyBridgeDisposed) return
-  const request = JSON.parse(job.body) as {
-    type: 'info' | 'warning' | 'error'
-    title: string
-    body: string
-  }
-  console.error('[notification] plugin notify retry exhausted; inserting locally')
-  pushNotification({
-    type: request.type,
-    title: request.title,
-    body: request.body,
-    source: 'plugin',
-  })
-}
-
-function pumpPluginNotifyBridgeQueue() {
-  while (
-    !pluginNotifyBridgeDisposed &&
-    pluginNotifyBridgeActiveJobs < BRIDGE_MAX_CONCURRENT &&
-    pluginNotifyBridgeQueue.length > 0
-  ) {
-    const job = pluginNotifyBridgeQueue.shift()!
-    pluginNotifyBridgeActiveJobs++
-    void runPluginNotifyBridgeJob(job).finally(() => {
-      pluginNotifyBridgeActiveJobs--
-      pumpPluginNotifyBridgeQueue()
-    })
-  }
-}
-
-function enqueuePluginNotifyBridgeJob(job: PluginNotifyBridgeJob) {
-  if (pluginNotifyBridgeDisposed) return
-  if (pluginNotifyBridgeQueue.length >= BRIDGE_QUEUE_CAP) {
-    pluginNotifyBridgeQueue.shift()
-    pluginNotifyBridgeOverflowDropped++
-    if (!pluginNotifyBridgeOverflowWarnScheduled) {
-      pluginNotifyBridgeOverflowWarnScheduled = true
-      queueMicrotask(() => {
-        pluginNotifyBridgeOverflowWarnScheduled = false
-        if (pluginNotifyBridgeDisposed) {
-          pluginNotifyBridgeOverflowDropped = 0
-          return
-        }
-        const dropped = pluginNotifyBridgeOverflowDropped
-        pluginNotifyBridgeOverflowDropped = 0
-        console.warn(
-          `[notification] plugin notify bridge queue full; evicted ${dropped} oldest pending ${dropped === 1 ? 'job' : 'jobs'}`
-        )
-      })
-    }
-  }
-  pluginNotifyBridgeQueue.push(job)
-  pumpPluginNotifyBridgeQueue()
-}
-
-function disposePluginNotifyBridge() {
-  pluginNotifyBridgeDisposed = true
-  pluginNotifyBridgeQueue.length = 0
-  pluginNotifyBridgeOverflowDropped = 0
-  for (const [timer, resolve] of pluginNotifyBridgeRetryTimers) {
-    clearTimeout(timer)
-    resolve(false)
-  }
-  pluginNotifyBridgeRetryTimers.clear()
-  for (const controller of pluginNotifyBridgeAbortControllers) controller.abort()
-  pluginNotifyBridgeAbortControllers.clear()
-}
+const pluginNotifyBridge = usePluginNotifyBridge({
+  pushNotification,
+})
 
 window.__dinotty_ui_notify = (
   message: string,
@@ -1815,7 +1622,7 @@ window.__dinotty_ui_notify = (
     }),
   })
 
-  enqueuePluginNotifyBridgeJob(job)
+  pluginNotifyBridge.enqueueJob(job)
 }
 window.__dinotty_ui_confirm = (message: string) => uiConfirm(message)
 window.__dinotty_open_plugin = openPlugin
@@ -1972,91 +1779,6 @@ function dispatchAppAction(id: string) {
   if (!APP_ACTION_IDS.has(id)) return
   if (id === 'closeTab') lastTabCloseShortcutAt = Date.now()
   keyActions[id]?.()
-}
-
-async function triggerAddCursors() {
-  const leafId = getActiveLeaf()
-  if (!leafId) return
-  const editor = getEditor(leafId)
-  if (!editor) return
-  const selection = editor.getSelection()
-  const model = editor.getModel()
-  let query = ''
-  if (selection && !selection.isEmpty() && model) {
-    query = model.getValueInRange(selection)
-  } else {
-    const pos = editor.getPosition()
-    if (pos && model) {
-      const word = model.getWordAtPosition(pos)
-      if (word) query = model.getValueInRange({
-        startLineNumber: pos.lineNumber,
-        startColumn: word.startColumn,
-        endLineNumber: pos.lineNumber,
-        endColumn: word.endColumn,
-      })
-    }
-  }
-  if (!query) return
-
-  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-  const paneId = tab?.type === 'terminal' ? tab.activePaneId : null
-  if (!paneId) return
-
-  try {
-    await getApiBase()
-    const res = await authFetch(apiUrl('/api/workspace/search'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pane_id: paneId, path: '.', query }),
-    })
-    if (res.status === 502) {
-      const j = await res.json().catch(() => ({}))
-      const message = j.error ? t('errors.rgNotInstalled') : t('errors.rgNotInstalled')
-      toast.error(message)
-      return
-    }
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}))
-      toast.error(j.error || `search failed (${res.status})`)
-      return
-    }
-    const data = await res.json()
-    const matches: SearchMatch[] = data.matches ?? []
-    if (matches.length === 0) {
-      toast.info(t('multiSelect.empty'))
-      return
-    }
-
-    const matchMap = new Map<string, SearchMatch>()
-    cursorPickerItems.value = matches.map((m, i) => {
-      const id = `${m.filePath}:${m.line}:${m.column}:${i}`
-      matchMap.set(id, m)
-      return {
-        id,
-        label: `${m.filePath}:${m.line}`,
-        detail: m.lineText.trim().slice(0, 100),
-      }
-    })
-    cursorPickerMatches.value = matchMap
-    cursorPickerVisible.value = true
-  } catch (err) {
-    toast.error(`search error: ${(err as Error).message}`)
-  }
-}
-
-async function onCursorPickerConfirm(selectedIds: string[]) {
-  cursorPickerVisible.value = false
-  const matches: SearchMatch[] = []
-  for (const id of selectedIds) {
-    const m = cursorPickerMatches.value.get(id)
-    if (m) matches.push(m)
-  }
-  if (matches.length === 0) return
-  try {
-    await cursorGroupApi.createGroupFromSearch(matches)
-  } catch (err) {
-    toast.error(`create group failed: ${(err as Error).message}`)
-  }
 }
 
 function onGlobalKeydown(e: KeyboardEvent) {
@@ -2286,7 +2008,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopForegroundGainSubscription()
-  disposePluginNotifyBridge()
+  pluginNotifyBridge.dispose()
   disposeNotificationPresentationScheduler()
   clearActiveReadContext()
   clearToastInstance()
