@@ -651,15 +651,20 @@ pub async fn remote_resolve(session: Arc<Session>, path: String) -> Response {
 
 // ── upload ────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 pub async fn remote_upload(
     session: Arc<Session>,
     dir: String,
     mut multipart: Multipart,
     cwd: Option<String>,
 ) -> Response {
+    tracing::info!("remote_upload: dir={:?} cwd={:?}", dir, cwd);
     let sftp = match sftp(&session).await {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => {
+            tracing::warn!("remote_upload: sftp setup failed: {:?}", e);
+            return e;
+        }
     };
     // When dir is empty (no directory selected), upload to the current
     // browsing directory (cwd). resolve_remote_rel("") returns "/", ignoring cwd.
@@ -669,9 +674,16 @@ pub async fn remote_upload(
     } else {
         resolve_remote_rel(&session, &dir, cwd.as_deref())
     };
+    tracing::info!("remote_upload: resolved dest_dir={:?}", dest_dir);
     let dest_dir = match sftp.canonicalize(&dest_dir).await {
-        Ok(p) => p,
-        Err(e) => return sftp_err(e),
+        Ok(p) => {
+            tracing::info!("remote_upload: canonicalize ok -> {:?}", p);
+            p
+        }
+        Err(e) => {
+            tracing::warn!("remote_upload: canonicalize failed: {}", e);
+            return sftp_err(e);
+        }
     };
     let mut saved: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -681,6 +693,7 @@ pub async fn remote_upload(
             Ok(Some(f)) => f,
             Ok(None) => break,
             Err(e) => {
+                tracing::warn!("remote_upload: multipart read error: {}", e);
                 errors.push(format!("multipart read error: {e}"));
                 break;
             }
@@ -711,6 +724,7 @@ pub async fn remote_upload(
                 if let Err(e) = sftp.create_dir(&sub).await {
                     // ignore "already exists" errors
                     if !format!("{e}").contains("exists") {
+                        tracing::warn!("remote_upload: mkdir {} failed: {}", parent.display(), e);
                         errors.push(format!("mkdir {}: {e}", parent.display()));
                     }
                 }
@@ -728,19 +742,26 @@ pub async fn remote_upload(
                 Ok(Some(chunk)) => data.extend_from_slice(&chunk),
                 Ok(None) => break,
                 Err(e) => {
+                    tracing::warn!("remote_upload: read {} failed: {}", base, e);
                     errors.push(format!("read {base}: {e}"));
                     break;
                 }
             }
         }
+        tracing::info!("remote_upload: writing {} ({} bytes) to {:?}", base, data.len(), path);
         match sftp.write(&path, &data).await {
             Ok(()) => {
                 let rel = path.trim_start_matches('/');
+                tracing::info!("remote_upload: saved {}", rel);
                 saved.push(rel.to_string());
             }
-            Err(e) => errors.push(format!("write {base}: {e}")),
+            Err(e) => {
+                tracing::warn!("remote_upload: write {} failed: {}", base, e);
+                errors.push(format!("write {base}: {e}"));
+            }
         }
     }
+    tracing::info!("remote_upload: done - {} saved, {} errors", saved.len(), errors.len());
     let mut resp = serde_json::json!({ "saved": saved });
     if !errors.is_empty() {
         resp["errors"] = serde_json::json!(errors);

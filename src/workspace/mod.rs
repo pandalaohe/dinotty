@@ -1359,20 +1359,31 @@ fn unique_path(dir: &Path, base: &str) -> PathBuf {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn workspace_upload(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> Response {
+    let is_ssh = ssh_session(&manager, &q.pane_id).is_some();
+    tracing::info!(
+        "workspace_upload: pane={} dir={:?} cwd={:?} ssh={}",
+        q.pane_id,
+        q.dir,
+        q.cwd,
+        is_ssh
+    );
     if let Some(session) = ssh_session(&manager, &q.pane_id) {
         return remote::remote_upload(session, q.dir.clone(), multipart, q.cwd.clone()).await;
     }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let dest_dir = try_res!(normalize_join(&root, &q.dir));
     if !dest_dir.is_dir() {
+        tracing::warn!("workspace_upload: target not a directory: {:?}", dest_dir);
         return json_err(StatusCode::BAD_REQUEST, "target not a directory");
     }
     try_res!(path_must_be_under(&root, &dest_dir));
+    tracing::info!("workspace_upload: local dest_dir={:?}", dest_dir);
     let mut saved: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     let mut pending_rel_path: Option<String> = None;
@@ -1381,6 +1392,7 @@ pub async fn workspace_upload(
             Ok(Some(f)) => f,
             Ok(None) => break,
             Err(e) => {
+                tracing::warn!("workspace_upload: multipart read error: {}", e);
                 errors.push(format!("multipart read error: {e}"));
                 break;
             }
@@ -1420,21 +1432,32 @@ pub async fn workspace_upload(
             };
         let base = rel_path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
         let path = unique_path(&file_dest_dir, base);
+        tracing::info!("workspace_upload: writing {} to {:?}", rel, path);
         {
             use tokio::io::AsyncWriteExt;
             let mut file = match tokio::fs::File::create(&path).await {
                 Ok(f) => f,
-                Err(e) => return upload_io_err(&e),
+                Err(e) => {
+                    tracing::warn!("workspace_upload: create {} failed: {}", path.display(), e);
+                    return upload_io_err(&e);
+                }
             };
             let mut stream = field;
+            let mut bytes_written: u64 = 0;
             loop {
                 match stream.chunk().await {
                     Ok(Some(chunk)) => {
                         if let Err(e) = file.write_all(&chunk).await {
                             drop(file);
                             let _ = std::fs::remove_file(&path);
+                            tracing::warn!(
+                                "workspace_upload: write {} failed: {}",
+                                path.display(),
+                                e
+                            );
                             return upload_io_err(&e);
                         }
+                        bytes_written += chunk.len() as u64;
                     }
                     Ok(None) => break,
                     Err(e) => return json_err(StatusCode::BAD_REQUEST, &e.to_string()),
@@ -1443,13 +1466,16 @@ pub async fn workspace_upload(
             if let Err(e) = file.flush().await {
                 drop(file);
                 let _ = std::fs::remove_file(&path);
+                tracing::warn!("workspace_upload: flush {} failed: {}", path.display(), e);
                 return upload_io_err(&e);
             }
+            tracing::info!("workspace_upload: saved {} ({} bytes)", rel, bytes_written);
         }
         if let Some(rel) = rel_from_root(&root, &path) {
             saved.push(rel);
         }
     }
+    tracing::info!("workspace_upload: done - {} saved, {} errors", saved.len(), errors.len());
     let mut resp = serde_json::json!({ "saved": saved });
     if !errors.is_empty() {
         resp["errors"] = serde_json::json!(errors);
