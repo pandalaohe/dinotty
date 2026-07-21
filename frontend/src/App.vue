@@ -424,14 +424,12 @@ const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = us
 const { isMobile } = useIsMobile()
 
 // Workspace filtering
-const { workspaces, activeWorkspaceId, activeWorkspacePath, activeWorkspaceName, matchWorkspace, activateWorkspace, cancelPendingWorkspaceActivation } = useWorkspaces()
+const { workspaces, activeWorkspaceId, activeWorkspace, activeWorkspacePath, activeWorkspaceName, matchWorkspace, activateWorkspace, cancelPendingWorkspaceActivation } = useWorkspaces()
 
 function workspaceIdOfTab(tab: Tab): string | null {
   if (tab.type === 'plugin') return tab.workspaceId ?? null
   return matchWorkspace(tab.cwd ?? '', tab.connectionId, tab.workspaceId)?.id ?? null
 }
-
-const activeWorkspace = computed(() => workspaces.value.find((w) => w.id === activeWorkspaceId.value))
 const activeWorkspaceAbbr = computed(() =>
   activeWorkspace.value ? resolveAbbr(activeWorkspace.value) : ''
 )
