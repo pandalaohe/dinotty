@@ -24,7 +24,7 @@ function normalize(cfg: ActionKeyboardConfig): ActionKeyboardConfig {
 }
 
 describe('app action catalog', () => {
-  it('matches the 18 supported app keybinding registry entries in order', () => {
+  it('matches the 19 supported app keybinding registry entries in order', () => {
     expect(APP_ACTIONS.map(({ id }) => id)).toEqual([
       'togglePalette',
       'openBookmarks',
@@ -38,6 +38,7 @@ describe('app action catalog', () => {
       'focusNextPane',
       'focusPrevPane',
       'searchTerminal',
+      'addCursorsInFiles',
       'missionControl',
       'superviseTabs',
       'sshConnect',
@@ -45,7 +46,7 @@ describe('app action catalog', () => {
       'fontSizeDown',
       'fontSizeReset',
     ])
-    expect(APP_ACTIONS).toHaveLength(18)
+    expect(APP_ACTIONS).toHaveLength(19)
   })
 
   it('uses the registry icons for actions whose old catalog icons differed', () => {
