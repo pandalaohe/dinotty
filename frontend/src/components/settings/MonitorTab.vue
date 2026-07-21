@@ -238,9 +238,7 @@ const gpuMemChartData = computed(() => ({
 // ─── Plugin-contributed series ──────────────────────────────────────────────
 
 const visiblePluginSeries = computed(() =>
-  pluginMonitor.series.filter((s) =>
-    pluginMonitor.isVisible(s, settings.monitor.plugin_series),
-  ),
+  pluginMonitor.series.filter((s) => pluginMonitor.isConfigurable(s)),
 )
 
 function pluginSeriesVisible(s: RegisteredSeries): boolean {

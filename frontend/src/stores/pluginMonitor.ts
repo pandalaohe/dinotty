@@ -120,6 +120,16 @@ export const usePluginMonitorStore = defineStore('pluginMonitor', () => {
     return s.defaultVisible ?? true
   }
 
+  // Whether the series should show its config toggle in MonitorTab. Decouples
+  // "sensor present" from "user enabled" so a disabled series can still be
+  // re-enabled through the UI (otherwise the toggle disappears once the user
+  // sets plugin_series[id] = false).
+  function isConfigurable(s: RegisteredSeries): boolean {
+    if (s.autoHidden) return false
+    if (s.visible && !s.visible()) return false
+    return true
+  }
+
   const pluginIds = computed(() => Array.from(new Set(series.value.map((s) => s.pluginId))))
 
   return {
@@ -129,6 +139,7 @@ export const usePluginMonitorStore = defineStore('pluginMonitor', () => {
     unregister,
     sample,
     isVisible,
+    isConfigurable,
   }
 })
 

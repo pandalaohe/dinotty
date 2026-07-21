@@ -29,7 +29,6 @@ export function createSystemStatusBarItems(
   monitorSettings: ComputedRef<MonitorSettings>,
   onMetricClick: (key: MetricKey, event: MouseEvent) => void,
 ): StatusBarItem[] {
-  const ms = monitorSettings.value
   return [
     {
       id: 'system:cpu',
@@ -37,7 +36,7 @@ export function createSystemStatusBarItems(
       priority: 100,
       tooltip: 'CPU 使用率',
       onClick: (e) => onMetricClick('cpu', e),
-      defaultVisible: ms.cpu,
+      visible: () => monitorSettings.value.cpu,
       render: () => {
         const d = monitorData.value
         const usage = d ? `${d.cpu.usage.toFixed(0)}%` : '-'
@@ -53,7 +52,7 @@ export function createSystemStatusBarItems(
       priority: 110,
       tooltip: '内存使用',
       onClick: (e) => onMetricClick('memory', e),
-      defaultVisible: ms.memory,
+      visible: () => monitorSettings.value.memory,
       render: () => {
         const d = monitorData.value
         const label = d
@@ -71,7 +70,7 @@ export function createSystemStatusBarItems(
       priority: 120,
       tooltip: '磁盘使用',
       onClick: (e) => onMetricClick('disk', e),
-      defaultVisible: ms.disk,
+      visible: () => monitorSettings.value.disk,
       render: () => {
         const d = monitorData.value
         const mainDisk = d?.disk[0]
@@ -90,7 +89,7 @@ export function createSystemStatusBarItems(
       priority: 130,
       tooltip: '网络速率',
       onClick: (e) => onMetricClick('network', e),
-      defaultVisible: ms.network,
+      visible: () => monitorSettings.value.network,
       render: () => {
         const d = monitorData.value
         const label = d
@@ -108,8 +107,9 @@ export function createSystemStatusBarItems(
       priority: 140,
       tooltip: 'GPU 显存',
       onClick: (e) => onMetricClick('gpu', e),
-      defaultVisible: ms.gpu ?? false,
-      visible: () => (monitorData.value?.gpu?.length ?? 0) > 0,
+      visible: () =>
+        (monitorSettings.value.gpu ?? false) &&
+        (monitorData.value?.gpu?.length ?? 0) > 0,
       render: () => {
         const d = monitorData.value
         if (!d || !d.gpu?.length) return null
