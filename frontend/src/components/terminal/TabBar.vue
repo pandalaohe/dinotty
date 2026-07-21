@@ -143,31 +143,6 @@
           <span class="new-menu-label">{{ t('keybinding.splitVertical') }}</span>
           <kbd class="new-menu-kbd">{{ kbdSplitV }}</kbd>
         </div>
-        <div class="new-menu-sep" />
-        <div
-          class="new-menu-item"
-          @click="emitAction('add-plugin-pane')"
-          @touchend.prevent="emitAction('add-plugin-pane')"
-        >
-          <Puzzle :size="14" class="new-menu-icon" />
-          <span class="new-menu-label">{{ t('split.addPluginPane') }}</span>
-        </div>
-        <div
-          class="new-menu-item"
-          @click="emitAction('add-files-pane')"
-          @touchend.prevent="emitAction('add-files-pane')"
-        >
-          <Folder :size="14" class="new-menu-icon" />
-          <span class="new-menu-label">{{ t('split.addFilesPane') }}</span>
-        </div>
-        <div
-          class="new-menu-item"
-          @click="emitAction('add-web-pane')"
-          @touchend.prevent="emitAction('add-web-pane')"
-        >
-          <Globe :size="14" class="new-menu-icon" />
-          <span class="new-menu-label">{{ t('split.addWebPane') }}</span>
-        </div>
         <template v-if="canBroadcast">
           <div class="new-menu-sep" />
           <div
@@ -228,7 +203,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
-import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard, Globe, Server, Folder } from 'lucide-vue-next'
+import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard, Globe, Server } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useKeybindings } from '../../composables/useKeybindings'
 import { useSettingsStore } from '../../stores'
@@ -315,10 +290,7 @@ const emit = defineEmits<{
       | 'split-h'
       | 'split-v'
       | 'broadcast'
-      | 'ssh-connect'
-      | 'add-plugin-pane'
-      | 'add-files-pane'
-      | 'add-web-pane',
+      | 'ssh-connect',
   ]
   reorder: [fromId: string, toId: string]
   'merge-tab-into-pane': [srcTabId: string, targetPaneId: string, direction: 'left' | 'right' | 'top' | 'bottom']
@@ -395,9 +367,6 @@ function emitAction(
     | 'split-v'
     | 'broadcast'
     | 'ssh-connect'
-    | 'add-plugin-pane'
-    | 'add-files-pane'
-    | 'add-web-pane'
 ) {
   emit('action', type)
   newMenuOpen.value = false

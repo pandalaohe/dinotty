@@ -567,6 +567,7 @@ pub fn run_server(
             .route("/api/tabs/:tab_id/pane/web", post(tabs::create_web_pane))
             .route("/api/tabs/:tab_id/pane/move", post(tabs::move_pane))
             .route("/api/tabs/extract", post(tabs::extract_pane))
+            .route("/api/tabs/plugin", post(tabs::create_plugin_tab))
             .route("/api/tabs/:tab_id/pane/:pane_id", delete(tabs::close_pane))
             .route("/api/tabs/:tab_id/pane/:pane_id/activate", put(tabs::activate_pane))
             .route("/api/tabs/:tab_id/layout", put(tabs::update_layout))

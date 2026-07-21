@@ -19,6 +19,7 @@ import {
 import { isTauri } from './useTransport'
 import { handlePluginChanged } from './usePluginLoader'
 import { useWorkspaces } from './useWorkspaces'
+import { apiCreatePluginTab } from './useTabApi'
 import type TerminalPane from '../components/terminal/TerminalPane.vue'
 
 export function useSyncWebSocket(opts: {
@@ -143,7 +144,11 @@ export function useSyncWebSocket(opts: {
             !localTabIds.has(tab.tab_id)
           ) {
             const serverLayout = tab.layout ?? null
-            const saved = !serverLayout ? getSavedTab(tab.pane_id) : null
+            // Always look up the saved entry so we can restore fields the
+            // backend does not track (workspaceId, customTitle, preview
+            // state). The server layout still takes precedence for the
+            // layout itself when present.
+            const saved = getSavedTab(tab.pane_id)
             const migratedRaw = saved ? migrateTab(saved) : null
             const migrated = migratedRaw ? migratePreviewToLeaf(migratedRaw) : null
             tabs.value.push({
@@ -184,25 +189,29 @@ export function useSyncWebSocket(opts: {
               customTitle: migrated?.customTitle,
               cwd: tab.cwd,
               connectionId: tab.connection_id,
+              workspaceId: migrated?.workspaceId,
             })
           }
         }
 
-        // Restore plugin tabs from localStorage
+        // Migrate legacy plugin tabs from localStorage: convert to TerminalTab
+        // with a plugin leaf and register with the backend so they gain a
+        // `tab_layouts` entry (required for Mode A drag-and-drop merge).
         try {
           const raw = localStorage.getItem('dinotty_tabs')
           if (raw) {
             const { tabs: savedTabs } = JSON.parse(raw)
             for (const st of savedTabs) {
-              if (st.type === 'plugin' && !tabs.value.some((t) => t.paneId === st.paneId)) {
-                tabs.value.push({
-                  type: 'plugin',
-                  paneId: st.paneId,
-                  title: st.title || st.pluginId,
-                  pluginId: st.pluginId,
-                  workspaceId: st.workspaceId,
-                })
-              }
+              if (st.type !== 'plugin') continue
+              if (tabs.value.some((t) => t.paneId === st.paneId)) continue
+              const migrated = migrateTab(st)
+              tabs.value.push(migrated)
+              // Fire-and-forget: the backend `insert_tab` is idempotent, so
+              // re-registering an already-tracked plugin tab is a no-op.
+              void apiCreatePluginTab(st.pluginId, {
+                title: st.title ?? st.pluginId,
+                tabId: st.paneId,
+              }).catch((e) => console.warn('[sync] plugin tab register failed:', e))
             }
           }
         } catch {

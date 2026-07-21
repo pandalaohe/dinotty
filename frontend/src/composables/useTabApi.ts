@@ -202,6 +202,33 @@ export async function apiExtractPane(
   return res.json()
 }
 
+export interface CreatePluginTabResult {
+  tab_id: string
+  pane_id: string
+  layout: any
+}
+
+/** Create a new tab whose root layout is a single plugin leaf (no PTY).
+ *  Used so plugin tabs gain a backend `tab_layouts` entry, enabling Mode A
+ *  drag-and-drop merge with other tabs. Pass `tabId` to reuse an existing
+ *  paneId when migrating frontend-only plugin tabs. */
+export async function apiCreatePluginTab(
+  pluginId: string,
+  options?: { title?: string; tabId?: string }
+): Promise<CreatePluginTabResult> {
+  const res = await authFetch(apiUrl('/api/tabs/plugin'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      plugin_id: pluginId,
+      title: options?.title,
+      tab_id: options?.tabId,
+    }),
+  })
+  if (!res.ok) throw new Error(`create plugin tab failed: ${res.status}`)
+  return res.json()
+}
+
 // ─── SSH ────────────────────────────────────────────────────────────
 
 export interface SshAuthMethod {

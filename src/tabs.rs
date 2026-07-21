@@ -82,6 +82,18 @@ pub struct ExtractPaneRequest {
     pub pane_id: String,
 }
 
+#[derive(Deserialize)]
+pub struct CreatePluginTabRequest {
+    pub plugin_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Optional tab ID to reuse (used when migrating frontend-only plugin
+    /// tabs so they gain a backend `tab_layouts` entry without changing
+    /// paneId). If omitted, a new UUID is generated.
+    #[serde(default)]
+    pub tab_id: Option<String>,
+}
+
 fn deserialize_optional_argv<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -523,6 +535,59 @@ pub async fn create_plugin_pane(
         Ok(resp) => resp.into_response(),
         Err(err) => err.into_response(),
     }
+}
+
+// ─── POST /api/tabs/plugin ───────────────────────────────────────
+
+/// Create a new tab whose root layout is a single plugin leaf (no PTY).
+/// Used so plugin tabs gain a backend `tab_layouts` entry, enabling Mode A
+/// drag-and-drop merge with other tabs.
+#[allow(clippy::unused_async)]
+pub async fn create_plugin_tab(
+    State(manager): State<Arc<SessionManager>>,
+    Json(req): Json<CreatePluginTabRequest>,
+) -> impl IntoResponse {
+    let tab_id = req.tab_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // Frontend convention: plugin tab uses the same ID for the tab and its
+    // single leaf pane, so existing paneId-based lookups keep working.
+    let pane_id = tab_id.clone();
+    let title = req.title.unwrap_or_else(|| req.plugin_id.clone());
+
+    let layout = serde_json::json!({
+        "type": "leaf",
+        "kind": "plugin",
+        "paneId": pane_id,
+        "title": title,
+        "ratio": 1,
+        "zoomed": false,
+        "pluginId": req.plugin_id,
+    });
+
+    manager.insert_tab(
+        tab_id.clone(),
+        serde_json::json!({
+            "layout": layout.clone(),
+            "active_pane_id": pane_id,
+        }),
+    );
+
+    *manager.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some(pane_id.clone());
+
+    manager.broadcast_sync(&SyncMsg::TabCreated {
+        tab_id: tab_id.clone(),
+        pane_id: pane_id.clone(),
+        layout: Some(layout.clone()),
+        cwd: None,
+        connection_id: None,
+    });
+
+    Json(serde_json::json!({
+        "tab_id": tab_id,
+        "pane_id": pane_id,
+        "layout": layout,
+    }))
+    .into_response()
 }
 
 #[allow(clippy::unused_async)]

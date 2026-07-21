@@ -159,12 +159,6 @@
             "
           />
         </template>
-        <PluginView
-          v-else-if="tab.type === 'plugin'"
-          :data-plugin-pane-id="tab.paneId"
-          :plugin="loadedPlugins.get(tab.pluginId)!"
-          :api="getPluginContext(tab.pluginId)"
-        />
       </div>
     </div>
 
@@ -346,6 +340,7 @@ import {
   apiClosePane,
   apiActivatePane,
   apiListTabs,
+  apiCreatePluginTab,
 } from './composables/useTabApi'
 import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar, RefreshCw } from 'lucide-vue-next'
 import WorkspaceOverview from './components/overview/WorkspaceOverview.vue'
@@ -587,8 +582,13 @@ watch(
   activePaneId,
   (paneId) => {
     const tab = tabs.value.find((t) => t.paneId === paneId)
-    if (tab?.type === 'plugin') {
+    if (!tab) return
+    // Legacy PluginTab or migrated TerminalTab-with-plugin-leaf.
+    if (tab.type === 'plugin') {
       nextTick(() => refreshPluginPreview(tab.paneId))
+    } else if (tab.type === 'terminal') {
+      const pluginLeaf = getAllLeaves(tab.layout).find((l) => l.kind === 'plugin')
+      if (pluginLeaf) nextTick(() => refreshPluginPreview(pluginLeaf.paneId))
     }
   }
 )
@@ -797,6 +797,8 @@ function persistNow() {
         previewKind: t.previewKind,
         customTitle: t.customTitle,
         connectionId: t.connectionId,
+        cwd: t.cwd,
+        workspaceId: t.workspaceId,
       }
     }
     return {
@@ -886,9 +888,6 @@ function onNewMenuAction(
     | 'split-v'
     | 'broadcast'
     | 'ssh-connect'
-    | 'add-plugin-pane'
-    | 'add-files-pane'
-    | 'add-web-pane'
 ) {
   switch (type) {
     case 'new-tab':
@@ -901,24 +900,6 @@ function onNewMenuAction(
       return splitPane.toggleBroadcast()
     case 'ssh-connect':
       return sshPanelRef.value?.open()
-    case 'add-plugin-pane': {
-      const first = pluginList.value[0]
-      if (!first) return
-      void splitPane.insertNonTerminalPane('plugin', { pluginId: first.id })
-      return
-    }
-    case 'add-files-pane': {
-      const path = window.prompt(t('split.addFilesPane'), activeWorkspacePath.value ?? '')
-      if (!path) return
-      void splitPane.insertNonTerminalPane('files', { path })
-      return
-    }
-    case 'add-web-pane': {
-      const url = window.prompt(t('split.addWebPane'), 'http://localhost:')
-      if (!url) return
-      void splitPane.insertNonTerminalPane('web', { url })
-      return
-    }
   }
 }
 
@@ -1175,9 +1156,14 @@ async function closeTab(tabId: string) {
   const closedPaneIds = tab.type === 'terminal'
     ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
     : [tab.paneId]
-  // Invalidate plugin preview cache when closing a plugin tab
+  // Invalidate plugin preview cache for any plugin leaves being closed
+  // (covers both legacy PluginTab and migrated TerminalTab-with-plugin-leaf).
   if (tab.type === 'plugin') {
     invalidatePluginPreview(tab.paneId)
+  } else if (tab.type === 'terminal') {
+    for (const leaf of getAllLeaves(tab.layout)) {
+      if (leaf.kind === 'plugin') invalidatePluginPreview(leaf.paneId)
+    }
   }
 
   if (tab.type === 'terminal') {
@@ -1511,7 +1497,7 @@ function onSshAuthCancel() {
   sshAuthVisible.value = false
 }
 
-function openPlugin(pluginId: string) {
+async function openPlugin(pluginId: string) {
   try {
     const wsId = activeWorkspaceId.value ?? ''
     const paneId = `plugin:${pluginId}:${wsId}`
@@ -1532,16 +1518,44 @@ function openPlugin(pluginId: string) {
       return
     }
 
-    const newTab = {
-      type: 'plugin' as const,
-      paneId,
+    // Register with the backend so the tab has a `tab_layouts` entry,
+    // enabling Mode A drag-and-drop merge. Reuse the deterministic paneId
+    // so existing localStorage entries migrate without changing identity.
+    const result = await apiCreatePluginTab(pluginId, {
       title: plugin.manifest.name,
-      pluginId,
-      workspaceId: activeWorkspaceId.value ?? undefined,
+      tabId: paneId,
+    })
+
+    // Dedup guard: the backend broadcasts `TabCreated` via the sync WS
+    // BEFORE returning the HTTP response, so the WS handler typically
+    // pushes this tab first (without workspaceId). Fill in workspaceId
+    // on the existing entry instead of pushing a duplicate — duplicate
+    // paneIds in `tabs` create duplicate v-for keys and can destabilize
+    // Vue rendering (observed as full-tab freeze on plugin open).
+    const existingTab = tabs.value.find(
+      (t) => t.type === 'terminal' && t.paneId === result.tab_id
+    ) as TerminalTab | undefined
+    if (existingTab) {
+      const wsIdVal = activeWorkspaceId.value ?? undefined
+      if (wsIdVal && !existingTab.workspaceId) existingTab.workspaceId = wsIdVal
+    } else {
+      tabs.value.push({
+        type: 'terminal',
+        paneId: result.tab_id,
+        layout: ensureSplitRoot(result.layout),
+        activePaneId: result.pane_id,
+        paneMru: [result.pane_id],
+        broadcastMode: false,
+        broadcastActivity: 0,
+        previewVisible: false,
+        previewAddress: '',
+        previewUrl: '',
+        previewKind: 'web',
+        workspaceId: activeWorkspaceId.value ?? undefined,
+      })
     }
-    tabs.value.push(newTab)
-    commitLocalActivePane(paneId)
-    syncWs.sendSync({ type: 'activate_tab', pane_id: paneId })
+    commitLocalActivePane(result.tab_id)
+    syncWs.sendSync({ type: 'activate_tab', pane_id: result.pane_id })
     persist()
     nextTick(() => focusActive())
   } catch (err) {
