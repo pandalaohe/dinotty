@@ -20,6 +20,7 @@ import { isTauri } from './useTransport'
 import { handlePluginChanged } from './usePluginLoader'
 import { useWorkspaces } from './useWorkspaces'
 import { apiCreatePluginTab } from './useTabApi'
+import { clearFileWorkspaceState } from './useFileWorkspaceState'
 import type TerminalPane from '../components/terminal/TerminalPane.vue'
 
 export function useSyncWebSocket(opts: {
@@ -322,6 +323,7 @@ export function useSyncWebSocket(opts: {
           const tab = tabs.value[tabIdx] as TerminalTab
           for (const leaf of getAllLeaves(tab.layout)) {
             delete termRefs[leaf.paneId]
+            clearFileWorkspaceState(leaf.paneId)
           }
           tabs.value.splice(tabIdx, 1)
           if (tabs.value.length === 0) {

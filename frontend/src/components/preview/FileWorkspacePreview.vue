@@ -390,6 +390,11 @@ import { useFileWorkspaceLayout } from '../../composables/useFileWorkspaceLayout
 import { useFileWatch } from '../../composables/useFileWatch'
 import { useEditorSplit } from '../../composables/useEditorSplit'
 import { setActiveLeaf } from '../../composables/useEditorRegistry'
+import {
+  saveFileWorkspaceState,
+  loadFileWorkspaceState,
+  type PersistedFileWorkspaceState,
+} from '../../composables/useFileWorkspaceState'
 import { setEditorSplitForCursorGroup } from '../../composables/useCursorGroup'
 import { useFileOperations } from '../../composables/useFileOperations'
 import type { DropPosition } from '../../types/pane'
@@ -907,13 +912,42 @@ async function expandFirstLevelDirs() {
   await Promise.all(dirPaths.map((p) => ensureChildren(p)))
 }
 
+function captureState(): PersistedFileWorkspaceState {
+  return {
+    editorLayout: editorSplit.editorLayout.value,
+    activeEditorLeafId: editorSplit.activeEditorLeafId.value,
+    childCache: childCache.value,
+    expanded: expanded.value,
+  }
+}
+
+function applyState(s: PersistedFileWorkspaceState) {
+  editorSplit.editorLayout.value = s.editorLayout
+  editorSplit.activeEditorLeafId.value = s.activeEditorLeafId
+  childCache.value = s.childCache
+  expanded.value = s.expanded
+}
+
 async function boot() {
+  const saved = props.paneId ? loadFileWorkspaceState(props.paneId) : undefined
+  inlineCreate.value = null
+  ctxMenu.contextMenu.value = null
+  previewErr.value = ''
+  if (saved) {
+    applyState(saved)
+    try {
+      fileWatch.connectTreeWatchSocket()
+      fetchGitStatus()
+    } catch {
+      // best-effort
+    }
+    const leaf = editorSplit.activeLeaf.value
+    if (leaf?.filePath && !leaf.isDir) void onSelectFile(leaf.filePath)
+    return
+  }
   selectedRel.value = null
   selectedIsDir.value = false
   meta.value = null
-  previewErr.value = ''
-  inlineCreate.value = null
-  ctxMenu.contextMenu.value = null
   childCache.value = {}
   expanded.value = new Set()
   try {
@@ -996,6 +1030,14 @@ watch(layout.narrow, (isNarrow) => {
 })
 
 watch(
+  () => props.paneId,
+  (_newId, oldId) => {
+    if (oldId) saveFileWorkspaceState(oldId, captureState())
+  },
+  { flush: 'sync' }
+)
+
+watch(
   () => [props.visible, props.paneId, props.embedded],
   () => {
     if (props.visible && props.paneId) void boot()
@@ -1016,6 +1058,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (props.paneId) saveFileWorkspaceState(props.paneId, captureState())
   window.removeEventListener('resize', layout.onResize)
   window.removeEventListener('keydown', onEditorSaveKeydown, true)
   window.removeEventListener('scroll', onCloseContextScroll, true)

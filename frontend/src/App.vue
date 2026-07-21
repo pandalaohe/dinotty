@@ -311,6 +311,7 @@ import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
 import { getEditor, getActiveLeaf } from './composables/useEditorRegistry'
 import { useCursorGroup, type SearchMatch, type PickerItem } from './composables/useCursorGroup'
+import { clearFileWorkspaceState } from './composables/useFileWorkspaceState'
 import { useSplitPane } from './composables/useSplitPane'
 import { useSuperviseTabs } from './composables/useSuperviseTabs'
 import { useSyncWebSocket } from './composables/useSyncWebSocket'
@@ -1181,6 +1182,7 @@ async function closeTab(tabId: string) {
     // Clean up local term refs
     for (const leaf of getAllLeaves(tab.layout)) {
       delete termRefs[leaf.paneId]
+      clearFileWorkspaceState(leaf.paneId)
     }
 
     try {

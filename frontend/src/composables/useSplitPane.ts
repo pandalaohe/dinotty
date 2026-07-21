@@ -31,6 +31,7 @@ import { usePaneWarning } from './usePaneWarning'
 import { reconcilePaneMru, removePaneFromMru, touchPaneMru } from '../types/paneMru'
 import { getIsAppForeground } from './useAppForeground'
 import { markPaneReadIfUnread } from './useNotification'
+import { clearFileWorkspaceState } from './useFileWorkspaceState'
 
 export function useSplitPane(opts: {
   tabs: Ref<Tab[]>
@@ -134,6 +135,7 @@ export function useSplitPane(opts: {
       }
       setActivePaneId(tab.activePaneId)
       delete termRefs[paneId]
+      clearFileWorkspaceState(paneId)
       persist()
       syncTabLayout(tab)
       nextTick(() => {
