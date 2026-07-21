@@ -98,10 +98,7 @@
                   aria-label="reset to default"
                   @click="resetOverride()"
                 >
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                    <path d="M3 3v5h5" />
-                  </svg>
+                  <RotateCcw :size="14" />
                 </button>
               </div>
               <p class="settings-hint" data-hint="reload-after-supervise-tabs">
@@ -667,6 +664,7 @@ import { APP_ACTIONS, APP_ACTION_IDS } from '../../utils/appActionCatalog'
 import { getApiBase, apiUrl, authFetch } from '../../composables/apiBase'
 import { isWindowsClient } from '../../utils/clientPlatform'
 import { useDeviceSuperviseReload } from '../../composables/useDeviceSuperviseReload'
+import { RotateCcw } from 'lucide-vue-next'
 
 const { settings, saveSettings } = useSettings()
 const { hasOverride, reloadAfterSuperviseTabs, resetOverride } = useDeviceSuperviseReload()

@@ -24,10 +24,7 @@
             aria-label="reset to default"
             @click="resetOverride('font_size')"
           >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-            </svg>
+            <RotateCcw :size="14" />
           </button>
         </div>
       </div>
@@ -101,10 +98,7 @@
           aria-label="reset to default"
           @click="resetOverride('font_family')"
         >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-          </svg>
+          <RotateCcw :size="14" />
         </button>
       </div>
 
@@ -127,10 +121,7 @@
             aria-label="reset to default"
             @click="resetOverride('line_height')"
           >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-            </svg>
+            <RotateCcw :size="14" />
           </button>
         </div>
       </div>
@@ -154,10 +145,7 @@
             aria-label="reset to default"
             @click="resetOverride('letter_spacing')"
           >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-            </svg>
+            <RotateCcw :size="14" />
           </button>
         </div>
       </div>
@@ -261,6 +249,7 @@ import { ref, computed, onBeforeUnmount, reactive } from 'vue'
 import { useSettings, notifyTextChange } from '../../composables/useSettings'
 import CollapsibleSection from './CollapsibleSection.vue'
 import ThemeManager from './ThemeManager.vue'
+import { RotateCcw } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { primaryFamily, toFontFamilyStack, fontIdentity } from '../../utils/fontFamily'
 import {
