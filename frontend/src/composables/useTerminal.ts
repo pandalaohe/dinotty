@@ -408,25 +408,17 @@ export class TerminalInstance {
         const ie = e as InputEvent
         if (ie.isComposing) return
         _trackedTextareaValue = textarea.value
-        console.log('[RAYCAST-DEBUG] input tracked', { value: _trackedTextareaValue, inputType: ie.inputType, data: ie.data })
       }) as EventListener)
       textarea.addEventListener('beforeinput', ((e: Event) => {
         const ie = e as InputEvent
         if (this._composing) return
-        if (ie.inputType !== 'insertText' && ie.inputType !== 'insertReplacementText') return
+        // Only intercept insertReplacementText (macOS text replacement);
+        // insertText is normal typing and must not send backspaces.
+        if (ie.inputType !== 'insertReplacementText') return
         const ranges = typeof ie.getTargetRanges === 'function' ? ie.getTargetRanges() : []
         const rangeLen = ranges.length > 0 ? ((ranges[0] as StaticRange).endOffset - (ranges[0] as StaticRange).startOffset) : 0
         const deleteLen = Math.max(rangeLen, _trackedTextareaValue.length)
-        console.log('[RAYCAST-DEBUG] beforeinput', {
-          inputType: ie.inputType,
-          data: ie.data,
-          trackedValue: _trackedTextareaValue,
-          rangeLen,
-          deleteLen,
-          textareaValue: textarea.value,
-        })
         if (deleteLen > 0) {
-          console.log('[RAYCAST-DEBUG] SENDING BACKSPACES:', deleteLen)
           this.sendData('\x7f'.repeat(deleteLen))
           _trackedTextareaValue = ''
         }
