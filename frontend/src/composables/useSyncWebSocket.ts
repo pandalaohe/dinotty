@@ -37,6 +37,18 @@ type MonitorHistoryHandler = (data: Record<string, unknown>[]) => void
 const monitorHistoryHandlers = new Set<MonitorHistoryHandler>()
 let currentClientId: string | null = null
 let sendMarkReadFn: ((payload: SyncMarkRead) => void) | null = null
+let workspaceListReceived = false
+let pendingAutoNewTab = false
+let pendingAutoNewTabTimer: ReturnType<typeof setTimeout> | null = null
+
+function resetHandshakeState() {
+  workspaceListReceived = false
+  pendingAutoNewTab = false
+  if (pendingAutoNewTabTimer) {
+    clearTimeout(pendingAutoNewTabTimer)
+    pendingAutoNewTabTimer = null
+  }
+}
 
 export function onEvent(handler: SyncEventHandler): () => void {
   eventHandlers.add(handler)
@@ -323,7 +335,19 @@ export function useSyncWebSocket(opts: {
         }
 
         if (msg.tabs.length === 0 && tabs.value.length === 0) {
-          newTab()
+          if (workspaceListReceived) {
+            newTab()
+          } else {
+            pendingAutoNewTab = true
+            if (pendingAutoNewTabTimer) clearTimeout(pendingAutoNewTabTimer)
+            pendingAutoNewTabTimer = setTimeout(() => {
+              if (pendingAutoNewTab) {
+                pendingAutoNewTab = false
+                pendingAutoNewTabTimer = null
+                newTab()
+              }
+            }, 3000)
+          }
         }
 
         if (!activePaneId.value || !tabs.value.some((t) => t.paneId === activePaneId.value)) {
@@ -534,6 +558,15 @@ export function useSyncWebSocket(opts: {
       } else if (msg.type === 'workspace_list') {
         workspaces.value = msg.workspaces
         activeWorkspaceId.value = msg.active_workspace_id
+        workspaceListReceived = true
+        if (pendingAutoNewTab) {
+          pendingAutoNewTab = false
+          if (pendingAutoNewTabTimer) {
+            clearTimeout(pendingAutoNewTabTimer)
+            pendingAutoNewTabTimer = null
+          }
+          newTab()
+        }
       } else if (msg.type === 'workspace_created') {
         if (!workspaces.value.find((w) => w.id === msg.workspace.id)) {
           workspaces.value.push(msg.workspace)
@@ -561,6 +594,7 @@ export function useSyncWebSocket(opts: {
         workspaces.value.sort((a, b) => a.order - b.order)
       } else if (msg.type === 'sync_hello') {
         currentClientId = msg.client_id
+        resetHandshakeState()
       } else if (msg.type === 'event') {
         eventHandlers.forEach((h) => h(msg))
       } else if (msg.type === 'suggestions') {
