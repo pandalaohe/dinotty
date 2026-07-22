@@ -4,6 +4,9 @@ set -euo pipefail
 SOURCE="${BASH_SOURCE[0]}"; while [ -L "$SOURCE" ]; do DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"; SOURCE="$(readlink "$SOURCE")"; [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"; done; SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OPS="$REPO_DIR/scripts/dinotty-ops.sh"
+SELF="$SCRIPT_DIR/dinotty"
+LOG_DIR="$HOME/.dinotty/logs"
+LOCKDIR="$HOME/.dinotty/rebuild.lock"
 
 if [ ! -f "$OPS" ]; then
   echo "dinotty: operations script not found: $OPS" >&2
@@ -14,12 +17,77 @@ show_help() {
   cat <<'EOF'
 dinotty — dinotty fork deploy/ops launcher
 
-dinotty rebuild 8999    Rebuild and redeploy the prod app (port 8999)
-dinotty rebuild 8998    Rebuild and redeploy the test app (port 8998)
-dinotty rebuild all     Rebuild both ends (8999 + 8998), then show status
-dinotty status          Show running instances and versions
-dinotty help            Show this menu
+dinotty rebuild <8999|prod> [--fg]    Rebuild prod (background by default; --fg for foreground)
+dinotty rebuild <8998|test> [--fg]    Rebuild test (background by default; --fg for foreground)
+dinotty rebuild all [--fg]            Rebuild both (background by default; --fg for foreground)
+dinotty status                        Show running instances and versions
+dinotty log [-f]                      Show the newest rebuild log (follow with -f)
+dinotty help                          Show this menu
 EOF
+}
+
+find_newest_log() {
+  NEWEST_LOG=""
+  for CANDIDATE in "$LOG_DIR"/rebuild-*.log; do
+    [ -f "$CANDIDATE" ] || continue
+    if [ -z "$NEWEST_LOG" ] || [ "$CANDIDATE" -nt "$NEWEST_LOG" ]; then
+      NEWEST_LOG="$CANDIDATE"
+    fi
+  done
+}
+
+run_rebuild_foreground() {
+  case "$1" in
+    8999|prod)
+      exec bash "$OPS" rebuild-prod
+      ;;
+    8998|test)
+      exec bash "$OPS" rebuild-test
+      ;;
+    all)
+      bash "$OPS" rebuild-prod
+      bash "$OPS" rebuild-test
+      bash "$OPS" status
+      ;;
+  esac
+}
+
+run_rebuild_worker() {
+  TARGET="$1"
+  mkdir -p "$LOCKDIR"
+  trap 'rm -rf "$LOCKDIR"' EXIT
+  echo "$$" > "$LOCKDIR/pid"
+  echo "=== rebuild $TARGET START $(date) ==="
+
+  set +e
+  case "$TARGET" in
+    8999|prod)
+      bash "$OPS" rebuild-prod
+      RC=$?
+      ;;
+    8998|test)
+      bash "$OPS" rebuild-test
+      RC=$?
+      ;;
+    all)
+      bash "$OPS" rebuild-prod
+      RC=$?
+      if [ "$RC" -eq 0 ]; then
+        bash "$OPS" rebuild-test
+        RC=$?
+      fi
+      if [ "$RC" -eq 0 ]; then
+        bash "$OPS" status
+        RC=$?
+      fi
+      ;;
+    *)
+      echo "dinotty: unknown rebuild target: ${TARGET:-<missing>}" >&2
+      RC=1
+      ;;
+  esac
+  echo "=== rebuild $TARGET DONE rc=$RC ==="
+  exit "$RC"
 }
 
 case "${1:-}" in
@@ -28,16 +96,8 @@ case "${1:-}" in
     ;;
   rebuild)
     case "${2:-}" in
-      8999|prod)
-        exec bash "$OPS" rebuild-prod
-        ;;
-      8998|test)
-        exec bash "$OPS" rebuild-test
-        ;;
-      all)
-        bash "$OPS" rebuild-prod
-        bash "$OPS" rebuild-test
-        bash "$OPS" status
+      8999|prod|8998|test|all)
+        TARGET="$2"
         ;;
       *)
         echo "dinotty: unknown rebuild target: ${2:-<missing>}" >&2
@@ -45,9 +105,55 @@ case "${1:-}" in
         exit 1
         ;;
     esac
+
+    if [ "${3:-}" = "--fg" ]; then
+      run_rebuild_foreground "$TARGET"
+      exit 0
+    fi
+
+    mkdir -p "$LOG_DIR"
+    LOG="$LOG_DIR/rebuild-$TARGET-$(date +%Y%m%d-%H%M%S).log"
+
+    if ! mkdir "$LOCKDIR" 2>/dev/null; then
+      LOCK_PID=""
+      if [ -f "$LOCKDIR/pid" ]; then
+        LOCK_PID="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+      fi
+      if [[ "$LOCK_PID" =~ ^[0-9]+$ ]] && kill -0 "$LOCK_PID" 2>/dev/null; then
+        find_newest_log
+        echo "rebuild already running (pid $LOCK_PID), log: ${NEWEST_LOG:-<none>}" >&2
+        exit 1
+      fi
+      rm -rf "$LOCKDIR"
+      if ! mkdir "$LOCKDIR" 2>/dev/null; then
+        echo "dinotty: could not acquire rebuild lock: $LOCKDIR" >&2
+        exit 1
+      fi
+    fi
+    echo "$$" > "$LOCKDIR/pid"
+
+    nohup /usr/bin/env python3 -c 'import os,sys;os.setsid();os.execvp(sys.argv[1],sys.argv[1:])' bash "$SELF" __rebuild-worker "$TARGET" >>"$LOG" 2>&1 </dev/null &
+    echo "$!" > "$LOCKDIR/pid"
+    echo "rebuild $TARGET started in background (pid $!)"
+    echo "log: $LOG"
+    echo "check: dinotty log   (or: dinotty status after it finishes)"
+    ;;
+  __rebuild-worker)
+    run_rebuild_worker "${2:-}"
     ;;
   status)
     exec bash "$OPS" status
+    ;;
+  log)
+    find_newest_log
+    if [ -z "$NEWEST_LOG" ]; then
+      echo "no rebuild logs yet"
+      exit 0
+    fi
+    if [ "${2:-}" = "-f" ]; then
+      exec tail -f "$NEWEST_LOG"
+    fi
+    exec tail -n 40 "$NEWEST_LOG"
     ;;
   # Add future subcommands, such as headless mode, here.
   *)
