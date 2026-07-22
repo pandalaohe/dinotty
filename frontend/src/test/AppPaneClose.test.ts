@@ -844,7 +844,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     await app.closeTab('workspace-a-only-tab')
     await nextTick()
 
-    expect(workspaceState.activeWorkspaceId.value).toBe('workspace-a')
+    expect(mocks.apiActivateWorkspace).toHaveBeenNthCalledWith(2, 'workspace-b')
+    expect(workspaceState.activeWorkspaceId.value).toBe('workspace-b')
     expect(session.activePaneId).toBe('workspace-b-fallback')
   })
 })
