@@ -221,6 +221,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | #202 | workspace: give the default workspace a real identity (name/abbr/colour/badge over a `__default__` sentinel) | **landed as `e1f9c589`** (`2026-07-21`) — the maintainer rebased and committed it himself, body says `Closes #202`; the #195/#196 pattern again, so the PR shows CLOSED rather than merged. Content IS upstream. (branch `feat/default-workspace-identity`; 13 files, +287/−83). Deliberately does NOT relocate upstream's `default_workspace_root` control out of `GeneralTab.vue` the way our fork does — that would move a maintainer's existing control as a side effect of an unrelated feature. Backward compat pinned by a test parsing a settings blob with only `default_workspace_root` |
 | #201 | vt: track and replay DEC private modes (mouse protocol/encoding, DECCKM, DECNKM, bracketed paste) | merged (`132388d5`, `2026-07-21`; branch `feat/vt-private-mode-replay`; 1 file, +322/−9). Replay call needed in TWO places — `snapshot()` AND `snapshot_for_replay()`; the reconnect path would otherwise stay broken while a fresh snapshot worked. 1004 tracked-not-replayed; 2026/1049-family/6/7/45/1005/1015/1048 excluded with per-mode reasons stated inline in the PR (NOT by reference to our design doc, which lives outside the fork repo and is invisible to upstream) |
 | #203 | tabs: follow the successor tab across workspaces on close | **CLOSED unmerged** (verified `2026-07-22`) — superseded: upstream landed its own cross-workspace successor (`b6521103`, ~95% convergent) and our #204 closed the remaining failed-hop gap; no content lost. (was OPEN `2026-07-21`, branch `fix/tab-close-workspace-hop` cut from clean `upstream/dev` @ `f90b843b`; 4 files, +165/−9). The half deliberately cut from #199, unblocked once #199 merged. Upstream's successor fallback can activate a tab outside the workspace filter, so the tab bar does not contain the active tab. Two discriminating tests, one per close path — verified red by reverting both source files to `dev` (exactly those two fail, 738/740) and green with the fix (740/740). PR body discloses the `handleMsg` async change to the maintainer. NOT manually verified on a running build — the evidence is the code-path analysis plus the tests) |
+| #207 | i18n: supervise-tabs hint → functional wording shown on all platforms + Alt-as-Cmd toggle rename | OPEN (filed `2026-07-22`) |
 
 ### Ours-only — NOT in upstream (no PR, or PR not yet accepted)
 - **Terminal output-path concurrency: sync-mode race + reader deadlock** (2026-07-21;
@@ -758,6 +759,16 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   instead of i18n wiring — consistent with the existing implementation; revisit if unified later.
 
 ## In-flight upstream PR
+- Keyboard-settings copy fixes — **PR #207 OPEN** (`2026-07-22`, branch
+  `upstream-pr/keybinding-copy-fixes` off clean `upstream/dev`, base dev, 2 commits
+  `7f3917ce`+`6b0d9067` cherry-picked clean from custom `0522a67a`/`e7af7b41`; 2 files +6/−6;
+  no Co-Authored-By; infra-leak pre-PR check CLEAN; vitest 736/736 on the branch).
+  Contents: supervise-tabs hint rewritten from Windows key-combo prose to a functional
+  explanation (jump to next unread tab, else the tab to the right) and un-gated from
+  `isWindowsClient` (the new wording is platform-neutral); Alt-as-Cmd toggle renamed
+  "Use Alt instead of Cmd (Windows)" / 「Windows 下用 Alt 替代 Cmd 键」. EN+ZH in sync.
+  Fork-side: already on `custom`, deployed to 8998 test app and user-verified.
+  Next: await upstream review. (https://github.com/xichan96/dinotty/pull/207)
 - Optional reload after supervise-tabs jump, with per-device override — **PR #190 MERGED** (`ff08584f`, `2026-07-21`; reconciled `2026-07-22` — entry below is provenance)
   (`2026-07-21`, branch `feat/supervise-reload-toggle` off clean `upstream/dev`, base dev, 1 commit
   `33cc8269`, 8 files, no Co-Authored-By, infra-leak pre-PR check CLEAN). Built in an isolated
