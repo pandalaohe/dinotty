@@ -6,11 +6,11 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 
 | mod_id | upstreamable | upstream_pr | upstream_issue | lifecycle | absorption | head_branch | exit-condition |
 |--------|--------------|-------------|----------------|-----------|------------|-------------|----------------|
-| `1dff1a86-null-successor-fallback` | yes | #204 | — | merged-upstream | absorbed | fix/tab-close-null-successor | met `2026-07-22` — merged upstream `f958848c`, blob parity |
-| `mocha-theme` | no | — | — | active | fork-only | — | never — fork identity (excluded from #148/#149 by design) |
-| `signing-identity` | no | — | — | active | fork-only | — | never — machine-local config |
-| `deploy-scripts` | no | — | — | active | fork-only | — | never — fork ops (dinotty-ops.sh / deploy-live.sh / dinotty launcher) |
-| `fork-meta` | no | — | — | active | fork-only | — | never — fork bookkeeping (.gitignore, .upstream-update.json, LOCAL_MODS.md, docs/task-files/) |
+| `1dff1a86-null-successor-fallback` | yes | https://github.com/xichan96/dinotty/pull/204 | | merged-upstream | absorbed | fix/tab-close-null-successor | met `2026-07-22` — merged upstream `f958848c`, blob parity |
+| `mocha-theme` | no | n/a | n/a | private | n/a | | never — fork identity (excluded from #148/#149 by design) |
+| `signing-identity` | no | n/a | n/a | private | n/a | | never — machine-local config |
+| `deploy-scripts` | no | n/a | n/a | private | n/a | | never — fork ops (dinotty-ops.sh / deploy-live.sh / dinotty launcher) |
+| `fork-meta` | no | n/a | n/a | private | n/a | | never — fork bookkeeping (.gitignore, .upstream-update.json, LOCAL_MODS.md, docs/task-files/) |
 
 - Index wins conflicts with narrative/tables below (those are provenance). Volatile API state (PR state / checked_at) lives in run receipts, not here.
 - Migrated v1→v2 `2026-07-22` by the upstream-update run; mod_id minted from commit short hash (feature rows) or stable slug (meta rows sharing re-apply commits `4d3367c5`/`4e4715e0`); never renumbered.
@@ -758,7 +758,7 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   instead of i18n wiring — consistent with the existing implementation; revisit if unified later.
 
 ## In-flight upstream PR
-- Optional reload after supervise-tabs jump, with per-device override — **PR #190 OPEN**
+- Optional reload after supervise-tabs jump, with per-device override — **PR #190 MERGED** (`ff08584f`, `2026-07-21`; reconciled `2026-07-22` — entry below is provenance)
   (`2026-07-21`, branch `feat/supervise-reload-toggle` off clean `upstream/dev`, base dev, 1 commit
   `33cc8269`, 8 files, no Co-Authored-By, infra-leak pre-PR check CLEAN). Built in an isolated
   worktree (`dinotty-wt-supreload`) because the main worktree carries unrelated WIP.
@@ -770,8 +770,8 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   `dev`); `cargo check` clean. Extraction confirmed clean — the diff was grepped for
   `min-width: 80px` / `flex: 1 1 0` / `contextmenu` / `edge-fade`, all absent.
   Real-device verification: **NOT RUN** — stated in the PR body rather than silently carried.
-  Next: await upstream review. (https://github.com/xichan96/dinotty/pull/190)
-- Block alt-screen wheel→arrow-key conversion — **PR #191 OPEN** (`2026-07-21`, branch
+  Merged — no further action. (https://github.com/xichan96/dinotty/pull/190)
+- Block alt-screen wheel→arrow-key conversion — **PR #191 MERGED** (`8780d3a0`, `2026-07-21`; reconciled `2026-07-22` — entry below is provenance) (branch
   `fix/alt-screen-wheel-guard` off clean `upstream/dev`, base dev, 1 commit `b32aac4a`, 1 file /+28,
   no Co-Authored-By, infra-leak pre-PR check CLEAN, isolated worktree `dinotty-wt-altwheel`).
   Cherry-pick of `f9eeb8dd`; the only conflict was `LOCAL_MODS.md` modify/delete (absent upstream),

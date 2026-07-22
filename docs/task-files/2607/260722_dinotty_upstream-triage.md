@@ -59,7 +59,7 @@ Candidate: `fix/tab-close-null-successor` @ `b00b2bb3` (local + origin)
 Order: remote first (old-OID lease) → local `git branch -d`.
 Non-candidates: `backup/*` (managed prefix), `custom`/`main` (never_gc). Note: PR #203's branch `fix/tab-close-workspace-hop` no longer exists on origin (already deleted).
 
-PLAN_HASH: sha256 over (GC candidate list + deployment steps) — computed at Phase P presentation, verified at Phase J/Q.
+PLAN_HASH: `f79ee5f35a108c16` (sha256/16 over GC candidate list + deployment steps + push refs) — presented at Phase P, re-verified unchanged at Phase Q/J.
 
 ## v1→v2 migration plan (Phase F)
 
@@ -81,3 +81,4 @@ PLAN_HASH: sha256 over (GC candidate list + deployment steps) — computed at Ph
 - **mid-run scope addition** (user-requested): `scripts/dinotty` rebuild now detaches by default (python setsid new session, `~/.dinotty/logs/`, mkdir lock with `$!` pid handoff, `dinotty log [-f]`, `--fg` opt-out). codex-implemented, mini-review full-loop by main brain (1 race defect found+fixed: dead-pid stale-lock window), safe negative-path E2E; committed `7baa333d`.
 - **rerere**: enabled this run.
 - **lock**: flock held through run (one auto-release on session restart mid-Phase-K wait, re-acquired; by-design process-death release).
+- **closeout audit** (scoped codex dig over our-delta diff, log `closeout-audit-dinotty-sync-1784724501.log`): 5 findings → 4 fixed (Index field values aligned to template domains `private`/`n/a`/URL; missed "In-flight upstream PR" section #190/#191 flipped to MERGED; `--fg` now shares the rebuild lock via `acquire_rebuild_lock()` with trap release, no exec bypass; PLAN_HASH value recorded) + 1 accepted (sub-ms stale-lock reclaim / pid-rewrite window — theoretical multi-caller race on a single-operator ops tool; revisit only if multi-operator use appears).

@@ -36,20 +36,54 @@ find_newest_log() {
   done
 }
 
+acquire_rebuild_lock() {
+  if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    LOCK_PID=""
+    if [ -f "$LOCKDIR/pid" ]; then
+      LOCK_PID="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+    fi
+    if [[ "$LOCK_PID" =~ ^[0-9]+$ ]] && kill -0 "$LOCK_PID" 2>/dev/null; then
+      find_newest_log
+      echo "rebuild already running (pid $LOCK_PID), log: ${NEWEST_LOG:-<none>}" >&2
+      exit 1
+    fi
+    rm -rf "$LOCKDIR"
+    if ! mkdir "$LOCKDIR" 2>/dev/null; then
+      echo "dinotty: could not acquire rebuild lock: $LOCKDIR" >&2
+      exit 1
+    fi
+  fi
+  echo "$$" > "$LOCKDIR/pid"
+}
+
 run_rebuild_foreground() {
+  acquire_rebuild_lock
+  trap 'rm -rf "$LOCKDIR"' EXIT
+
+  set +e
   case "$1" in
     8999|prod)
-      exec bash "$OPS" rebuild-prod
+      bash "$OPS" rebuild-prod
+      RC=$?
       ;;
     8998|test)
-      exec bash "$OPS" rebuild-test
+      bash "$OPS" rebuild-test
+      RC=$?
       ;;
     all)
       bash "$OPS" rebuild-prod
-      bash "$OPS" rebuild-test
-      bash "$OPS" status
+      RC=$?
+      if [ "$RC" -eq 0 ]; then
+        bash "$OPS" rebuild-test
+        RC=$?
+      fi
+      if [ "$RC" -eq 0 ]; then
+        bash "$OPS" status
+        RC=$?
+      fi
       ;;
   esac
+  exit "$RC"
 }
 
 run_rebuild_worker() {
@@ -114,23 +148,7 @@ case "${1:-}" in
     mkdir -p "$LOG_DIR"
     LOG="$LOG_DIR/rebuild-$TARGET-$(date +%Y%m%d-%H%M%S).log"
 
-    if ! mkdir "$LOCKDIR" 2>/dev/null; then
-      LOCK_PID=""
-      if [ -f "$LOCKDIR/pid" ]; then
-        LOCK_PID="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
-      fi
-      if [[ "$LOCK_PID" =~ ^[0-9]+$ ]] && kill -0 "$LOCK_PID" 2>/dev/null; then
-        find_newest_log
-        echo "rebuild already running (pid $LOCK_PID), log: ${NEWEST_LOG:-<none>}" >&2
-        exit 1
-      fi
-      rm -rf "$LOCKDIR"
-      if ! mkdir "$LOCKDIR" 2>/dev/null; then
-        echo "dinotty: could not acquire rebuild lock: $LOCKDIR" >&2
-        exit 1
-      fi
-    fi
-    echo "$$" > "$LOCKDIR/pid"
+    acquire_rebuild_lock
 
     nohup /usr/bin/env python3 -c 'import os,sys;os.setsid();os.execvp(sys.argv[1],sys.argv[1:])' bash "$SELF" __rebuild-worker "$TARGET" >>"$LOG" 2>&1 </dev/null &
     echo "$!" > "$LOCKDIR/pid"
