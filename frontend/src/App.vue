@@ -264,6 +264,7 @@ import {
   ref,
   reactive,
   shallowReactive,
+  shallowRef,
   computed,
   watch,
   onMounted,
@@ -313,6 +314,11 @@ import { usePluginNotifyBridge } from './composables/usePluginNotifyBridge'
 import { useSshAuth } from './composables/useSshAuth'
 import { useCursorPicker } from './composables/useCursorPicker'
 import { useOverviewCallbacks } from './composables/useOverviewCallbacks'
+import { useTabPersistence } from './composables/useTabPersistence'
+import { useViewportResize } from './composables/useViewportResize'
+import { usePluginLauncher } from './composables/usePluginLauncher'
+import { useSshConnectFlow } from './composables/useSshConnectFlow'
+import { useTabLifecycle } from './composables/useTabLifecycle'
 import { clearFileWorkspaceState } from './composables/useFileWorkspaceState'
 import { useSplitPane } from './composables/useSplitPane'
 import { useSuperviseTabs } from './composables/useSuperviseTabs'
@@ -370,6 +376,8 @@ import { APP_ACTION_IDS } from './utils/appActionCatalog'
 const session = useSessionStore()
 const { tabs, activePaneId, tabList, activeTabType, activeTab, isBroadcastActive, canBroadcast } =
   storeToRefs(session)
+
+const { persist, persistNow, flushOnUnload, dispose: disposePersist } = useTabPersistence({ tabs, activePaneId })
 
 const ui = useUiStore()
 const { syncConnected, kbVisible, settingsOpen, authenticated, authProbe, needsSetup } = storeToRefs(ui)
@@ -504,10 +512,51 @@ const notificationPaneLabels = computed(() => {
   return result
 })
 
-const isLandscape = ref(window.innerWidth > window.innerHeight)
-
-// Mission Control
 const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
+
+const { isLandscape, dispose: disposeViewport } = useViewportResize({ kbVisible, activePaneId, tabs, termRefs })
+
+const onSshConnectRef = shallowRef<(result: { tab_id: string; pane_id: string; layout: any; connection_id?: string }) => Promise<void>>(
+  async () => { throw new Error('onSshConnect not wired') },
+)
+
+const {
+  newTab,
+  resolveTab,
+  resolveTabWorkspace,
+  clearResolvedTabNotifications,
+  commitLocalActivePane,
+  scrollActiveTabIntoView,
+  activateTab,
+  revealPane,
+  reorderTab,
+  onRenameTab,
+  requestCloseTab,
+  closeTab,
+  focusActive,
+} = useTabLifecycle({
+  tabs,
+  activePaneId,
+  session,
+  ui,
+  appSettings,
+  activeWorkspaceId,
+  workspaces,
+  matchWorkspace,
+  activateWorkspace,
+  cancelPendingWorkspaceActivation,
+  workspaceIdOfTab,
+  activeWorkspacePath,
+  notif,
+  termRefs,
+  isMobile,
+  tabBarRef,
+  kbVisible,
+  persist,
+  persistNow,
+  onSshConnectRef,
+})
+
 const {
   overviewOpen,
   openOverview,
@@ -668,36 +717,6 @@ function registerTermRef(paneId: string, el: InstanceType<typeof TerminalPane> |
   }
 }
 
-let viewportRefitTimer = 0
-let naturalVH = 0
-
-function onViewportResize() {
-  if (!window.visualViewport) return
-  const vh = window.visualViewport.height
-  if (vh > naturalVH) naturalVH = vh
-  const off = window.innerHeight - (window.visualViewport.offsetTop + vh)
-  // Shrink #app-root when system keyboard is visible (even without custom keyboard)
-  document.documentElement.style.setProperty('--sys-kb-height', `${Math.max(0, off)}px`)
-  // Set --kb-open: either system keyboard or custom mobile keyboard is visible
-  const sysKbOpen = naturalVH > 0 && naturalVH - vh > 120
-  document.documentElement.style.setProperty('--kb-open', (sysKbOpen || kbVisible.value) ? '1' : '0')
-
-  clearTimeout(viewportRefitTimer)
-  viewportRefitTimer = window.setTimeout(() => {
-    if (!activePaneId.value) return
-    const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-    if (!tab || tab.type !== 'terminal') return
-    for (const leaf of getAllLeaves(tab.layout)) {
-      termRefs[leaf.paneId]?.fit()
-    }
-  }, 100)
-}
-
-// Set --kb-open when custom keyboard visibility changes
-watch(kbVisible, (v) => {
-  document.documentElement.style.setProperty('--kb-open', v ? '1' : '0')
-})
-
 function genPaneId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0
@@ -760,470 +779,11 @@ function onPaneDragHoverSwitch(e: Event) {
   activePaneId.value = tab.paneId
 }
 
-let persistTimer: ReturnType<typeof setTimeout> | null = null
-function persistNow() {
-  if (typeof localStorage === "undefined") return
-  const state = tabs.value.map((t) => {
-    if (t.type === 'terminal') {
-      return {
-        type: t.type,
-        paneId: t.paneId,
-        layout: t.layout,
-        activePaneId: t.activePaneId,
-        broadcastMode: t.broadcastMode,
-        previewVisible: t.previewVisible,
-        previewAddress: t.previewAddress,
-        previewUrl: t.previewUrl,
-        previewKind: t.previewKind,
-        customTitle: t.customTitle,
-        connectionId: t.connectionId,
-        cwd: t.cwd,
-        workspaceId: t.workspaceId,
-      }
-    }
-    return {
-      type: t.type,
-      paneId: t.paneId,
-      title: t.title,
-      pluginId: t.pluginId,
-      workspaceId: t.workspaceId,
-    }
-  })
-  const activeIdx = tabs.value.findIndex((t) => t.paneId === activePaneId.value)
-  localStorage.setItem('dinotty_tabs', JSON.stringify({ tabs: state, activeIdx }))
-}
-function persist() {
-  if (persistTimer) clearTimeout(persistTimer)
-  persistTimer = setTimeout(persistNow, 200)
-}
-// Flush pending persist on page unload
-window.addEventListener('beforeunload', (e) => {
-  if (persistTimer) {
-    clearTimeout(persistTimer)
-    persistNow()
-  }
-})
-
 const DEFAULT_PREVIEW_URL = ''
-
-function newTab(cwd?: string): Promise<void>
-function newTab(cwd: string, argv: string[], title?: string): Promise<string>
-async function newTab(cwd?: string, argv?: string[], title?: string): Promise<string | void> {
-  try {
-    // Remote workspace: open an SSH terminal and cd into the workspace's remote path.
-    const activeWs = workspaces.value.find((w) => w.id === activeWorkspaceId.value)
-    if (!argv && activeWs?.connection_id) {
-      const result = await apiCreateSshTab(activeWs.connection_id, activeWs.path)
-      await onSshConnect(result)
-      return result.pane_id
-    }
-    const effectiveCwd = cwd ?? activeWorkspacePath.value
-    const result = await apiCreateTab(effectiveCwd, argv, title)
-    // Dedup: broadcast_sync echoes back to sender — tab_created handler may
-    // have already added this tab if the sync message arrived before the
-    // REST response.
-    const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
-    if (existing) {
-      // Ensure cwd is set (sync message may have arrived without it)
-      if (result.cwd && existing.type === 'terminal' && !existing.cwd) {
-        existing.cwd = result.cwd
-      }
-      if (title && existing.type === 'terminal') existing.customTitle = title
-      commitLocalActivePane(result.tab_id)
-      persist()
-      nextTick(() => focusActive())
-      return result.pane_id
-    }
-    const layout = ensureSplitRoot(result.layout)
-    tabs.value.push({
-      type: 'terminal',
-      paneId: result.tab_id,
-      layout,
-      activePaneId: result.pane_id,
-      paneMru: [result.pane_id],
-      broadcastMode: false,
-      broadcastActivity: 0,
-      previewVisible: false,
-      previewAddress: '',
-      previewUrl: '',
-      previewKind: 'web',
-      customTitle: title,
-      cwd: result.cwd,
-    })
-    commitLocalActivePane(result.tab_id)
-    persist()
-    nextTick(() => focusActive())
-    return result.pane_id
-  } catch (e) {
-    console.error('Failed to create tab:', e)
-    if (argv) throw e
-    return ''
-  }
-}
-
-function onNewMenuAction(
-  type:
-    | 'new-tab'
-    | 'split-h'
-    | 'split-v'
-    | 'broadcast'
-    | 'ssh-connect'
-) {
-  switch (type) {
-    case 'new-tab':
-      return newTab()
-    case 'split-h':
-      return splitPane.splitPane('horizontal')
-    case 'split-v':
-      return splitPane.splitPane('vertical')
-    case 'broadcast':
-      return splitPane.toggleBroadcast()
-    case 'ssh-connect':
-      return sshPanelRef.value?.open()
-  }
-}
-
-function resolveTab(tabId: string): Tab | undefined {
-  // Try tab-level paneId first, then search by leaf paneId
-  let tab = tabs.value.find((t) => t.paneId === tabId)
-  if (!tab) {
-    tab = tabs.value.find((t) => {
-      if (t.type !== 'terminal') return false
-      return !!findLeaf(t.layout, tabId)
-    })
-  }
-  return tab
-}
-
-function resolveTabWorkspace(tab: Tab) {
-  return tab.type === 'terminal'
-    ? matchWorkspace(tab.cwd ?? '', tab.connectionId, tab.workspaceId)
-    : tab.workspaceId ? workspaces.value.find((w) => w.id === tab.workspaceId) ?? null : null
-}
-
-function clearResolvedTabNotifications(tab: Tab, reason: 'tab_activate' | 'goto' = 'tab_activate') {
-  // Clear notifications for this tab on activation (terminal: tab-level + all leaves; plugin: tab-level)
-  const activatedPaneIds = tab.type === 'terminal'
-    ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
-    : [tab.paneId]
-  notif.clearForPaneIds(activatedPaneIds, reason)
-}
-
-function commitLocalActivePane(paneId: string) {
-  // User-initiated local navigation participates in latest-wins ordering so it supersedes any in-flight supervised hop.
-  nextRevealNavGen()
-  activePaneId.value = paneId
-}
-
-async function scrollActiveTabIntoView(targetPaneId: string, navGen: number) {
-  await nextTick()
-  if (navGen !== currentRevealNavGen()) return
-  if (tabBarRef.value?.scrollTabIntoView(targetPaneId)) return
-  await nextTick()
-  if (navGen !== currentRevealNavGen()) return
-  tabBarRef.value?.scrollTabIntoView(targetPaneId)
-}
-
-async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<boolean> {
-  const gen = nextRevealNavGen()
-  const defer = opts?.defer === true
-  let tab = resolveTab(tabId)
-  if (!tab) return false
-
-  // Switch workspace if the tab belongs to a different one. Terminal tabs
-  // force a switch when filtered out of the current view; plugin tabs stay
-  // visible regardless, so only switch when the tab carries an explicit ws.
-  const targetWs = resolveTabWorkspace(tab)
-  const needsSwitch = tab.type === 'terminal'
-    ? (targetWs?.id ?? null) !== activeWorkspaceId.value
-    : targetWs && targetWs.id !== activeWorkspaceId.value
-  if (needsSwitch) {
-    try {
-      const committed = await activateWorkspace(targetWs?.id ?? null)
-      if (!committed) return false
-    } catch {
-      return false
-    }
-    if (gen !== currentRevealNavGen()) return false
-    tab = resolveTab(tabId)
-    if (!tab) return false
-  } else {
-    cancelPendingWorkspaceActivation()
-  }
-
-  if (!defer) {
-    activePaneId.value = tab.paneId
-    clearResolvedTabNotifications(tab)
-  }
-
-  if (tab.type === 'terminal') {
-    try {
-      await apiActivatePane(tab.paneId, tab.activePaneId)
-    } catch (e) {
-      if (defer) return false
-      console.error('Failed to activate pane:', e)
-    }
-    if (gen !== currentRevealNavGen()) return false
-  }
-
-  if (!defer) {
-    persist()
-    nextTick(() => focusActive())
-    void scrollActiveTabIntoView(tab.paneId, gen)
-    return gen === currentRevealNavGen()
-  }
-
-  if (gen !== currentRevealNavGen()) return false
-  const live = resolveTab(tabId)
-  if (!live) return false
-  activePaneId.value = live.paneId
-  clearResolvedTabNotifications(live)
-  persist()
-  nextTick(() => focusActive())
-  void scrollActiveTabIntoView(live.paneId, gen)
-  return true
-}
-
-async function revealPane(paneId: string): Promise<boolean> {
-  const gen = nextRevealNavGen()
-  let tab = resolveTab(paneId)
-  if (!tab) return false
-
-  // Terminal tabs force a switch when filtered out of the current view
-  // (targetWs may be null → deactivate). Plugin tabs stay visible regardless,
-  // so only switch when they carry an explicit workspace id.
-  const targetWs = resolveTabWorkspace(tab)
-  const needsSwitch = tab.type === 'terminal'
-    ? (targetWs?.id ?? null) !== activeWorkspaceId.value
-    : targetWs && targetWs.id !== activeWorkspaceId.value
-  if (needsSwitch) {
-    try {
-      const committed = await activateWorkspace(targetWs?.id ?? null)
-      if (!committed) return false
-    } catch {
-      return false
-    }
-    if (gen !== currentRevealNavGen()) return false
-    tab = resolveTab(paneId)
-    if (!tab) return false
-  } else {
-    cancelPendingWorkspaceActivation()
-  }
-
-  await nextTick()
-  if (gen !== currentRevealNavGen()) return false
-  tab = resolveTab(paneId)
-  if (!tab) return false
-
-  // Desktop renders a horizontal tab-strip; wait for the target tab element to
-  // exist before scrolling it into view. Mobile has no #tabs-list DOM, so skip
-  // this gate entirely — otherwise reveal-goto would always no-op on touch /
-  // narrow viewports (hasTab() can never succeed there).
-  if (!isMobile.value) {
-    let tabElementFound = false
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if (tabBarRef.value?.hasTab(tab.paneId)) {
-        tabElementFound = true
-        break
-      }
-      if (attempt < 4) {
-        await new Promise((resolve) => setTimeout(resolve, 50))
-        if (gen !== currentRevealNavGen()) return false
-      }
-    }
-    if (!tabElementFound) return false
-    if (gen !== currentRevealNavGen()) return false
-    tab = resolveTab(paneId)
-    if (!tab) return false
-  }
-
-  if (tab.type === 'terminal') {
-    try {
-      await apiActivatePane(tab.paneId, tab.activePaneId)
-    } catch {
-      return false
-    }
-    // The backend pointer may transiently lag a newer navigation, like rapid activateTab clicks.
-    if (gen !== currentRevealNavGen()) return false
-  }
-
-  tab = resolveTab(paneId)
-  if (!tab) return false
-
-  activePaneId.value = tab.paneId
-  clearResolvedTabNotifications(tab, 'goto')
-  persist()
-  nextTick(() => focusActive())
-
-  tabBarRef.value?.scrollTabIntoView(tab.paneId)
-  return true
-}
 
 // Wire up toast notification direct-jump handler
 notif.setGoToPaneHandler((paneId: string) => revealPane(paneId))
 
-function reorderTab(fromId: string, toId: string) {
-  session.reorderTab(fromId, toId)
-  persist()
-}
-
-function onRenameTab(paneId: string, title: string) {
-  session.renameTab(paneId, title)
-  persist()
-}
-
-async function onClosePane(tabId: string, paneId: string) {
-  const tab = tabs.value.find((t) => t.paneId === tabId)
-  if (!tab) return
-
-  // Bypass 1: non-terminal tab
-  if (tab.type !== 'terminal') {
-    const closed = await splitPane.closePane(paneId)
-    if (!closed) await closeTab(tabId)
-    return
-  }
-
-  // Bypass 2: user disabled confirmation
-  if (appSettings.confirm_before_close_tab === false) {
-    const closed = await splitPane.closePane(paneId)
-    if (!closed) await closeTab(tabId)
-    return
-  }
-
-  // Show confirmation (handles both pane and tab close)
-  ui.requestClosePane(tabId, paneId)
-}
-
-async function requestCloseTab(tabId: string) {
-  const tab = tabs.value.find((t) => t.paneId === tabId)
-  if (!tab) return
-
-  // Bypass 1: non-terminal tabs (plugins) — close immediately, no prompt
-  if (tab.type !== 'terminal') {
-    await closeTab(tabId)
-    return
-  }
-
-  // Bypass 2: user disabled confirmation in settings
-  if (appSettings.confirm_before_close_tab === false) {
-    await closeTab(tabId)
-    return
-  }
-
-  // Otherwise: show confirmation
-  ui.requestCloseTab(tabId)
-}
-
-async function onConfirmClose(tabId: string, paneId: string | null) {
-  if (paneId) {
-    // Pane close: try close pane first, fall back to tab close if last
-    const closed = await splitPane.closePane(paneId)
-    if (!closed && tabId) {
-      await closeTab(tabId)
-    }
-  } else if (tabId) {
-    // Tab close (no pane specified)
-    await closeTab(tabId)
-  }
-  ui.cancelClose()
-}
-
-async function closeTab(tabId: string) {
-  const tab = tabs.value.find((t) => t.paneId === tabId)
-  if (!tab) return
-
-  // Clean up notifications associated with this tab (tab-level + all leaves)
-  const closedPaneIds = tab.type === 'terminal'
-    ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
-    : [tab.paneId]
-  // Invalidate plugin preview cache for any plugin leaves being closed
-  // (covers both legacy PluginTab and migrated TerminalTab-with-plugin-leaf).
-  if (tab.type === 'plugin') {
-    invalidatePluginPreview(tab.paneId)
-  } else if (tab.type === 'terminal') {
-    for (const leaf of getAllLeaves(tab.layout)) {
-      if (leaf.kind === 'plugin') invalidatePluginPreview(leaf.paneId)
-    }
-  }
-
-  if (tab.type === 'terminal') {
-    // Clean up local term refs
-    for (const leaf of getAllLeaves(tab.layout)) {
-      delete termRefs[leaf.paneId]
-      clearFileWorkspaceState(leaf.paneId)
-    }
-
-    try {
-      await apiCloseTab(tabId)
-    } catch (e) {
-      console.error('Failed to close tab:', e)
-      return
-    }
-  }
-
-  notif.clearForPaneIds(closedPaneIds, 'tab_close')
-
-  // Remove tab from local array
-  const idx = tabs.value.findIndex((t) => t.paneId === tabId)
-  if (idx === -1) return
-
-  const closedWorkspaceId = workspaceIdOfTab(tab)
-  const workspaceIdxBefore = tabs.value
-    .slice(0, idx)
-    .filter((candidate) => workspaceIdOfTab(candidate) === closedWorkspaceId).length
-
-  tabs.value.splice(idx, 1)
-  if (tab.type === 'plugin') persistNow()
-
-  // If this was the last tab, create a new one
-  if (tabs.value.length === 0) {
-    await newTab()
-    return
-  }
-
-  if (activePaneId.value === tabId) {
-    const successor = pickSuccessorTab(
-      tabs.value,
-      closedWorkspaceId,
-      workspaceIdxBefore,
-      idx,
-      workspaceIdOfTab
-    )
-    // Close-induced reselection is the newest navigation: supersede any in-flight
-    // deferred/supervised hop so a late older-generation commit cannot clobber it.
-    nextRevealNavGen()
-    activePaneId.value = successor?.paneId ?? null
-  }
-
-  if (tab.type !== 'plugin') persist()
-  nextTick(() => focusActive())
-}
-
-function focusActive() {
-  if (!activePaneId.value) return
-  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-  if (!tab) return
-  if (tab.type === 'terminal') {
-    const paneId = tab.activePaneId
-    // Defer focus/blur/fit if ANY pane in this tab is mid-IME-composition.
-    // Calling .blur()/.focus()/.fit() during composition aborts the IME
-    // session and causes xterm's diff-fallback to leak preedit text as
-    // raw input (P3).
-    for (const leaf of getAllLeaves(tab.layout)) {
-      if (termRefs[leaf.paneId]?.isComposing()) return
-    }
-    if (!(isTouchDevice() && kbVisible.value)) {
-      // Blur all other panes first to prevent duplicate input in Tauri WKWebView
-      for (const leaf of getAllLeaves(tab.layout)) {
-        if (leaf.paneId !== paneId) {
-          termRefs[leaf.paneId]?.blur()
-        }
-      }
-      termRefs[paneId]?.focus()
-    }
-    termRefs[paneId]?.fit()
-  }
-}
 
 function onTitleChange(paneId: string, title: string) {
   // Find terminal tab containing this leaf pane
@@ -1434,123 +994,84 @@ function onTokenChanged() {
   syncWs.connectSyncWS()
 }
 
-function onServerConnect(host: string, port: number) {
-  const proto = location.protocol
-  window.location.href = `${proto}//${host}:${port}/`
+const { onServerConnect, onSshConnect, onSshReconnect, onSshAuthSubmit, onSshAuthCancel } = useSshConnectFlow({
+  tabs,
+  activeWorkspaceId,
+  workspaces,
+  syncWs,
+  sshAuth,
+  sshPanelRef,
+  ensureSplitRoot,
+  commitLocalActivePane,
+  persist,
+  focusActive,
+})
+
+const { openPlugin } = usePluginLauncher({
+  tabs,
+  activeWorkspaceId,
+  loadedPlugins,
+  syncWs,
+  ensureSplitRoot,
+  activateTab,
+  commitLocalActivePane,
+  persist,
+  focusActive,
+})
+
+onSshConnectRef.value = onSshConnect
+
+function onNewMenuAction(
+  type:
+    | 'new-tab'
+    | 'split-h'
+    | 'split-v'
+    | 'broadcast'
+    | 'ssh-connect',
+) {
+  switch (type) {
+    case 'new-tab':
+      return newTab()
+    case 'split-h':
+      return splitPane.splitPane('horizontal')
+    case 'split-v':
+      return splitPane.splitPane('vertical')
+    case 'broadcast':
+      return splitPane.toggleBroadcast()
+    case 'ssh-connect':
+      return sshPanelRef.value?.open()
+  }
 }
 
-async function onSshConnect(result: { tab_id: string; pane_id: string; layout: any; connection_id?: string }) {
-  // If API didn't return connection_id, inherit from the active workspace
-  const resolvedConnectionId = result.connection_id
-    ?? workspaces.value.find((w) => w.id === activeWorkspaceId.value)?.connection_id
+async function onClosePane(tabId: string, paneId: string) {
+  const tab = tabs.value.find((t) => t.paneId === tabId)
+  if (!tab) return
 
-  const existing = tabs.value.find((t) => t.paneId === result.tab_id)
-  if (existing) {
-    if (existing.type === 'terminal') {
-      if (resolvedConnectionId && !existing.connectionId) {
-        existing.connectionId = resolvedConnectionId
-      }
-      if (!existing.workspaceId && activeWorkspaceId.value) {
-        existing.workspaceId = activeWorkspaceId.value
-      }
-    }
-    commitLocalActivePane(result.tab_id)
-    persist()
-    nextTick(() => focusActive())
+  if (tab.type !== 'terminal') {
+    const closed = await splitPane.closePane(paneId)
+    if (!closed) await closeTab(tabId)
     return
   }
-  syncWs.markRecentlyCreated(result.tab_id)
-  tabs.value.push({
-    type: 'terminal',
-    paneId: result.tab_id,
-    layout: ensureSplitRoot(result.layout),
-    activePaneId: result.pane_id,
-    paneMru: [result.pane_id],
-    broadcastMode: false,
-    broadcastActivity: 0,
-    previewVisible: false,
-    previewAddress: '',
-    previewUrl: '',
-    previewKind: 'web',
-    connectionId: resolvedConnectionId,
-    workspaceId: activeWorkspaceId.value ?? undefined,
-  })
-  commitLocalActivePane(result.tab_id)
-  persist()
-  nextTick(() => focusActive())
-}
 
-function onSshReconnect() {
-  sshPanelRef.value?.open()
-}
-
-const onSshAuthSubmit = (responses: string[]) => sshAuth.submit(responses)
-const onSshAuthCancel = () => sshAuth.cancel()
-
-async function openPlugin(pluginId: string) {
-  try {
-    const wsId = activeWorkspaceId.value ?? ''
-    const paneId = `plugin:${pluginId}:${wsId}`
-    const existing = tabs.value.find((t) => t.paneId === paneId)
-    if (existing) {
-      activateTab(paneId)
-      return
-    }
-
-    const plugin = loadedPlugins.get(pluginId)
-    if (!plugin || plugin.state !== 'active') {
-      const msg =
-        plugin?.state === 'error'
-          ? `Plugin "${pluginId}" failed to load: ${plugin.error ?? 'unknown error'}`
-          : `Plugin "${pluginId}" is not loaded.`
-      console.warn('[openPlugin]', msg)
-      window.__dinotty_ui_notify?.(msg, 'error')
-      return
-    }
-
-    // Register with the backend so the tab has a `tab_layouts` entry,
-    // enabling Mode A drag-and-drop merge. Reuse the deterministic paneId
-    // so existing localStorage entries migrate without changing identity.
-    const result = await apiCreatePluginTab(pluginId, {
-      title: plugin.manifest.name,
-      tabId: paneId,
-    })
-
-    // Dedup guard: the backend broadcasts `TabCreated` via the sync WS
-    // BEFORE returning the HTTP response, so the WS handler typically
-    // pushes this tab first (without workspaceId). Fill in workspaceId
-    // on the existing entry instead of pushing a duplicate — duplicate
-    // paneIds in `tabs` create duplicate v-for keys and can destabilize
-    // Vue rendering (observed as full-tab freeze on plugin open).
-    const existingTab = tabs.value.find(
-      (t) => t.type === 'terminal' && t.paneId === result.tab_id
-    ) as TerminalTab | undefined
-    if (existingTab) {
-      const wsIdVal = activeWorkspaceId.value ?? undefined
-      if (wsIdVal && !existingTab.workspaceId) existingTab.workspaceId = wsIdVal
-    } else {
-      tabs.value.push({
-        type: 'terminal',
-        paneId: result.tab_id,
-        layout: ensureSplitRoot(result.layout),
-        activePaneId: result.pane_id,
-        paneMru: [result.pane_id],
-        broadcastMode: false,
-        broadcastActivity: 0,
-        previewVisible: false,
-        previewAddress: '',
-        previewUrl: '',
-        previewKind: 'web',
-        workspaceId: activeWorkspaceId.value ?? undefined,
-      })
-    }
-    commitLocalActivePane(result.tab_id)
-    syncWs.sendSync({ type: 'activate_tab', pane_id: result.pane_id })
-    persist()
-    nextTick(() => focusActive())
-  } catch (err) {
-    console.error('[openPlugin] error:', err)
+  if (appSettings.confirm_before_close_tab === false) {
+    const closed = await splitPane.closePane(paneId)
+    if (!closed) await closeTab(tabId)
+    return
   }
+
+  ui.requestClosePane(tabId, paneId)
+}
+
+async function onConfirmClose(tabId: string, paneId: string | null) {
+  if (paneId) {
+    const closed = await splitPane.closePane(paneId)
+    if (!closed && tabId) {
+      await closeTab(tabId)
+    }
+  } else if (tabId) {
+    await closeTab(tabId)
+  }
+  ui.cancelClose()
 }
 
 // Window globals for plugin context
@@ -1841,10 +1362,6 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
 }
 
-function onOrientationChange() {
-  isLandscape.value = window.innerWidth > window.innerHeight
-}
-
 const _focusHandler = () => {
   nextTick(() => focusActive())
 }
@@ -1875,10 +1392,7 @@ function setupTauriWindowClose() {
 }
 function onWindowCloseConfirm() {
   windowCloseConfirmVisible.value = false
-  if (persistTimer) {
-    clearTimeout(persistTimer)
-    persistNow()
-  }
+  flushOnUnload()
   tauriInvoke('close_window')
 }
 function onWindowCloseCancel() {
@@ -1890,15 +1404,10 @@ onMounted(async () => {
   document.addEventListener('keydown', onGlobalKeydown)
   document.addEventListener('terminal-scroll', onTerminalScroll)
   window.addEventListener('focus', _focusHandler)
-  window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
   window.addEventListener('terminal-insert-text', onTerminalInsertText)
   window.addEventListener('terminal-run-code', onTerminalRunCode)
   window.addEventListener('pane-drag-hover-switch', onPaneDragHoverSwitch)
-  if (window.visualViewport) {
-    naturalVH = window.visualViewport.height
-    window.visualViewport.addEventListener('resize', onViewportResize)
-  }
   try {
     if (authenticated.value) {
     await getApiBase()
@@ -2012,20 +1521,16 @@ onBeforeUnmount(() => {
   disposeNotificationPresentationScheduler()
   clearActiveReadContext()
   clearToastInstance()
+  disposePersist()
   unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
   document.removeEventListener('terminal-scroll', onTerminalScroll)
   window.removeEventListener('focus', _focusHandler)
-  window.removeEventListener('resize', onOrientationChange)
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
   window.removeEventListener('terminal-insert-text', onTerminalInsertText)
   window.removeEventListener('terminal-run-code', onTerminalRunCode)
   window.removeEventListener('pane-drag-hover-switch', onPaneDragHoverSwitch)
-  if (window.visualViewport) {
-    window.visualViewport.removeEventListener('resize', onViewportResize)
-  }
-  document.documentElement.style.removeProperty('--sys-kb-height')
-  document.documentElement.style.setProperty('--kb-open', '0')
+  disposeViewport()
   syncWs.closeWs()
 })
 </script>
