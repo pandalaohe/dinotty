@@ -39,7 +39,7 @@
     "macOS": {
       "entitlements": "Entitlements.plist",
       "infoPlist": "Info.plist",
-      "signingIdentity": "-"
+      "signingIdentity": "Dinotty Local Signing"
     }
   },
   "plugins": {

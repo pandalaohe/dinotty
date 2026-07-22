@@ -13,3 +13,8 @@ AGENTS.md
 src-tauri/gen/schemas/*.json
 ghostty-comparison-optimization.md
 .star-cache
+
+# fork-local (never upstreamed): agent/hook runtime strays
+.collab/
+.hof-hooks-enabled
+dinotty-server-*.log

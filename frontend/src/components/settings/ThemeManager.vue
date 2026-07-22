@@ -122,6 +122,7 @@ import { downloadTheme } from '../../utils/themeTemplate'
 import ThemeEditorDialog from './ThemeEditorDialog.vue'
 
 const BASE_NAMES = ['dark', 'light', 'dracula']
+const MOCHA_NAME = 'catppuccin-mocha'
 const VISIBLE_CAP = 15
 
 const ANSI_KEYS = [
@@ -212,8 +213,11 @@ const themeItems = computed<ThemeItem[]>(() => {
 
   for (const name of BASE_NAMES) items.push(builtinItem(name, false, true))
   for (const theme of themes) {
-    if (BASE_NAMES.includes(theme.name) || hidden.has(theme.name)) continue
+    if (BASE_NAMES.includes(theme.name) || theme.name === MOCHA_NAME || hidden.has(theme.name)) continue
     items.push(builtinItem(theme.name, true, false))
+  }
+  if (themes.some((theme) => theme.name === MOCHA_NAME) && !hidden.has(MOCHA_NAME)) {
+    items.push(builtinItem(MOCHA_NAME, true, false))
   }
   for (const saved of settings.custom_themes) {
     items.push({
