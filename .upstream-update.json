@@ -1,0 +1,5 @@
+{
+  "deploy": {
+    "cmd": "bash scripts/deploy-live.sh"
+  }
+}
