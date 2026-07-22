@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"; while [ -L "$SOURCE" ]; do DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"; SOURCE="$(readlink "$SOURCE")"; [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"; done; SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+OPS="$REPO_DIR/scripts/dinotty-ops.sh"
+
+if [ ! -f "$OPS" ]; then
+  echo "dinotty: operations script not found: $OPS" >&2
+  exit 1
+fi
+
+show_help() {
+  cat <<'EOF'
+dinotty — dinotty fork deploy/ops launcher
+
+dinotty rebuild 8999    Rebuild and redeploy the prod app (port 8999)
+dinotty rebuild 8998    Rebuild and redeploy the test app (port 8998)
+dinotty rebuild all     Rebuild both ends (8999 + 8998), then show status
+dinotty status          Show running instances and versions
+dinotty help            Show this menu
+EOF
+}
+
+case "${1:-}" in
+  ""|help|-h|--help)
+    show_help
+    ;;
+  rebuild)
+    case "${2:-}" in
+      8999|prod)
+        exec bash "$OPS" rebuild-prod
+        ;;
+      8998|test)
+        exec bash "$OPS" rebuild-test
+        ;;
+      all)
+        bash "$OPS" rebuild-prod
+        bash "$OPS" rebuild-test
+        bash "$OPS" status
+        ;;
+      *)
+        echo "dinotty: unknown rebuild target: ${2:-<missing>}" >&2
+        show_help
+        exit 1
+        ;;
+    esac
+    ;;
+  status)
+    exec bash "$OPS" status
+    ;;
+  # Add future subcommands, such as headless mode, here.
+  *)
+    echo "dinotty: unknown command: $1" >&2
+    show_help
+    exit 1
+    ;;
+esac
