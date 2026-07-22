@@ -83,6 +83,8 @@ const mocks = vi.hoisted(() => {
     resetNotificationRequestIds: () => {
       notificationRequestIdCounter = 0
     },
+    loadedPlugins: new Map<string, any>(),
+    loadAllPlugins: vi.fn(async () => {}),
   }
 })
 
@@ -172,8 +174,8 @@ vi.mock('../composables/useAppForeground', () => ({
 }))
 vi.mock('../composables/usePluginLoader', () => ({
   usePluginLoader: () => ({
-    loadedPlugins: new Map(),
-    loadAll: vi.fn(),
+    loadedPlugins: mocks.loadedPlugins,
+    loadAll: mocks.loadAllPlugins,
     getPluginContext: vi.fn(),
     pluginList: { value: [], __v_isRef: true },
     allCommands: { value: [], __v_isRef: true },
@@ -380,6 +382,9 @@ afterEach(() => {
   mocks.apiDeactivateWorkspace.mockResolvedValue(undefined)
   mocks.mintNotificationRequestId.mockClear()
   mocks.resetNotificationRequestIds()
+  mocks.loadedPlugins.clear()
+  mocks.loadAllPlugins.mockReset()
+  mocks.loadAllPlugins.mockResolvedValue(undefined)
 })
 
 describe('App.vue - activateTab cross-workspace', () => {
