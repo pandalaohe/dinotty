@@ -15,7 +15,6 @@ use axum::{
     Json, Router,
 };
 use rust_embed::Embed;
-use std::fs;
 use std::net::SocketAddr;
 
 use std::sync::Arc;
@@ -97,24 +96,10 @@ pub struct GitInfo {
 }
 
 fn read_git_info() -> GitInfo {
-    let lines: Vec<String> = fs::read_to_string("VERSION")
-        .ok()
-        .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
-        .unwrap_or_default();
-
-    let version = lines
-        .first()
-        .cloned()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-
-    let repo_url = lines
-        .get(1)
-        .cloned()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string());
-
-    GitInfo { version, repo_url }
+    GitInfo {
+        version: env!("DINOTTY_VERSION").to_string(),
+        repo_url: env!("CARGO_PKG_REPOSITORY").to_string(),
+    }
 }
 
 #[derive(Clone)]
