@@ -621,6 +621,7 @@ export function useSyncWebSocket(opts: {
 
     syncWs.onclose = (e) => {
       console.warn('[sync] disconnected', e.code, e.reason)
+      resetHandshakeState()
       syncWs = null
       syncConnected.value = false
       setTimeout(connectSyncWS, syncReconnectDelay)

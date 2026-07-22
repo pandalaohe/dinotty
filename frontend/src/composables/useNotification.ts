@@ -287,11 +287,16 @@ export function aggregateSeverity(paneIds: string[]): NotificationType | null {
   return highest
 }
 
+function safeBigInt(s: string): bigint | null {
+  try { return BigInt(s) } catch { return null }
+}
+
 function historyItemMatchesReadTarget(card: NotificationItem, target: OverlayTarget): boolean {
   if ('paneId' in target) {
+    const seq = card.eventSeq !== undefined ? safeBigInt(card.eventSeq) : null
     return card.paneId === target.paneId
-      && card.eventSeq !== undefined
-      && BigInt(card.eventSeq) <= target.throughEventSeq
+      && seq !== null
+      && seq <= target.throughEventSeq
   }
   return card.notifId === target.notifId
 }
@@ -315,9 +320,10 @@ function pruneHistoryByAuthoritativeRead() {
     let paneRead = false
     if (card.paneId !== undefined) {
       const pane = attentionStore.panes.get(card.paneId)
+      const seq = card.eventSeq !== undefined ? safeBigInt(card.eventSeq) : null
       paneRead = pane !== undefined
-        && card.eventSeq !== undefined
-        && pane.readThroughSeq >= BigInt(card.eventSeq)
+        && seq !== null
+        && pane.readThroughSeq >= seq
     }
 
     let notifRead = false

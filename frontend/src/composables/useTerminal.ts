@@ -659,12 +659,6 @@ export class TerminalInstance {
   }
 
   private _handleXtermData(rawData: string) {
-    // DEBUG: log all onData for Raycast investigation
-    if (rawData.length <= 10) {
-      console.log('[RAYCAST-DEBUG] onData', { data: JSON.stringify(rawData), len: rawData.length })
-    } else {
-      console.log('[RAYCAST-DEBUG] onData', { data: JSON.stringify(rawData.slice(0, 10)) + '...', len: rawData.length })
-    }
     // Mouse reports produced synchronously by our synthetic wheel dispatches
     // (wheel.sendWheelEvent) are legitimate identical repeats; the WKWebView
     // key-replay dedup below must not eat them.
