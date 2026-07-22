@@ -390,7 +390,7 @@ export function useTabLifecycle(opts: TabLifecycleOptions): TabLifecycleState {
         if (!workspaceCommitted || gen !== currentRevealNavGen()) {
           successor = tabs.value.find(
             (candidate) => workspaceIdOfTab(candidate) === activeWorkspaceId.value
-          )
+          ) ?? tabs.value[Math.min(idx, tabs.value.length - 1)]
         }
       } else {
         cancelPendingWorkspaceActivation()
