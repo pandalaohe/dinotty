@@ -27,10 +27,12 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
     of the cross-workspace hop, but its failed-hop rescue only re-searches the (now-empty) active
     workspace, so `activePaneId` can go `null` (no tab selected) — a real gap, verified against
     `upstream/dev`; our positional fallback closes it.
-    Plugin-tab restore validation was re-applied on 2026-07-22 then DROPPED the same day (`3e04bb14`):
-    it lived in the hot, actively-reworked `useSyncWebSocket.ts`, and upstream restores plugin tabs
-    unconditionally (no reconcile), so following upstream costs only a manually-closable ghost tab
-    after a plugin uninstall/rename while disconnected — not worth the recurring hot-file conflict.
+    Plugin-tab restore validation — **DECIDED 2026-07-22, follow upstream, do not re-raise as unmerged
+    work.** Re-applied on 2026-07-22 then DROPPED the same day (`3e04bb14`): it lived in the hot,
+    actively-reworked `useSyncWebSocket.ts`, and upstream restores plugin tabs unconditionally (no
+    reconcile), so following upstream costs only a manually-closable ghost tab after a plugin
+    uninstall/rename while disconnected — not worth the recurring hot-file conflict. Reopen only if the
+    user asks or upstream's plugin-restore code materially changes.
   Everything else from the prior 78-commit layer verified already upstream/converged (action-keyboard,
   per-device supervise-reload, plugin-tab resurrect-race fix, NUX1 notification, badge mode, etc.).
   Verified: vitest 741 + vue-tsc + cargo check/test/clippy all green; code-reviewed (1 MED fixed —
