@@ -397,6 +397,41 @@ export class TerminalInstance {
         prevCleanup?.()
       }
     }
+    // FIX: intercept macOS input method text replacement (e.g. Raycast snippets).
+    // xterm.js accumulates typed chars in the textarea. When a snippet expands,
+    // the OS replaces the trigger text via insertText:replacementRange:. We track
+    // the textarea value via `input` events, then on `beforeinput` send backspaces
+    // for the old value before xterm.js forwards the new text to the PTY.
+    if (textarea) {
+      let _trackedTextareaValue = ''
+      textarea.addEventListener('input', ((e: Event) => {
+        const ie = e as InputEvent
+        if (ie.isComposing) return
+        _trackedTextareaValue = textarea.value
+        console.log('[RAYCAST-DEBUG] input tracked', { value: _trackedTextareaValue, inputType: ie.inputType, data: ie.data })
+      }) as EventListener)
+      textarea.addEventListener('beforeinput', ((e: Event) => {
+        const ie = e as InputEvent
+        if (this._composing) return
+        if (ie.inputType !== 'insertText' && ie.inputType !== 'insertReplacementText') return
+        const ranges = typeof ie.getTargetRanges === 'function' ? ie.getTargetRanges() : []
+        const rangeLen = ranges.length > 0 ? ((ranges[0] as StaticRange).endOffset - (ranges[0] as StaticRange).startOffset) : 0
+        const deleteLen = Math.max(rangeLen, _trackedTextareaValue.length)
+        console.log('[RAYCAST-DEBUG] beforeinput', {
+          inputType: ie.inputType,
+          data: ie.data,
+          trackedValue: _trackedTextareaValue,
+          rangeLen,
+          deleteLen,
+          textareaValue: textarea.value,
+        })
+        if (deleteLen > 0) {
+          console.log('[RAYCAST-DEBUG] SENDING BACKSPACES:', deleteLen)
+          this.sendData('\x7f'.repeat(deleteLen))
+          _trackedTextareaValue = ''
+        }
+      }) as EventListener)
+    }
     if (textarea && isTauri()) {
       const onImeInput = (e: InputEvent) => {
         if (e.inputType !== 'insertText') return
@@ -632,6 +667,12 @@ export class TerminalInstance {
   }
 
   private _handleXtermData(rawData: string) {
+    // DEBUG: log all onData for Raycast investigation
+    if (rawData.length <= 10) {
+      console.log('[RAYCAST-DEBUG] onData', { data: JSON.stringify(rawData), len: rawData.length })
+    } else {
+      console.log('[RAYCAST-DEBUG] onData', { data: JSON.stringify(rawData.slice(0, 10)) + '...', len: rawData.length })
+    }
     // Mouse reports produced synchronously by our synthetic wheel dispatches
     // (wheel.sendWheelEvent) are legitimate identical repeats; the WKWebView
     // key-replay dedup below must not eat them.
