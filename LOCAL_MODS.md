@@ -34,8 +34,9 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   - Config/meta: Mocha theme (`themes.ts` / `ThemeManager.vue` / `useI18n.ts`), macOS signing
     identity (`src-tauri/tauri.conf.json`), deploy orchestrator (`scripts/dinotty-ops.sh` +
     `scripts/deploy-live.sh` + `scripts/dinotty` short launcher — global via a symlink into a PATH
-    dir, e.g. `/opt/homebrew/bin/dinotty`; `dinotty rebuild 8999|8998|all`, `dinotty status`,
-    `dinotty help`), meta (`.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`,
+    dir, e.g. `/opt/homebrew/bin/dinotty`; `dinotty rebuild 8999|8998|all` — detaches to background
+    by default (survives the app restarting its own terminal; `--fg` for foreground), `dinotty log
+    [-f]`, `dinotty status`, `dinotty help`), meta (`.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`,
     `docs/task-files/*`).
   - Feature (1): positional fallback + `activateWorkspace` sync when no successor tab remains on
     close, in `useTabLifecycle.ts`. Upstream's `b6521103` covers the rest of the cross-workspace

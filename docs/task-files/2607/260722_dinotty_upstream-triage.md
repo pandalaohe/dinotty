@@ -68,6 +68,16 @@ PLAN_HASH: sha256 over (GC candidate list + deployment steps) — computed at Ph
 - Historical merged-PR table + dated narrative retained as provenance (Index wins conflicts).
 - Config `.upstream-update.json` v1 `deploy.cmd` → v2 `deployment.steps[0]` human-only migration + declared verify/branches/gc sections (user-confirmed at Phase P).
 
-## Run receipt (Phase L) — appended after execution
+## Run receipt (Phase L) — 2026-07-22
 
-(pending)
+- **refs**: custom `bc89971e`→`c5c333bc` (merge+ledger) →`7baa333d` (bg-rebuild launcher, mid-run user request); main `83f1c670`→`f958848c`. Both pushed (custom first). Backup tags `pre-update-{main,custom}-20260722-183005` (keep 30d, next Phase 0 sweeps).
+- **merge**: zero conflicts (#204 files blob-parity no-op; 37 upstream files clean; 23 fork files untouched).
+- **verify**: web-test 736/736 PASS · web-build PASS · native-check (cargo check) PASS.
+- **GC**: `fix/tab-close-null-successor` deleted — remote via old-OID lease (`b00b2bb3`) ✓, local via `-D` (`-d` refused: #204 squash-merged as `f958848c`, tip not an ancestor — expected; OID recorded, recoverable). 7/7 conditions met. origin pruned.
+- **ledger**: v1→v2 migrated (Contribution Index, 5 rows); flips #204 merged/absorbed · #203 closed-superseded · #190/#191/#194/#180 prose reconciled to merged.
+- **contribution four buckets**: evaluated 5/5 — unclassified 0 · merged-upstream cleanup 1 (`1dff1a86-null-successor-fallback`; branch GC'd) · PR candidates 0 · issue candidates 0. Checksum 5+0=5 ✓.
+- **config**: v2 written (declared verify.steps ×3, human-only deployment ×2, gc, branches).
+- **deployment (human-executed)**: user ran `dinotty rebuild all` via the NEW background mode (log `rebuild-all-20260722-202314.log`): rc=0, prod 8999 MATCH (PID alive, v0.18.0, index-CQ4iw9P5.js), test 8998 MATCH, custom HEAD deployed = `7baa333d`. First live E2E of detached rebuild: PASS.
+- **mid-run scope addition** (user-requested): `scripts/dinotty` rebuild now detaches by default (python setsid new session, `~/.dinotty/logs/`, mkdir lock with `$!` pid handoff, `dinotty log [-f]`, `--fg` opt-out). codex-implemented, mini-review full-loop by main brain (1 race defect found+fixed: dead-pid stale-lock window), safe negative-path E2E; committed `7baa333d`.
+- **rerere**: enabled this run.
+- **lock**: flock held through run (one auto-release on session restart mid-Phase-K wait, re-acquired; by-design process-death release).
