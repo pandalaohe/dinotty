@@ -1,15 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { PaneLayout, TerminalTab } from '../types/pane'
-import type { SyncTabList } from '../types/protocol'
 
 const mocks = vi.hoisted(() => ({
   apiActivateWorkspace: vi.fn(async () => {}),
-  apiCreatePluginTab: vi.fn(async () => ({
-    tab_id: 'plugin-tab',
-    pane_id: 'plugin-pane',
-    layout: null,
-  })),
 }))
 
 let socket: MockWebSocket
@@ -35,7 +29,6 @@ vi.mock('../composables/apiBase', () => ({
 }))
 vi.mock('../composables/useTransport', () => ({ isTauri: () => false }))
 vi.mock('../composables/usePluginLoader', () => ({ handlePluginChanged: vi.fn() }))
-vi.mock('../composables/useTabApi', () => ({ apiCreatePluginTab: mocks.apiCreatePluginTab }))
 vi.mock('../composables/useWorkspaceApi', () => ({
   apiListWorkspaces: vi.fn(async () => []),
   apiCreateWorkspace: vi.fn(),
@@ -49,17 +42,6 @@ vi.mock('../composables/useWorkspaceApi', () => ({
 import { useSyncWebSocket } from '../composables/useSyncWebSocket'
 import { useWorkspaces } from '../composables/useWorkspaces'
 import { useSessionStore } from '../stores/sessionStore'
-
-const localStorageMock = (() => {
-  const store = new Map<string, string>()
-  return {
-    clear: () => store.clear(),
-    getItem: (key: string) => store.get(key) ?? null,
-    removeItem: (key: string) => store.delete(key),
-    setItem: (key: string, value: string) => store.set(key, value),
-  }
-})()
-vi.stubGlobal('localStorage', localStorageMock)
 
 function leaf(paneId: string): PaneLayout {
   return { type: 'leaf', paneId, title: paneId, ratio: 1, zoomed: false }
@@ -91,24 +73,18 @@ function makeTab(): TerminalTab {
   }
 }
 
-async function setup(pluginOpts?: {
-  loadedPlugins?: Map<string, any>
-  initialPluginLoad?: () => Promise<void>
-}) {
+async function setup() {
   setActivePinia(createPinia())
   const session = useSessionStore()
   const tab = makeTab()
   session.tabs = [tab]
   session.activePaneId = tab.paneId
   const focusActive = vi.fn()
-  const newTab = vi.fn().mockResolvedValue(undefined)
   const subject = useSyncWebSocket({
     termRefs: {},
     persist: vi.fn(),
     focusActive,
-    newTab,
-    loadedPlugins: pluginOpts?.loadedPlugins ?? new Map(),
-    initialPluginLoad: pluginOpts?.initialPluginLoad ?? (() => Promise.resolve()),
+    newTab: vi.fn(),
   })
   await subject.connectSyncWS()
   const emitLayout = (nextLayout: PaneLayout, serverActivePaneId: string) => {
@@ -121,12 +97,7 @@ async function setup(pluginOpts?: {
       }),
     })
   }
-  const emitTabList = (tabs: SyncTabList['tabs'] = []) => {
-    socket.onmessage?.({
-      data: JSON.stringify({ type: 'tab_list', tabs, active_pane_id: null }),
-    })
-  }
-  return { tab, session, subject, emitLayout, emitTabList, focusActive, newTab }
+  return { tab, emitLayout, focusActive }
 }
 
 describe('useSyncWebSocket pane MRU', () => {
@@ -135,94 +106,6 @@ describe('useSyncWebSocket pane MRU', () => {
     const workspaceState = useWorkspaces()
     workspaceState.workspaces.value = []
     workspaceState.activeWorkspaceId.value = null
-    localStorageMock.clear()
-  })
-
-  it('does not restore a known-invalid cached plugin on a later tab_list from the same connection', async () => {
-    localStorage.setItem(
-      'dinotty_tabs',
-      JSON.stringify({
-        tabs: [{ type: 'plugin', paneId: 'plugin:legacy', title: 'Legacy', pluginId: 'legacy' }],
-        activeIdx: 0,
-      }),
-    )
-    const { tab, session, emitTabList } = await setup()
-    const serverTabs = [
-      { tab_id: tab.paneId, pane_id: 'a', active_pane_id: tab.activePaneId, layout: tab.layout },
-    ]
-
-    emitTabList(serverTabs)
-    await vi.waitFor(() => {
-      expect(session.tabs.some((candidate) => candidate.paneId === 'plugin:legacy')).toBe(false)
-    })
-
-    emitTabList(serverTabs)
-
-    expect(session.tabs.some((candidate) => candidate.paneId === 'plugin:legacy')).toBe(false)
-    expect(mocks.apiCreatePluginTab).not.toHaveBeenCalled()
-  })
-
-  it('does not restore a known-invalid cached plugin after reconnect', async () => {
-    localStorage.setItem(
-      'dinotty_tabs',
-      JSON.stringify({
-        tabs: [{ type: 'plugin', paneId: 'plugin:legacy', title: 'Legacy', pluginId: 'legacy' }],
-        activeIdx: 0,
-      }),
-    )
-    const { tab, session, subject, emitTabList } = await setup()
-    const serverTabs = [
-      { tab_id: tab.paneId, pane_id: 'a', active_pane_id: tab.activePaneId, layout: tab.layout },
-    ]
-
-    emitTabList(serverTabs)
-    await vi.waitFor(() => {
-      expect(session.tabs.some((candidate) => candidate.paneId === 'plugin:legacy')).toBe(false)
-    })
-
-    await subject.connectSyncWS()
-    emitTabList(serverTabs)
-
-    expect(session.tabs.some((candidate) => candidate.paneId === 'plugin:legacy')).toBe(false)
-  })
-
-  it('keeps an existing in-memory plugin tab when the server omits it', async () => {
-    const { session, emitTabList, newTab } = await setup()
-    session.tabs = [
-      { type: 'plugin', paneId: 'plugin:memory', title: 'Memory', pluginId: 'memory' },
-    ]
-
-    emitTabList()
-
-    expect(session.tabs).toEqual([
-      { type: 'plugin', paneId: 'plugin:memory', title: 'Memory', pluginId: 'memory' },
-    ])
-    expect(newTab).not.toHaveBeenCalled()
-  })
-
-  it('does not use a legacy plugin record as saved terminal state', async () => {
-    localStorage.setItem(
-      'dinotty_tabs',
-      JSON.stringify({
-        tabs: [
-          {
-            type: 'plugin',
-            paneId: 'server-pane',
-            title: 'Legacy plugin',
-            pluginId: 'legacy',
-            previewVisible: true,
-          },
-        ],
-        activeIdx: 0,
-      }),
-    )
-    const { session, emitTabList } = await setup()
-
-    emitTabList([{ tab_id: 'server-tab', pane_id: 'server-pane' }])
-
-    const restored = session.tabs.find((tab) => tab.paneId === 'server-tab')
-    expect(restored?.type).toBe('terminal')
-    expect(restored?.type === 'terminal' && restored.previewVisible).toBe(false)
   })
 
   it('uses and focuses the MRU fallback when a focused pane exits', async () => {
@@ -298,8 +181,6 @@ describe('useSyncWebSocket pane MRU', () => {
       persist: vi.fn(),
       focusActive: vi.fn(),
       newTab: vi.fn(),
-      loadedPlugins: new Map(),
-      initialPluginLoad: () => Promise.resolve(),
     })
     await subject.connectSyncWS()
 

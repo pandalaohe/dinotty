@@ -435,17 +435,6 @@ const clearActiveReadContext = setActiveReadContext({
 })
 const stopForegroundGainSubscription = onAppForegroundGain(evaluateActiveRead)
 const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
-let initialPluginLoad: Promise<void> | null = null
-function loadPluginsInitially() {
-  if (!initialPluginLoad) {
-    const load = loadAll()
-    initialPluginLoad = load
-    void load.catch(() => {
-      if (initialPluginLoad === load) initialPluginLoad = null
-    })
-  }
-  return initialPluginLoad
-}
 const { isMobile } = useIsMobile()
 
 // Workspace filtering
@@ -685,8 +674,6 @@ const syncWs = useSyncWebSocket({
   persist,
   focusActive,
   newTab: async () => { await newTab() },
-  loadedPlugins,
-  initialPluginLoad: loadPluginsInitially,
 })
 
 const sshAuth = useSshAuth({ syncWs })
@@ -918,7 +905,7 @@ async function onLoginSuccess() {
   ui.setAuthenticated(true)
   await getApiBase()
   await settingsStore.load()
-  void loadPluginsInitially()
+  void loadAll()
   void syncWs.connectSyncWS()
   initMonitorHistory()
 }
@@ -1427,7 +1414,7 @@ onMounted(async () => {
     await settingsStore.load()
     void syncWs.connectSyncWS()
     initMonitorHistory()
-    void loadPluginsInitially()
+    void loadAll()
     // Fallback: if sync WS hasn't delivered tabs within 3s, load via REST
     setTimeout(async () => {
       if (tabs.value.length === 0 && !syncWs.isConnected()) {

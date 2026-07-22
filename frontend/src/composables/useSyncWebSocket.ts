@@ -30,10 +30,8 @@ export function useSyncWebSocket(opts: {
   persist: () => void
   focusActive: () => void
   newTab: () => Promise<void>
-  loadedPlugins: ReadonlyMap<string, { manifest: { name: string } }>
-  initialPluginLoad: () => Promise<void>
 }) {
-  const { termRefs, persist, focusActive, newTab, loadedPlugins, initialPluginLoad } = opts
+  const { termRefs, persist, focusActive, newTab } = opts
   const session = useSessionStore()
   const { tabs, activePaneId } = storeToRefs(session)
   const ui = useUiStore()
@@ -58,7 +56,6 @@ export function useSyncWebSocket(opts: {
   // Grace period: tabs created within the last 5s are protected from tab_list pruning.
   // This prevents a race where tab_list arrives before the REST-driven tab_created.
   const recentlyCreated = new Map<string, number>()
-  const invalidCachedPluginPaneIds = new Set<string>()
   const GRACE_MS = 5000
 
   function markRecentlyCreated(tabId: string) {
@@ -99,12 +96,10 @@ export function useSyncWebSocket(opts: {
       const raw = localStorage.getItem('dinotty_tabs')
       if (!raw) return null
       const { tabs: savedTabs } = JSON.parse(raw)
-      // Plugin pane IDs must never be treated as saved terminal layout IDs.
-      const terminalTabs = savedTabs?.filter((t: { type?: string }) => t.type !== 'plugin')
-      const direct = terminalTabs?.find((t: any) => t.paneId === paneId)
+      const direct = savedTabs?.find((t: any) => t.paneId === paneId)
       if (direct) return direct
       return (
-        terminalTabs?.find((t: any) => {
+        savedTabs?.find((t: any) => {
           if (!t.layout) return false
           const leaves = getAllLeaves(t.layout)
           return leaves.some((l: any) => l.paneId === paneId)
@@ -134,80 +129,6 @@ export function useSyncWebSocket(opts: {
       console.log('[sync] connected')
       syncConnected.value = true
       syncReconnectDelay = 1000
-    }
-
-    function restorePluginTabs() {
-      const restored = new Map<string, string>()
-      try {
-        const raw = localStorage.getItem('dinotty_tabs')
-        if (!raw) return
-        const { tabs: savedTabs } = JSON.parse(raw)
-        for (const saved of savedTabs ?? []) {
-          if (
-            saved.type !== 'plugin' ||
-            invalidCachedPluginPaneIds.has(saved.paneId) ||
-            tabs.value.some((tab) => tab.paneId === saved.paneId)
-          ) {
-            continue
-          }
-          const plugin = loadedPlugins.get(saved.pluginId)
-          tabs.value.push(migrateTab({
-            ...saved,
-            title: plugin?.manifest.name ?? saved.title ?? saved.pluginId,
-          }))
-          recentlyCreated.set(saved.paneId, Date.now())
-          restored.set(saved.paneId, saved.pluginId)
-        }
-      } catch {
-        return
-      }
-
-      if (restored.size === 0) return
-      void initialPluginLoad()
-        .then(async () => {
-          let changed = false
-          for (const [paneId, pluginId] of restored) {
-            const idx = tabs.value.findIndex(
-              (tab) => tab.type === 'terminal' &&
-                tab.paneId === paneId &&
-                getAllLeaves(tab.layout).some(
-                  (leaf) => leaf.kind === 'plugin' && leaf.pluginId === pluginId,
-                ),
-            )
-            if (idx === -1) continue
-            const plugin = loadedPlugins.get(pluginId)
-            if (!plugin) {
-              invalidCachedPluginPaneIds.add(paneId)
-              recentlyCreated.delete(paneId)
-              tabs.value.splice(idx, 1)
-              changed = true
-              continue
-            }
-            const tab = tabs.value[idx]
-            if (tab.type !== 'terminal') continue
-            const leaf = findLeaf(tab.layout, paneId)
-            if (leaf && leaf.title !== plugin.manifest.name) {
-              leaf.title = plugin.manifest.name
-              changed = true
-            }
-            // Register only after validation. The endpoint is idempotent, and
-            // the grace entry protects the optimistic tab until sync catches up.
-            void apiCreatePluginTab(pluginId, {
-              title: plugin.manifest.name,
-              tabId: paneId,
-            }).catch((e) => console.warn('[sync] plugin tab register failed:', e))
-          }
-          if (!changed) return
-          if (tabs.value.length === 0) await newTab()
-          if (!activePaneId.value || !tabs.value.some((tab) => tab.paneId === activePaneId.value)) {
-            activePaneId.value = tabs.value[0]?.paneId ?? null
-          }
-          persist()
-          nextTick(() => focusActive())
-        })
-        .catch(() => {
-          // A failed initial load is not authoritative evidence that plugins were uninstalled.
-        })
     }
 
     async function handleMsg(e: { data: string }) {
@@ -287,6 +208,30 @@ export function useSyncWebSocket(opts: {
           }
         }
 
+        // Migrate legacy plugin tabs from localStorage: convert to TerminalTab
+        // with a plugin leaf and register with the backend so they gain a
+        // `tab_layouts` entry (required for Mode A drag-and-drop merge).
+        try {
+          const raw = localStorage.getItem('dinotty_tabs')
+          if (raw) {
+            const { tabs: savedTabs } = JSON.parse(raw)
+            for (const st of savedTabs) {
+              if (st.type !== 'plugin') continue
+              if (tabs.value.some((t) => t.paneId === st.paneId)) continue
+              const migrated = migrateTab(st)
+              tabs.value.push(migrated)
+              // Fire-and-forget: the backend `insert_tab` is idempotent, so
+              // re-registering an already-tracked plugin tab is a no-op.
+              void apiCreatePluginTab(st.pluginId, {
+                title: st.title ?? st.pluginId,
+                tabId: st.paneId,
+              }).catch((e) => console.warn('[sync] plugin tab register failed:', e))
+            }
+          }
+        } catch {
+          /* noop */
+        }
+
         // Remove terminal tabs whose leaf paneIds are no longer on the server
         const serverTabIds = new Set(msg.tabs.map((t) => t.tab_id))
         const serverLeafIds = new Set(
@@ -302,10 +247,6 @@ export function useSyncWebSocket(opts: {
             getAllLeaves(t.layout).some((l) => serverLeafIds.has(l.paneId))
           )
         })
-
-        // Restore cached plugin tabs only after server-owned terminal tabs have
-        // been reconciled. Validation below removes entries for uninstalled plugins.
-        restorePluginTabs()
 
         if (msg.active_pane_id) {
           const cur = tabs.value.find((t) => t.paneId === activePaneId.value)
