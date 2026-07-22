@@ -22,11 +22,13 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
     identity (`src-tauri/tauri.conf.json`), deploy orchestrator (`scripts/dinotty-ops.sh` +
     `scripts/deploy-live.sh`), meta (`.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`,
     `docs/task-files/*`).
-  - Feature (1, upstream-PR candidate): positional fallback + `activateWorkspace` sync when no
-    successor tab remains on close, in `useTabLifecycle.ts`. Upstream's `b6521103` covers the rest
-    of the cross-workspace hop, but its failed-hop rescue only re-searches the (now-empty) active
-    workspace, so `activePaneId` can go `null` (no tab selected) — a real gap, verified against
-    `upstream/dev`; our positional fallback closes it.
+  - Feature (1): positional fallback + `activateWorkspace` sync when no successor tab remains on
+    close, in `useTabLifecycle.ts`. Upstream's `b6521103` covers the rest of the cross-workspace
+    hop, but its failed-hop rescue only re-searches the (now-empty) active workspace, so
+    `activePaneId` can go `null` (no tab selected) — a real gap, verified against `upstream/dev`;
+    our positional fallback closes it. **PR #204 OPEN** (`2026-07-22`, branch
+    `fix/tab-close-null-successor` off clean `upstream/dev`; 2 files, +54/−1; leak gate CLEAN).
+    Exit condition: merged upstream → drop the fork-side delta. Do not re-raise as undecided work.
     Plugin-tab restore validation — **DECIDED 2026-07-22, follow upstream, do not re-raise as unmerged
     work.** Re-applied on 2026-07-22 then DROPPED the same day (`3e04bb14`): it lived in the hot,
     actively-reworked `useSyncWebSocket.ts`, and upstream restores plugin tabs unconditionally (no
