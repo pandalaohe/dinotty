@@ -224,6 +224,24 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | #207 | i18n: supervise-tabs hint → functional wording shown on all platforms + Alt-as-Cmd toggle rename | OPEN (filed `2026-07-22`) |
 
 ### Ours-only — NOT in upstream (no PR, or PR not yet accepted)
+- **Mobile quick-keyboard: keep-on-scroll setting effective + persistent** (2026-07-23;
+  `33c4b749`) — two general upstream bugs, both verified against upstream history:
+  1. Upstream #193 (`55a0b451`) added `keyboard_keep_on_scroll` guards only to App.vue's three
+     collapse sites and missed MobileKeyboard.vue's older duplicate unconditional
+     `terminal-scroll` listener (introduced `4e250cd8`), which collapsed the keyboard regardless
+     of the setting — the toggle had no effect on phones. Fixed by DELETING the duplicate
+     listener (App.vue's guarded consumer already handles the same document-level event and flips
+     the same `kbVisible` ref) and guarding the `globalSelectedPath` watcher's collapse.
+  2. #193 touched 4 frontend files only; the Rust `Settings` struct has no
+     `keyboard_keep_on_scroll` field, so the typed `Json<Settings>` PUT silently dropped the key
+     and the toggle reset to false on every refresh. Fixed by adding the serde-defaulted bool
+     (no version bump — follows the `keyboard_sound` pattern).
+  Plus: keepOnScrollHint EN/ZH expanded to the pinned semantics; KbToggleButton hardcoded title
+  → i18n. Tests: backend missing-field default + round-trip; frontend pin behavior ON/OFF.
+  Known accepted risk: a stale already-open client PUTs the full Settings without the field and
+  resets a saved true → refresh clients after deploy (no field-merge built for one bool).
+  upstreamable: **yes** (both — #193 is incomplete upstream) · status: **candidate** ·
+  upstream_pr: — · upstream_issue: —
 - **Terminal output-path concurrency: sync-mode race + reader deadlock** (2026-07-21;
   `fd982c3c` + `1367fcd9`) — two general upstream bugs in `src/session/mod.rs` + `src/pty.rs`,
   both verified present verbatim in `upstream/dev @ d5a819e8`:
