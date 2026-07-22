@@ -14,6 +14,9 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 
+use crate::history::HistoryState;
+use crate::monitor::MonitorState;
+use crate::notification::NotificationBroadcast;
 use crate::session::{SessionManager, SyncMsg};
 use crate::settings::SettingsState;
 use crate::workspace_mgmt::WorkspacesState;
@@ -28,6 +31,9 @@ pub async fn sync_handler(
         WorkspacesState,
         SettingsState,
     )>,
+    State(notifier): State<Arc<NotificationBroadcast>>,
+    State(history): State<HistoryState>,
+    State(monitor): State<MonitorState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
@@ -39,8 +45,10 @@ pub async fn sync_handler(
     if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.on_upgrade(move |socket| handle_sync_socket(socket, manager, workspaces, settings))
-        .into_response()
+    ws.on_upgrade(move |socket| {
+        handle_sync_socket(socket, manager, workspaces, settings, notifier, history, monitor)
+    })
+    .into_response()
 }
 
 async fn handle_sync_socket(
@@ -48,6 +56,9 @@ async fn handle_sync_socket(
     manager: Arc<SessionManager>,
     workspaces: WorkspacesState,
     settings: SettingsState,
+    notifier: Arc<NotificationBroadcast>,
+    history: HistoryState,
+    monitor: MonitorState,
 ) {
     let (ws_tx, mut ws_rx) = socket.split();
 
@@ -88,12 +99,42 @@ async fn handle_sync_socket(
     // broadcasts that happen between tab_list and registration.
     let (client_id, mut rx) = manager.add_sync_client();
 
+    // Send client_id to the client first (for echo suppression in HTTP POST emit)
+    let hello = serde_json::to_string(&SyncMsg::SyncHello { client_id: client_id.clone() })
+        .expect("serialization is infallible");
+    if ws_out_tx.send(Message::Text(hello)).is_err() {
+        return;
+    }
+
+    // Register with the notification subsystem so the client receives its initial
+    // attention-ledger snapshot and subsequent bell/notify/state_delta/mark_read_result
+    // broadcasts via this sync WS (replaces the former /ws/notify channel).
+    notifier.register_client(&client_id);
+
     // Send current tab list with active tab
     let (tabs, active_pane_id) = manager.tab_list();
     let tab_list = SyncMsg::TabList { tabs, active_pane_id };
     let msg = serde_json::to_string(&tab_list).expect("serialization is infallible");
     if ws_out_tx.send(Message::Text(msg)).is_err() {
         return;
+    }
+
+    // Send current history suggestions
+    let items = history.query(None, 20).await;
+    let suggestions_msg = SyncMsg::Suggestions { items };
+    let msg = serde_json::to_string(&suggestions_msg).expect("serialization is infallible");
+    if ws_out_tx.send(Message::Text(msg)).is_err() {
+        return;
+    }
+
+    // Send current monitor history
+    let history_data = monitor.snapshot_history_values().await;
+    if !history_data.is_empty() {
+        let monitor_msg = SyncMsg::MonitorHistory { data: history_data };
+        let msg = serde_json::to_string(&monitor_msg).expect("serialization is infallible");
+        if ws_out_tx.send(Message::Text(msg)).is_err() {
+            return;
+        }
     }
 
     // Send current workspace list with active workspace
@@ -335,6 +376,9 @@ async fn handle_sync_socket(
                                 let _ = auth.responses_tx.send(responses);
                             }
                         }
+                        SyncClientMsg::MarkRead { request } => {
+                            notifier.apply_mark_read(&client_id, &request);
+                        }
                     }
                 }
             }
@@ -351,4 +395,5 @@ async fn handle_sync_socket(
     fwd.abort();
     writer_task.abort();
     ping_task.abort();
+    notifier.unregister_client(&client_id);
 }

@@ -3,6 +3,7 @@ use super::layout::{
     layout_has_pane, remove_pane_from_layout,
 };
 use super::Session;
+use crate::attention::{MarkReadResult, Severity, Snapshot, StateDelta};
 use crate::event_bus::EventBus;
 use crate::workspace_mgmt::Workspace;
 use dashmap::DashMap;
@@ -86,6 +87,73 @@ pub enum SyncMsg {
     WorkspaceList {
         workspaces: Vec<Workspace>,
         active_workspace_id: Option<String>,
+    },
+    Event {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_pane_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plugin_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_plugin_id: Option<String>,
+        event_name: String,
+        data: serde_json::Value,
+    },
+    SyncHello {
+        client_id: String,
+    },
+    Bell {
+        v: u64,
+        pane_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        body: String,
+        notification_type: String,
+        #[serde(rename = "eventSeq")]
+        event_seq: String,
+        #[serde(rename = "occurredAt")]
+        occurred_at: u64,
+        severity: Severity,
+        #[serde(rename = "notifId", skip_serializing_if = "Option::is_none")]
+        notif_id: Option<String>,
+    },
+    Notify {
+        v: u64,
+        pane_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        body: String,
+        notification_type: String,
+        #[serde(rename = "eventSeq")]
+        event_seq: String,
+        #[serde(rename = "occurredAt")]
+        occurred_at: u64,
+        severity: Severity,
+        #[serde(rename = "notifId", skip_serializing_if = "Option::is_none")]
+        notif_id: Option<String>,
+    },
+    StateDelta {
+        #[serde(flatten)]
+        delta: StateDelta,
+    },
+    Snapshot {
+        #[serde(flatten)]
+        snapshot: Snapshot,
+    },
+    MarkReadResult {
+        #[serde(flatten)]
+        result: MarkReadResult,
+    },
+    ResyncRequired {
+        v: u64,
+    },
+    Suggestions {
+        items: Vec<crate::history::SuggestionItem>,
+    },
+    MonitorData {
+        data: serde_json::Value,
+    },
+    MonitorHistory {
+        data: Vec<serde_json::Value>,
     },
 }
 
@@ -219,6 +287,25 @@ impl SessionManager {
                 c.tx.send(json.clone()).is_ok()
             }
         });
+    }
+
+    /// Send a message to a single sync client by ID. Returns `true` if the client was found
+    /// (the send may still fail silently if the client's channel is closed, in which case the
+    /// client is reaped on the next broadcast). Used by the notification subsystem to route
+    /// `MarkReadResult` back to the origin client.
+    ///
+    /// # Panics
+    /// Panics if `SyncMsg` serialization fails (should be infallible).
+    #[allow(clippy::expect_used)]
+    pub fn broadcast_sync_to(&self, target_id: &str, msg: &SyncMsg) {
+        let json = serde_json::to_string(msg).expect("serialization is infallible");
+        let clients = self.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for client in clients.iter() {
+            if client.id == target_id {
+                let _ = client.tx.send(json.clone());
+                break;
+            }
+        }
     }
 
     pub fn add_sync_client(&self) -> (String, mpsc::UnboundedReceiver<String>) {
