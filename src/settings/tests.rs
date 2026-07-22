@@ -22,6 +22,7 @@ fn settings_empty_json_is_valid() {
     let settings: Settings = serde_json::from_str(r"{}").unwrap();
     assert_eq!(settings.settings_version, 0);
     assert!(!settings.keyboard_sound);
+    assert!(!settings.keyboard_keep_on_scroll);
     assert!(!settings.show_virtual_keyboard);
     assert!(!settings.windows_alt_as_cmd);
     assert!(settings.confirm_before_close_tab);
@@ -32,6 +33,28 @@ fn settings_empty_json_is_valid() {
         assert_eq!(settings.ip_whitelist, vec!["127.0.0.1", "::1"]);
     }
     assert_eq!(settings.upload_dir, default_upload_dir());
+}
+
+#[test]
+fn old_config_missing_keyboard_keep_on_scroll_defaults_to_false() {
+    let settings: Settings = serde_json::from_str(r#"{"keyboard_sound":true}"#)
+        .expect("old config without keyboard_keep_on_scroll should still parse");
+
+    assert!(settings.keyboard_sound);
+    assert!(!settings.keyboard_keep_on_scroll);
+}
+
+#[test]
+fn keyboard_keep_on_scroll_survives_settings_round_trip() {
+    let settings = Settings {
+        keyboard_keep_on_scroll: true,
+        ..Settings::default()
+    };
+
+    let serialized = serde_json::to_string(&settings).unwrap();
+    let restored: Settings = serde_json::from_str(&serialized).unwrap();
+
+    assert!(restored.keyboard_keep_on_scroll);
 }
 
 #[test]

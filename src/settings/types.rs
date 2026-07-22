@@ -65,6 +65,8 @@ pub struct Settings {
     #[serde(default)]
     pub keyboard_sound: bool,
     #[serde(default)]
+    pub keyboard_keep_on_scroll: bool,
+    #[serde(default)]
     pub show_virtual_keyboard: bool,
     // Legacy v4 input retained only so v5 migration can deserialize it.
     #[serde(default, skip_serializing)]
@@ -757,6 +759,7 @@ impl Default for Settings {
             upload_cap_count: default_upload_cap_count(),
             upload_file_cap_mb: 0,
             keyboard_sound: false,
+            keyboard_keep_on_scroll: false,
             show_virtual_keyboard: false,
             show_workspace_badge_on_tab: None,
             workspace_badge_mode: None,

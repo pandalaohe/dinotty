@@ -342,7 +342,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.keyboard.sound': 'Click sound on key press',
     'settings.keyboard.keepOnScroll': 'Keep keyboard open while scrolling',
     'settings.keyboard.keepOnScrollHint':
-      'Scroll back through history without dismissing the keyboard',
+      'Keyboard stays open when scrolling or tapping the content above; close it with the keyboard button.',
     'settings.keyboard.openApi': 'Open API',
     'settings.keyboard.openApiHint':
       'Allow external devices to send input to the terminal via HTTP API.',
@@ -352,6 +352,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.keyboard.openApiExample': 'example',
     'keyboard.textInput.placeholder': 'Type text, then tap send…',
     'mobileKb.actionPlaceholder': 'Type or paste commands…',
+    'mobileKb.toggleKeyboard': 'Toggle Keyboard',
     'mobileKb.insertMacFile': 'Insert Mac file',
     'mobileKb.insertPhoneFile': 'Insert phone file',
     'mobileKb.newline': 'Newline',
@@ -1030,7 +1031,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.keyboard.feedback': '按键反馈',
     'settings.keyboard.sound': '按键音效',
     'settings.keyboard.keepOnScroll': '滚动时保持键盘',
-    'settings.keyboard.keepOnScrollHint': '上翻查看历史输出时不再收起键盘',
+    'settings.keyboard.keepOnScrollHint':
+      '键盘保持展开，滚动或点击上方内容不再收起；用键盘按钮收起',
     'settings.keyboard.openApi': '开放接口',
     'settings.keyboard.openApiHint': '允许外部设备通过 HTTP API 向终端发送输入。',
     'settings.keyboard.openApiEnabled': '启用开放接口',
@@ -1039,6 +1041,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.keyboard.openApiExample': '示例',
     'keyboard.textInput.placeholder': '输入文字后点发送键提交…',
     'mobileKb.actionPlaceholder': '输入或粘贴命令…',
+    'mobileKb.toggleKeyboard': '收起/展开键盘',
     'mobileKb.insertMacFile': '插入 Mac 文件',
     'mobileKb.insertPhoneFile': '插入手机文件',
     'mobileKb.newline': '换行',

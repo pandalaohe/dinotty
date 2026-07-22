@@ -758,16 +758,12 @@ watch(
 )
 
 watch(globalSelectedPath, () => {
-  if (globalSelectedPath.value && props.visible) {
+  if (globalSelectedPath.value && props.visible && !settings.keyboard_keep_on_scroll) {
     emit('update:visible', false)
   }
 })
 
 function onWheelCollapse() {
-  if (props.visible) emit('update:visible', false)
-}
-
-function onTerminalScrollCollapse() {
   if (props.visible) emit('update:visible', false)
 }
 
@@ -781,9 +777,6 @@ onMounted(() => {
     window.visualViewport.addEventListener('scroll', onViewportChange)
     window.addEventListener('orientationchange', onOrientationChange)
   }
-
-  // Collapse keyboard on scroll (wheel for trackpad/mouse, terminal-scroll for touch)
-  document.addEventListener('terminal-scroll', onTerminalScrollCollapse)
 
   if (barRef.value) {
     resizeObserver = new ResizeObserver(() => {
@@ -811,7 +804,6 @@ onBeforeUnmount(() => {
     window.visualViewport.removeEventListener('scroll', onViewportChange)
   }
   window.removeEventListener('orientationchange', onOrientationChange)
-  document.removeEventListener('terminal-scroll', onTerminalScrollCollapse)
   resizeObserver?.disconnect()
   unsubThemeMetrics()
   unsubTextMetrics()
