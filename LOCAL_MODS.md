@@ -22,14 +22,18 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
     identity (`src-tauri/tauri.conf.json`), deploy orchestrator (`scripts/dinotty-ops.sh` +
     `scripts/deploy-live.sh`), meta (`.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`,
     `docs/task-files/*`).
-  - Feature (2, both upstream-candidate): (1) positional fallback + `activateWorkspace` sync when
-    no successor tab remains on close, ported into upstream's `useTabLifecycle.ts` — upstream's
-    `b6521103` covers the rest of the cross-workspace hop; (2) plugin-tab restore validation
-    (`invalidCachedPluginPaneIds` / `initialPluginLoad` reconciliation) ported into upstream's
-    `useSyncWebSocket.ts` — absent upstream.
+  - Feature (1, upstream-PR candidate): positional fallback + `activateWorkspace` sync when no
+    successor tab remains on close, in `useTabLifecycle.ts`. Upstream's `b6521103` covers the rest
+    of the cross-workspace hop, but its failed-hop rescue only re-searches the (now-empty) active
+    workspace, so `activePaneId` can go `null` (no tab selected) — a real gap, verified against
+    `upstream/dev`; our positional fallback closes it.
+    Plugin-tab restore validation was re-applied on 2026-07-22 then DROPPED the same day (`3e04bb14`):
+    it lived in the hot, actively-reworked `useSyncWebSocket.ts`, and upstream restores plugin tabs
+    unconditionally (no reconcile), so following upstream costs only a manually-closable ghost tab
+    after a plugin uninstall/rename while disconnected — not worth the recurring hot-file conflict.
   Everything else from the prior 78-commit layer verified already upstream/converged (action-keyboard,
   per-device supervise-reload, plugin-tab resurrect-race fix, NUX1 notification, badge mode, etc.).
-  Verified: vitest 745 + vue-tsc + cargo check/test/clippy all green; code-reviewed (1 MED fixed —
+  Verified: vitest 741 + vue-tsc + cargo check/test/clippy all green; code-reviewed (1 MED fixed —
   workspace sync on cross-workspace fallback). `main` fast-forwarded to `83f1c670`, pushed origin.
   Pre-refactor backups: branch `backup/custom-20260722` (old `custom` snapshot) +
   `backup/custom-20260721-214526` (prior baseline).
@@ -40,11 +44,13 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
       `custom` fresh from `upstream/dev` and re-applied only the fork layer rather than merging the
       78-commit layer into the moved files. Feature survival re-verified: only 2 code items remained
       unmerged — cross-workspace null-successor fallback (into `useTabLifecycle.ts`, complementing
-      upstream's `b6521103`) and plugin-tab restore validation (into `useSyncWebSocket.ts`); all other
-      prior fork code confirmed converged upstream. `main` FF to `83f1c670` + pushed. Old backups
-      pruned to `backup/custom-20260721-214526`; new pre-refactor snapshot `backup/custom-20260722`.
-      Built on branch `rebuild/custom-260722` → to become `custom`. Verified green (vitest 745 /
-      vue-tsc / cargo check+test+clippy) + code review (1 MED workspace-sync fixed).
+      upstream's `b6521103`) and plugin-tab restore validation. The plugin validation was re-applied
+      then DROPPED the same day (`3e04bb14`) to follow upstream — it sits in the hot, actively-reworked
+      `useSyncWebSocket.ts` and upstream restores plugin tabs unconditionally, so the only cost is a
+      manually-closable ghost tab. Kept: only the null-successor fallback. All other prior fork code
+      confirmed converged upstream. `main` FF to `83f1c670` + pushed. Old backups pruned to
+      `backup/custom-20260721-214526`; new pre-refactor snapshot `backup/custom-20260722`. Verified
+      green (vitest 741 / vue-tsc / cargo check+test+clippy) + code review (1 MED workspace-sync fixed).
     - `2026-07-21` (2nd) → base `f90b843b` (was `1344e553`): merge `62cacaad`. Upstream landed SIX of
       our PRs at once (#197-#202); all six conflicts resolved to upstream. Kept ours: the
       cross-workspace hop on tab close, and `handleTabClosed()` as one function. Two defects came
