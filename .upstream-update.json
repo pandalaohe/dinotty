@@ -1,5 +1,32 @@
 {
-  "deploy": {
-    "cmd": "bash scripts/deploy-live.sh"
+  "schema_version": 2,
+
+  "branches": {
+    "main": "main",
+    "custom": "custom",
+    "never_gc": ["custom", "main"],
+    "managed_backup_prefixes": ["backup/", "pre-update-"]
+  },
+
+  "verify": {
+    "steps": [
+      { "id": "web-test", "cwd": "frontend", "argv": ["npm", "run", "test"], "required": true, "timeout_s": 600, "expect": "exit0" },
+      { "id": "web-build", "cwd": "frontend", "argv": ["npm", "run", "build"], "required": true, "timeout_s": 900, "expect": "exit0" },
+      { "id": "native-check", "cwd": ".", "argv": ["cargo", "check"], "required": true, "timeout_s": 900, "expect": "exit0" }
+    ]
+  },
+
+  "gc": {
+    "enabled": true,
+    "require_verified_merged": true,
+    "require_head_oid_match": true
+  },
+
+  "deployment": {
+    "executor": "human-only",
+    "steps": [
+      { "id": "rebuild-all", "run": "dinotty rebuild all", "cwd": ".", "expected_observations": ["8999 prod rebuilt + relaunched", "8998 test rebuilt + relaunched"] },
+      { "id": "status-check", "run": "dinotty status", "cwd": ".", "expected_observations": ["both surfaces report MATCH"] }
+    ]
   }
 }

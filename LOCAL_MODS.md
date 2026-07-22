@@ -2,6 +2,19 @@
 
 Upstream: https://github.com/xichan96/dinotty (MIT)
 
+## Contribution Index (registry format version: 2 — authoritative; schema home: upstream-update `templates/local-mods-init.md.tmpl`)
+
+| mod_id | upstreamable | upstream_pr | upstream_issue | lifecycle | absorption | head_branch | exit-condition |
+|--------|--------------|-------------|----------------|-----------|------------|-------------|----------------|
+| `1dff1a86-null-successor-fallback` | yes | #204 | — | merged-upstream | absorbed | fix/tab-close-null-successor | met `2026-07-22` — merged upstream `f958848c`, blob parity |
+| `mocha-theme` | no | — | — | active | fork-only | — | never — fork identity (excluded from #148/#149 by design) |
+| `signing-identity` | no | — | — | active | fork-only | — | never — machine-local config |
+| `deploy-scripts` | no | — | — | active | fork-only | — | never — fork ops (dinotty-ops.sh / deploy-live.sh / dinotty launcher) |
+| `fork-meta` | no | — | — | active | fork-only | — | never — fork bookkeeping (.gitignore, .upstream-update.json, LOCAL_MODS.md, docs/task-files/) |
+
+- Index wins conflicts with narrative/tables below (those are provenance). Volatile API state (PR state / checked_at) lives in run receipts, not here.
+- Migrated v1→v2 `2026-07-22` by the upstream-update run; mod_id minted from commit short hash (feature rows) or stable slug (meta rows sharing re-apply commits `4d3367c5`/`4e4715e0`); never renumbered.
+
 ## Live-alignment snapshot (source of truth — consult here; do not re-derive from git each session)
 
 > **Reconciled against git `2026-07-22`.** Upstream shipped a large composable-splitting refactor
@@ -15,8 +28,8 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 > `backup/custom-20260722`. Detailed "Ours-only" / "Pending recovery" / PR-table entries BELOW
 > predate this re-align and describe the pre-refactor layout; kept for provenance. Trust THIS
 > snapshot + the newest re-align log entry for current state.
-- **Aligned to `upstream/dev` @ `83f1c670` (2026-07-22, washboard rebuild; `custom` = a fresh
-  lineage cut from `upstream/dev` + fork layer).** Fork-layer diff vs `upstream/dev` = fork files
+- **Aligned to `upstream/dev` @ `f958848c` (2026-07-22 2nd align, clean merge via the upstream-update
+  full-lifecycle run; same-day washboard base was `83f1c670`).** Fork-layer diff vs `upstream/dev` = fork files
   only (no resurrected relocated `src/*.rs`). Fork layer now:
   - Config/meta: Mocha theme (`themes.ts` / `ThemeManager.vue` / `useI18n.ts`), macOS signing
     identity (`src-tauri/tauri.conf.json`), deploy orchestrator (`scripts/dinotty-ops.sh` +
@@ -28,9 +41,9 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
     close, in `useTabLifecycle.ts`. Upstream's `b6521103` covers the rest of the cross-workspace
     hop, but its failed-hop rescue only re-searches the (now-empty) active workspace, so
     `activePaneId` can go `null` (no tab selected) — a real gap, verified against `upstream/dev`;
-    our positional fallback closes it. **PR #204 OPEN** (`2026-07-22`, branch
-    `fix/tab-close-null-successor` off clean `upstream/dev`; 2 files, +54/−1; leak gate CLEAN).
-    Exit condition: merged upstream → drop the fork-side delta. Do not re-raise as undecided work.
+    our positional fallback closes it. **PR #204 MERGED** (`f958848c`, `2026-07-22T08:05Z`; branch
+    `fix/tab-close-null-successor`, GC candidate this run; 2 files, +54/−1). Blob parity verified —
+    fork delta now byte-identical with upstream; absorbed (exit condition met, reconciled `2026-07-22`).
     Plugin-tab restore validation — **DECIDED 2026-07-22, follow upstream, do not re-raise as unmerged
     work.** Re-applied on 2026-07-22 then DROPPED the same day (`3e04bb14`): it lived in the hot,
     actively-reworked `useSyncWebSocket.ts`, and upstream restores plugin tabs unconditionally (no
@@ -45,6 +58,14 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   `backup/custom-20260721-214526` (prior baseline).
 - Update trigger: on any upstream re-align OR when a PR flips open<->merged — refresh SHA, date, table.
 - Re-align log (newest first):
+    - `2026-07-22` (**2nd — first full-lifecycle upstream-update run**) → base `f958848c` (was
+      `83f1c670`): clean merge, zero conflicts (#204 files blob-parity; /ws/sync refactor family has
+      zero overlap with the fork layer). GitHub reconcile (all verified): #204 OPEN→MERGED (absorbed);
+      #203 OPEN→CLOSED unmerged (superseded by upstream `b6521103` + our #204 — no content lost);
+      #190/#191/#194/#180 stale "PR open" prose reconciled to merged. Ledger migrated v1→v2
+      (Contribution Index added, top); config migrated to v2 (declared verify.steps + human-only
+      deployment). `fix/tab-close-null-successor` = GC candidate (conditions 1-5 verified; outcome in
+      receipt). Triage receipt: `docs/task-files/2607/260722_dinotty_upstream-triage.md`.
     - `2026-07-22` (**washboard onto refactored dev**) → base `83f1c670` (was `f90b843b`): upstream
       landed a large composable-splitting refactor (13 commits, 112 files, +18280/−15967). Re-cut
       `custom` fresh from `upstream/dev` and re-applied only the fork layer rather than merging the
@@ -198,7 +219,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | #200 | keyboard: make reload a bindable app action (default Cmd/Ctrl+R) | merged (`7d6d0df3`, `2026-07-21`; branch `feat/reload-app-keybinding`; 5 files, +16/−4). Smaller than expected: upstream ALREADY has the `reloadApp()` function (supervise flow calls it) and merely never exposed it as an action, so App.vue needed one line. Motivation is the Tauri shell, which has no reload affordance at all |
 | #202 | workspace: give the default workspace a real identity (name/abbr/colour/badge over a `__default__` sentinel) | **landed as `e1f9c589`** (`2026-07-21`) — the maintainer rebased and committed it himself, body says `Closes #202`; the #195/#196 pattern again, so the PR shows CLOSED rather than merged. Content IS upstream. (branch `feat/default-workspace-identity`; 13 files, +287/−83). Deliberately does NOT relocate upstream's `default_workspace_root` control out of `GeneralTab.vue` the way our fork does — that would move a maintainer's existing control as a side effect of an unrelated feature. Backward compat pinned by a test parsing a settings blob with only `default_workspace_root` |
 | #201 | vt: track and replay DEC private modes (mouse protocol/encoding, DECCKM, DECNKM, bracketed paste) | merged (`132388d5`, `2026-07-21`; branch `feat/vt-private-mode-replay`; 1 file, +322/−9). Replay call needed in TWO places — `snapshot()` AND `snapshot_for_replay()`; the reconnect path would otherwise stay broken while a fresh snapshot worked. 1004 tracked-not-replayed; 2026/1049-family/6/7/45/1005/1015/1048 excluded with per-mode reasons stated inline in the PR (NOT by reference to our design doc, which lives outside the fork repo and is invisible to upstream) |
-| #203 | tabs: follow the successor tab across workspaces on close | OPEN (`2026-07-21`, branch `fix/tab-close-workspace-hop` cut from clean `upstream/dev` @ `f90b843b`; 4 files, +165/−9). The half deliberately cut from #199, unblocked once #199 merged. Upstream's successor fallback can activate a tab outside the workspace filter, so the tab bar does not contain the active tab. Two discriminating tests, one per close path — verified red by reverting both source files to `dev` (exactly those two fail, 738/740) and green with the fix (740/740). PR body discloses the `handleMsg` async change to the maintainer. NOT manually verified on a running build — the evidence is the code-path analysis plus the tests) |
+| #203 | tabs: follow the successor tab across workspaces on close | **CLOSED unmerged** (verified `2026-07-22`) — superseded: upstream landed its own cross-workspace successor (`b6521103`, ~95% convergent) and our #204 closed the remaining failed-hop gap; no content lost. (was OPEN `2026-07-21`, branch `fix/tab-close-workspace-hop` cut from clean `upstream/dev` @ `f90b843b`; 4 files, +165/−9). The half deliberately cut from #199, unblocked once #199 merged. Upstream's successor fallback can activate a tab outside the workspace filter, so the tab bar does not contain the active tab. Two discriminating tests, one per close path — verified red by reverting both source files to `dev` (exactly those two fail, 738/740) and green with the fix (740/740). PR body discloses the `handleMsg` async change to the maintainer. NOT manually verified on a running build — the evidence is the code-path analysis plus the tests) |
 
 ### Ours-only — NOT in upstream (no PR, or PR not yet accepted)
 - **Terminal output-path concurrency: sync-mode race + reader deadlock** (2026-07-21;
@@ -227,7 +248,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   fix has NO test — a lock cycle cannot be reproduced deterministically, so its argument is a full
   enumeration showing no `screen -> clients` edge survives anywhere.
   upstreamable: **yes** (both — general upstream bugs, verified verbatim in `upstream/dev`) ·
-  status: **PR open** · upstream_pr: **#194** (`2026-07-21`, branch `fix/sync-output-race` cut from
+  status: **merged** (reconciled `2026-07-22`; verified MERGED `2026-07-21`, mergeCommit `f485d8d2`) · upstream_pr: **#194** (`2026-07-21`, branch `fix/sync-output-race` cut from
   clean `upstream/dev @ d5a819e8`; 3 files, +215/−97; pre-PR leak gate CLEAN, fmt clean,
   365 tests pass) · upstream_issue: —
   **Deliberately EXCLUDED from that PR:** upstream's `flush_sync_buffer` chunks with
@@ -315,7 +336,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   Known residual: mobile finger-drag still converts to arrow keys inside alt-screen (intentional — it
   preserves touch scrolling in full-screen programs); xterm.js's old-style X10 mouse mode is already
   handled correctly.
-  upstreamable: **yes** · status: **PR open** · upstream_pr: **#191** (`2026-07-21`) ·
+  upstreamable: **yes** · status: **merged** (reconciled `2026-07-22`; verified MERGED `2026-07-21`, mergeCommit `8780d3a0`) · upstream_pr: **#191** (`2026-07-21`) ·
   upstream_issue: —
   Corrected `2026-07-21` (was `maybe` / "undecided"): the old note conflated two different upstreams.
   Filing against xterm.js IS undecided and stays so (their #5194 is open since 2024-10-18 with no PR),
@@ -329,7 +350,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   settings row), plus the two `keybinding.superviseTabsReload*` i18n keys. `useSuperviseTabs.ts`
   `supervise()` changed void → `Promise<boolean>` so no-target / rejected activation / 10s watchdog
   timeout do NOT reload.
-  upstreamable: **yes** · status: **PR open** · upstream_pr: **#190** (`2026-07-21`, bundled with the
+  upstreamable: **yes** · status: **merged** (reconciled `2026-07-22`; verified MERGED `2026-07-21`, mergeCommit `ff08584f`) · upstream_pr: **#190** (`2026-07-21`, bundled with the
   per-device override `45cbd5ed`) · upstream_issue: —
   **Corrected `2026-07-21` (was `no` / "fork-only").** Two compounding errors, both worth not
   repeating:
@@ -419,7 +440,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   `both`, replacing upstream's `show_workspace_badge_on_tab` boolean. Re-lands our PR #172 monogram
   (workspace name abbreviated to <=3 chars, CJK-aware, colored outline) as the `icon`/`both` states after
   upstream reversed it in `dc7e0b6d`.
-  upstreamable: **yes** · status: **candidate** · upstream_pr: **#180 (OPEN)** · upstream_issue: —
+  upstreamable: **yes** · status: **merged** (as #180; reconciled `2026-07-22`) · upstream_pr: **#180 (MERGED `2026-07-19`)** · upstream_issue: —
   Storage: server settings (NOT localStorage — the earlier per-device toggle was replaced precisely
   because a device-local flag cannot be upstreamed). Schema v4 → v5, `migrate_settings` maps
   `Some(true)`→`tab`, `Some(false)`→`off`; v3-and-earlier stays `None` (there the boolean was a global
@@ -708,7 +729,7 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   was being upstreamed and needed cross-device-consistent semantics, whereas supervise-reload is a
   local rendering-quirk preference, consistent with LOCAL_MODS' existing principle that display-type
   toggles default to per-device.
-  upstreamable: **yes** · status: **PR open** · upstream_pr: **#190** (`2026-07-21`) ·
+  upstreamable: **yes** · status: **merged** (reconciled `2026-07-22`; bundled into #190, verified MERGED `2026-07-21`, mergeCommit `ff08584f`) · upstream_pr: **#190** (`2026-07-21`) ·
   upstream_issue: —
   **Re-corrected `2026-07-21`.** The 2026-07-21 entry below was itself wrong and is kept only as a
   record of the reasoning error:
