@@ -108,8 +108,7 @@ mod tests {
     async fn post_input_delivers_through_session_queue() {
         let manager = Arc::new(SessionManager::new());
         let (input_tx, mut input_rx) = mpsc::unbounded_channel();
-        assert!(manager
-            .insert_session("api-pane", stub_session(InputState::Running(input_tx))));
+        assert!(manager.insert_session("api-pane", stub_session(InputState::Running(input_tx))));
 
         let response = post_input(
             State((manager, enabled_settings())),
