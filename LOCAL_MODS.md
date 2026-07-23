@@ -619,7 +619,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   `3e3fa5ff` S2). upstreamable: S1 pty env-strip YES, S2 configurable reap-timeout YES, S3 deploy-live.sh
   scrub NO (fork-local launcher, excluded from PR). Custom-branch base commits `e6eec8d4`/`41b4c071`/`1ad3240e`;
   dual cross-audit remediation `8561f533` (plugin spawn_ws+process_start coverage) / `b5686962`
-  (parse_reap_secs + tests) / `3283d8fb` (deployment doc). Detail below.
+  (timeout parser + tests) / `3283d8fb` (deployment doc). Detail below.
 
 ## Branch model
 - `custom` -> the branch we BUILD, RUN, and base work on; LOCAL-ONLY (never pushed to origin, so
@@ -720,15 +720,15 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
     `CLAUDE_CONFIG_DIR`) + `env_remove` before spawn; 2 unit tests. Removing an absent key is a no-op
     (fail-safe). Commit `e6eec8d4`; cross-audit then found the strip was missing from the two sibling
     plugin spawn sites (`plugin_spawn_ws`, `plugin_process_start`) — extended to all 3 in `8561f533`.
-  - **S2 (upstreamable)** `src/session/mod.rs`: the detached-session reaper hard-coded a 5-min kill, which
-    reaped live sessions that briefly lost their WebSocket (sleep / network drop). Now
-    `DINOTTY_DETACH_REAP_SECS` (default `5400` = 90 min), parsed once before the poll loop. Dual-dig
+  - **S2 (upstreamable, subsequently replaced)** `src/session/mod.rs`: the detached-session reaper
+    hard-coded a 5-min kill, which reaped live sessions that briefly lost their WebSocket (sleep /
+    network drop). PR #154 replaced that with a configurable 90-min default. Dual-dig
     confirmed the 5-min reaper — NOT the env leak — is the tab-kill cause (dinotty has zero code reading
     those env vars to kill anything; inner-`claude` exit leaves the shell alive so it does not close the
     tab). Commit `41b4c071`. **terminal_exit_regression upstream-issue decision (2026-07-18): DROPPED —
     the 90-min-default reap fix is already in base via #154, so there is nothing pending upstream and no
-    separate GitHub issue is warranted (reaping a session detached ≥90 min is acceptable default behavior,
-    further tunable via `DINOTTY_DETACH_REAP_SECS`). Exit-condition met; off-board.**
+    separate GitHub issue was warranted at that time. The timeout mechanism was later superseded by
+    reference-based liveness. Exit-condition met; off-board.**
   - **S3 (fork-local)** `scripts/deploy-live.sh`: relaunch unsets the 3 vars via `/usr/bin/env -u` —
     source-side companion to the pty backstop. Commit `1ad3240e`.
   - Dual cross-audit (Claude+Codex) on the committed diff: Verdict NEEDS-FIXES → all findings fixed
