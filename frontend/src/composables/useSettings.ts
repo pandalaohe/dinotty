@@ -52,6 +52,7 @@ export interface SettingsData {
   keyboard_keep_on_scroll: boolean
   workspace_badge_mode: WorkspaceBadgeMode | null
   confirm_before_close_tab: boolean
+  paste_auto_enter: boolean
   reload_after_supervise_tabs: boolean
   space_confirms_dialogs: boolean
   windowsAltAsCmd: boolean
@@ -391,6 +392,7 @@ export const settings = reactive<SettingsData>({
   keyboard_keep_on_scroll: false,
   workspace_badge_mode: null,
   confirm_before_close_tab: true,
+  paste_auto_enter: true,
   reload_after_supervise_tabs: false,
   space_confirms_dialogs: false,
   windowsAltAsCmd: isWindowsClient,

@@ -186,6 +186,13 @@
     </div>
 
     <CollapsibleSection :title="t('settings.actionKeyboard')" level="group" default-open>
+      <div class="settings-row">
+        <label>{{ t('settings.appendEnter') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="settings.paste_auto_enter" @change="saveSettings()" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
       <p class="settings-hint">{{ t('settings.akHint') }}</p>
       <div class="ak-wysiwyg">
         <div class="ak-zone-head">

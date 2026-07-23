@@ -224,6 +224,8 @@
       :visible="kbVisible"
       :pane-id="activePaneId ?? ''"
       :get-send-fn="getSendFn"
+      :paste-armed="pasteTerminalArmed"
+      :paste-confirm-lines="pasteTerminalLines"
       @update:visible="(v: boolean) => (kbVisible = v)"
       @bookmarks="bookmarksRef?.open()"
       @app-action="dispatchAppAction"
@@ -329,7 +331,7 @@ import { nextRevealNavGen, currentRevealNavGen } from './utils/navGen'
 import { pickSuccessorTab } from './utils/tabSuccessor'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
-import { useToast } from 'vue-toastification'
+import { POSITION, useToast } from 'vue-toastification'
 import {
   useNotification,
   pushNotification,
@@ -370,7 +372,8 @@ import { useSettingsStore } from './stores/settingsStore'
 import { shellEscapePath } from './utils/shell'
 import { buildRunCodeCommand } from './utils/runCodeCommand'
 import { resolveAbbr, resolveColor } from './utils/workspaceIcon'
-import { APP_ACTION_IDS } from './utils/appActionCatalog'
+import { APP_ACTION_IDS, DISPATCH_ONLY_ACTIONS } from './utils/appActionCatalog'
+import { createHostClipboardPasteController } from './utils/hostClipboardPaste'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
@@ -408,6 +411,35 @@ const notif = useNotification()
 const presentationSettings = useNotificationPresentation().settings
 const { supervise } = useSuperviseTabs()
 const toast = useToast()
+const pasteTerminalArmed = ref(false)
+const pasteTerminalLines = ref(0)
+const hostClipboardPaste = createHostClipboardPasteController({
+  fetchText: async () => {
+    const response = await authFetch(apiUrl('/api/clipboard'))
+    if (!response.ok) throw new Error('clipboard request failed')
+    const body = (await response.json()) as { text?: unknown }
+    if (typeof body.text !== 'string') throw new Error('invalid clipboard response')
+    return body.text
+  },
+  paste: (text) => {
+    if (!activePaneId.value) return
+    const tab = tabs.value.find((candidate) => candidate.paneId === activePaneId.value)
+    if (!tab || tab.type !== 'terminal') return
+    termRefs[tab.activePaneId]?.pasteFromClipboard(text)
+  },
+  clipboardEmpty: () =>
+    toast.info(t('mobileKb.clipboardEmpty'), { position: POSITION.BOTTOM_CENTER }),
+  pasteFailed: () =>
+    toast.error(t('mobileKb.pasteFailed'), { position: POSITION.BOTTOM_CENTER }),
+  confirmMultiline: (lines) =>
+    toast.info(t('mobileKb.confirmMultiline', { n: lines }), {
+      position: POSITION.BOTTOM_CENTER,
+    }),
+  armedChanged: (armed, lines) => {
+    pasteTerminalArmed.value = armed
+    pasteTerminalLines.value = lines
+  },
+})
 const cursorPicker = useCursorPicker({
   tabs,
   activePaneId,
@@ -1281,6 +1313,7 @@ const keyActions: Record<string, () => void> = {
     if (!tab || tab.type !== 'terminal') return
     termRefs[tab.activePaneId]?.toggleSearch()
   },
+  pasteTerminal: () => void hostClipboardPaste.trigger(),
   missionControl: () => openOverview(),
   superviseTabs: () =>
     void supervise((id) => activateTab(id, { defer: true }))
@@ -1297,7 +1330,7 @@ const keyActions: Record<string, () => void> = {
 }
 
 function dispatchAppAction(id: string) {
-  if (!APP_ACTION_IDS.has(id)) return
+  if (!APP_ACTION_IDS.has(id) && !DISPATCH_ONLY_ACTIONS.has(id)) return
   if (id === 'closeTab') lastTabCloseShortcutAt = Date.now()
   keyActions[id]?.()
 }
@@ -1516,6 +1549,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  hostClipboardPaste.dispose()
   stopForegroundGainSubscription()
   pluginNotifyBridge.dispose()
   disposeNotificationPresentationScheduler()

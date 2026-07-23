@@ -151,6 +151,30 @@
       <span>{{ phoneUploadProgressLabel() }}</span>
     </div>
 
+    <div class="mkb-terminal-shortcuts" v-show="!textInputFocused">
+      <button
+        type="button"
+        class="mkb-tool-btn mkb-terminal-shortcut"
+        :class="{ 'is-armed': pasteArmed }"
+        :title="pasteButtonLabel"
+        :aria-label="pasteButtonLabel"
+        data-testid="terminal-paste-key"
+        @pointerdown.prevent="onAppAction('pasteTerminal')"
+      >
+        <ClipboardPaste :size="18" />
+      </button>
+      <button
+        type="button"
+        class="mkb-tool-btn mkb-terminal-shortcut"
+        :title="t('mobileKb.findTerminal')"
+        :aria-label="t('mobileKb.findTerminal')"
+        data-testid="terminal-find-key"
+        @pointerdown.prevent="onAppAction('searchTerminal')"
+      >
+        <Search :size="18" />
+      </button>
+    </div>
+
     <!-- Swipeable panels container -->
     <div ref="swipeContainerRef" class="mkb-swipe-container" v-show="!textInputFocused">
       <div class="mkb-swipe-track" :style="swipeTrackStyle">
@@ -324,6 +348,7 @@ import {
   LoaderCircle,
   CornerDownLeft,
   ClipboardPaste,
+  Search,
   Trash2,
 } from 'lucide-vue-next'
 import { useSelectedPath } from '../../composables/useFileNavigation'
@@ -336,11 +361,16 @@ import { useTextareaMetrics } from '../../composables/useTextareaMetrics'
 import { useSwipePanel } from '../../composables/useSwipePanel'
 import { useKeyboardLayout } from '../../composables/useKeyboardLayout'
 
-const props = defineProps<{
-  visible: boolean
-  paneId: string
-  getSendFn: () => ((data: string) => void) | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    visible: boolean
+    paneId: string
+    getSendFn: () => ((data: string) => void) | null
+    pasteArmed?: boolean
+    pasteConfirmLines?: number
+  }>(),
+  { pasteArmed: false, pasteConfirmLines: 0 }
+)
 
 const emit = defineEmits<{
   'update:visible': [val: boolean]
@@ -371,6 +401,11 @@ const textInput = ref('')
 const textInputFocused = ref(false)
 const kbMode = ref<'default' | 'action'>('action')
 const inputBuffer = ref('')
+const pasteButtonLabel = computed(() =>
+  props.pasteArmed
+    ? t('mobileKb.confirmMultiline', { n: props.pasteConfirmLines })
+    : t('mobileKb.pasteTerminal')
+)
 let blurTimer: ReturnType<typeof setTimeout> | null = null
 
 const {
@@ -813,6 +848,24 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.mkb-terminal-shortcuts {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+.mkb-terminal-shortcut {
+  width: 42px;
+  min-width: 42px;
+}
+
+.mkb-terminal-shortcut.is-armed {
+  color: var(--accent, #4da3ff);
+  border-color: var(--accent, #4da3ff);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #4da3ff) 45%, transparent);
+}
+
 .mkb-toolbar .mkb-tool-btn {
   flex: 0 0 auto;
   width: auto;

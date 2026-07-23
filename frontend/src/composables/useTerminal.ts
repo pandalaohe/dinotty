@@ -678,7 +678,15 @@ export class TerminalInstance {
   }
 
   pasteText(text: string) {
-    this.sendData(text)
+    if (this.xterm) {
+      this.xterm.paste(text)
+    } else {
+      this._emitInput(text)
+    }
+  }
+
+  sendInput(data: string) {
+    this._emitInput(data)
   }
 
   destroy() {

@@ -77,6 +77,8 @@ pub struct Settings {
     pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
     pub confirm_before_close_tab: bool,
+    #[serde(default = "default_true")]
+    pub paste_auto_enter: bool,
     #[serde(default)]
     pub reload_after_supervise_tabs: bool,
     #[serde(default)]
@@ -765,6 +767,7 @@ impl Default for Settings {
             workspace_badge_mode: None,
             windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
+            paste_auto_enter: true,
             reload_after_supervise_tabs: false,
             space_confirms_dialogs: false,
             locale: default_locale(),

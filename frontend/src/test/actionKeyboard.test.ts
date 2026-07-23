@@ -16,7 +16,12 @@ import {
   type ActionKeyboardConfig,
 } from '../composables/useSettings'
 import { actionKeyToKeyDef } from '../utils/actionKeyDef'
-import { APP_ACTIONS, getAppAction } from '../utils/appActionCatalog'
+import {
+  APP_ACTIONS,
+  DISPATCH_ONLY_ACTIONS,
+  getAppAction,
+  isDispatchableAppAction,
+} from '../utils/appActionCatalog'
 import { akDropGripThreshold, akResolveDropIndex } from '../components/settings/KeyboardTab.vue'
 
 function normalize(cfg: ActionKeyboardConfig): ActionKeyboardConfig {
@@ -54,6 +59,15 @@ describe('app action catalog', () => {
     expect(getAppAction('superviseTabs')?.icon).toBe(Bell)
     expect(getAppAction('sshConnect')?.icon).toBe(Globe)
     expect(getAppAction('equalizePanes')?.icon).toBe(Columns3)
+  })
+
+  it('widens dispatch for pasteTerminal without exposing it to action-key selection', () => {
+    expect(DISPATCH_ONLY_ACTIONS).toEqual(new Set(['pasteTerminal']))
+    expect(isDispatchableAppAction('pasteTerminal')).toBe(true)
+    expect(isDispatchableAppAction('searchTerminal')).toBe(true)
+    expect(isDispatchableAppAction('unknown-action')).toBe(false)
+    expect(APP_ACTIONS.some(({ id }) => id === 'pasteTerminal')).toBe(false)
+    expect(getAppAction('pasteTerminal')).toBeUndefined()
   })
 })
 
