@@ -228,6 +228,7 @@ async fn handle_socket(
         }
 
         fwd.abort();
+        writer_task.abort();
         ping_task.abort();
         session.remove_client(client_id);
 
@@ -353,6 +354,7 @@ async fn handle_socket(
     }
 
     fwd.abort();
+    writer_task.abort();
     ping_task.abort();
     session.remove_client(client_id);
 

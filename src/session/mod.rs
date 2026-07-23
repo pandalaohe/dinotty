@@ -18,6 +18,7 @@ pub(crate) use cwd::{find_subslice, parse_title_cwd, sniff_cwd_from_title_osc, O
 
 use crate::vt_screen::VirtualScreen;
 use std::{
+    collections::VecDeque,
     io::Write,
     path::PathBuf,
     sync::{
@@ -118,26 +119,28 @@ impl std::error::Error for InputError {}
 
 #[derive(Default)]
 struct InputFailureWindow {
-    count: u8,
-    started_at: Option<tokio::time::Instant>,
+    failures: VecDeque<tokio::time::Instant>,
 }
 
 impl InputFailureWindow {
     fn record_failure(&mut self, now: tokio::time::Instant) -> u8 {
-        if self.started_at.is_none_or(|started_at| {
-            now.saturating_duration_since(started_at) > std::time::Duration::from_secs(10)
-        }) {
-            self.count = 1;
-            self.started_at = Some(now);
-        } else {
-            self.count = self.count.saturating_add(1);
+        const WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+        self.failures.push_back(now);
+        while self
+            .failures
+            .front()
+            .is_some_and(|failure| now.saturating_duration_since(*failure) > WINDOW)
+        {
+            self.failures.pop_front();
         }
-        self.count
+        while self.failures.len() > 3 {
+            self.failures.pop_front();
+        }
+        self.failures.len() as u8
     }
 
     fn reset(&mut self) {
-        self.count = 0;
-        self.started_at = None;
+        self.failures.clear();
     }
 }
 

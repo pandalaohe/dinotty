@@ -152,6 +152,27 @@ impl Write for ScriptedWriter {
     }
 }
 
+struct HeldWriter {
+    started: mpsc::UnboundedSender<Vec<u8>>,
+    release: std::sync::mpsc::Receiver<()>,
+    completed: mpsc::UnboundedSender<Vec<u8>>,
+}
+
+impl Write for HeldWriter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let _ = self.started.send(data.to_vec());
+        self.release
+            .recv()
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "write release dropped"))?;
+        let _ = self.completed.send(data.to_vec());
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 fn scripted_local_session(
     failures: impl IntoIterator<Item = bool>,
 ) -> (Arc<Session>, mpsc::UnboundedReceiver<Vec<u8>>) {
@@ -294,6 +315,34 @@ async fn close_race_is_atomic_idempotent_and_bounded() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_drains_accepted_input_once_and_rejects_later_enqueues() {
+    let manager = Arc::new(SessionManager::new());
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (completed_tx, mut completed_rx) = mpsc::unbounded_channel();
+    let session = local_session_with_writer(Box::new(HeldWriter {
+        started: started_tx,
+        release: release_rx,
+        completed: completed_tx,
+    }));
+    start_and_publish_dispatcher(&session, "close-drain", &manager);
+
+    session.enqueue_input("accepted-before-close".to_string()).unwrap();
+    assert_eq!(started_rx.recv().await.unwrap(), b"accepted-before-close");
+    session.close_input();
+    assert_eq!(session.enqueue_input("rejected-after-close".to_string()), Err(InputError::Closed));
+
+    release_tx.send(()).unwrap();
+    assert_eq!(completed_rx.recv().await.unwrap(), b"accepted-before-close");
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), started_rx.recv())
+            .await
+            .is_err(),
+        "accepted bytes must be drained exactly once without retry"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn three_local_eio_batches_close_once_without_retrying_bytes() {
     let manager = Arc::new(SessionManager::new());
     let (session, mut attempts) = scripted_local_session([true, true, true]);
@@ -354,6 +403,16 @@ fn local_failure_window_restarts_after_ten_seconds_and_success_resets() {
     window.reset();
     assert_eq!(window.record_failure(started + std::time::Duration::from_secs(24)), 1);
     assert_eq!(window.record_failure(started + std::time::Duration::from_secs(25)), 2);
+}
+
+#[test]
+fn local_failure_window_counts_failures_straddling_fixed_window_boundary() {
+    let started = tokio::time::Instant::now();
+    let mut window = InputFailureWindow::default();
+    assert_eq!(window.record_failure(started), 1);
+    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(9)), 2);
+    assert_eq!(window.record_failure(started + std::time::Duration::from_millis(10_500)), 2);
+    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(11)), 3);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
