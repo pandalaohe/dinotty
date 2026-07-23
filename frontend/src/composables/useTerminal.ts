@@ -397,6 +397,33 @@ export class TerminalInstance {
         prevCleanup?.()
       }
     }
+    // FIX: intercept macOS input method text replacement (e.g. Raycast snippets).
+    // xterm.js accumulates typed chars in the textarea. When a snippet expands,
+    // the OS replaces the trigger text via insertText:replacementRange:. We track
+    // the textarea value via `input` events, then on `beforeinput` send backspaces
+    // for the old value before xterm.js forwards the new text to the PTY.
+    if (textarea) {
+      let _trackedTextareaValue = ''
+      textarea.addEventListener('input', ((e: Event) => {
+        const ie = e as InputEvent
+        if (ie.isComposing) return
+        _trackedTextareaValue = textarea.value
+      }) as EventListener)
+      textarea.addEventListener('beforeinput', ((e: Event) => {
+        const ie = e as InputEvent
+        if (this._composing) return
+        // Only intercept insertReplacementText (macOS text replacement);
+        // insertText is normal typing and must not send backspaces.
+        if (ie.inputType !== 'insertReplacementText') return
+        const ranges = typeof ie.getTargetRanges === 'function' ? ie.getTargetRanges() : []
+        const rangeLen = ranges.length > 0 ? ((ranges[0] as StaticRange).endOffset - (ranges[0] as StaticRange).startOffset) : 0
+        const deleteLen = Math.max(rangeLen, _trackedTextareaValue.length)
+        if (deleteLen > 0) {
+          this.sendData('\x7f'.repeat(deleteLen))
+          _trackedTextareaValue = ''
+        }
+      }) as EventListener)
+    }
     if (textarea && isTauri()) {
       const onImeInput = (e: InputEvent) => {
         if (e.inputType !== 'insertText') return

@@ -181,6 +181,8 @@ fn normalize_windows_path_for_compare(path: &Path) -> String {
 #[cfg(test)]
 mod key_path_tests {
     use super::is_allowed_key_path;
+    #[cfg(windows)]
+    use super::validate_key_path;
     use std::path::Path;
 
     #[cfg(windows)]
@@ -312,7 +314,7 @@ pub async fn create_ssh_session(
     manager: &Arc<SessionManager>,
     pane_id: &str,
     params: SshSessionParams,
-    tauri_on_exit: Option<Arc<dyn Fn(String, Option<i32>) + Send + Sync>>,
+    tauri_on_exit: Option<crate::session::TauriOnExit>,
 ) -> Result<(Arc<Session>, String), String> {
     let reservation = manager.reserve_session(pane_id)?;
     let timeouts = SshTimeouts::default();

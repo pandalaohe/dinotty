@@ -1,3 +1,4 @@
+use super::types::KeyboardGuardMode;
 use super::*;
 
 #[test]
@@ -22,7 +23,6 @@ fn settings_empty_json_is_valid() {
     let settings: Settings = serde_json::from_str(r"{}").unwrap();
     assert_eq!(settings.settings_version, 0);
     assert!(!settings.keyboard_sound);
-    assert!(!settings.keyboard_keep_on_scroll);
     assert_eq!(settings.quick_send_threshold, 63);
     assert!(!settings.show_virtual_keyboard);
     assert!(!settings.windows_alt_as_cmd);
@@ -34,6 +34,88 @@ fn settings_empty_json_is_valid() {
         assert_eq!(settings.ip_whitelist, vec!["127.0.0.1", "::1"]);
     }
     assert_eq!(settings.upload_dir, default_upload_dir());
+}
+
+#[test]
+fn keyboard_guard_mode_round_trips_all_values_without_serializing_legacy_key() {
+    for (mode, serialized_name) in [
+        (KeyboardGuardMode::Off, "off"),
+        (KeyboardGuardMode::CollapseOnly, "collapse_only"),
+        (KeyboardGuardMode::OpenOnly, "open_only"),
+        (KeyboardGuardMode::Both, "both"),
+    ] {
+        let settings = Settings { keyboard_guard_mode: mode, ..Settings::default() };
+
+        let serialized = serde_json::to_string(&settings).unwrap();
+        let restored: Settings = serde_json::from_str(&serialized).unwrap();
+
+        assert!(serialized.contains(&format!(r#""keyboard_guard_mode":"{serialized_name}""#)));
+        assert!(!serialized.contains("keyboard_keep_on_scroll"));
+        assert_eq!(restored.keyboard_guard_mode, mode);
+    }
+}
+
+#[test]
+fn v7_migrates_all_legacy_keyboard_guard_values_idempotently_and_stably() {
+    for (legacy_json, expected) in [
+        (
+            r#"{"settings_version":6,"keyboard_keep_on_scroll":true}"#,
+            KeyboardGuardMode::CollapseOnly,
+        ),
+        (r#"{"settings_version":6,"keyboard_keep_on_scroll":false}"#, KeyboardGuardMode::Off),
+        (r#"{"settings_version":6}"#, KeyboardGuardMode::Off),
+    ] {
+        let mut settings: Settings = serde_json::from_str(legacy_json).unwrap();
+
+        assert!(migrate_settings(&mut settings));
+        assert_eq!(settings.settings_version, 7);
+        assert_eq!(settings.keyboard_guard_mode, expected);
+        assert!(!migrate_settings(&mut settings));
+
+        let first_save = serde_json::to_string(&settings).unwrap();
+        assert!(!first_save.contains("keyboard_keep_on_scroll"));
+        let mut loaded: Settings = serde_json::from_str(&first_save).unwrap();
+        assert!(!migrate_settings(&mut loaded));
+        let second_save = serde_json::to_string(&loaded).unwrap();
+
+        assert_eq!(second_save.as_bytes(), first_save.as_bytes());
+    }
+}
+
+#[test]
+fn keyboard_guard_mode_deserialization_tolerates_unknown_and_wrong_typed_values() {
+    for invalid in [
+        serde_json::json!("banana"),
+        serde_json::json!(42),
+        serde_json::Value::Null,
+        serde_json::json!({}),
+        serde_json::json!([]),
+    ] {
+        let json = serde_json::json!({"keyboard_guard_mode": invalid, "locale": "en"});
+        let settings: Settings = serde_json::from_value(json).unwrap();
+
+        assert_eq!(settings.keyboard_guard_mode, KeyboardGuardMode::Off);
+        assert_eq!(settings.locale, "en");
+    }
+}
+
+#[test]
+fn legacy_keyboard_bool_deserialization_is_field_local_and_tolerant() {
+    for invalid in [serde_json::Value::Null, serde_json::json!("yes"), serde_json::json!(1)] {
+        let json = serde_json::json!({
+            "settings_version": 6,
+            "keyboard_keep_on_scroll": invalid,
+            "locale": "en"
+        });
+        let mut settings: Settings = serde_json::from_value(json).unwrap();
+
+        assert!(!settings.keyboard_keep_on_scroll);
+        assert_eq!(settings.locale, "en");
+        assert!(migrate_settings(&mut settings));
+        assert_eq!(settings.settings_version, 7);
+        assert_eq!(settings.keyboard_guard_mode, KeyboardGuardMode::Off);
+        assert_eq!(settings.locale, "en");
+    }
 }
 
 #[test]
@@ -59,28 +141,6 @@ fn settings_ignores_removed_global_paste_auto_enter() {
         .expect("settings with removed paste_auto_enter should still parse");
 
     assert_eq!(settings.settings_version, 0);
-}
-
-#[test]
-fn old_config_missing_keyboard_keep_on_scroll_defaults_to_false() {
-    let settings: Settings = serde_json::from_str(r#"{"keyboard_sound":true}"#)
-        .expect("old config without keyboard_keep_on_scroll should still parse");
-
-    assert!(settings.keyboard_sound);
-    assert!(!settings.keyboard_keep_on_scroll);
-}
-
-#[test]
-fn keyboard_keep_on_scroll_survives_settings_round_trip() {
-    let settings = Settings {
-        keyboard_keep_on_scroll: true,
-        ..Settings::default()
-    };
-
-    let serialized = serde_json::to_string(&settings).unwrap();
-    let restored: Settings = serde_json::from_str(&serialized).unwrap();
-
-    assert!(restored.keyboard_keep_on_scroll);
 }
 
 #[test]

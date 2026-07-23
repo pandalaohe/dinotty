@@ -2,7 +2,8 @@
 
 use dinotty_server::{
     agent, api::clipboard, audit, auth, events, file_watcher, history, mcp, monitor, notification,
-    openapi, plugin, proxy, session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
+    openapi, plugin, proxy, session, settings, tabs, templates, token, webhook, workspace,
+    workspace_mgmt, ws,
 };
 
 use axum::{
@@ -15,7 +16,6 @@ use axum::{
     Json, Router,
 };
 use rust_embed::Embed;
-use std::fs;
 use std::net::SocketAddr;
 
 use std::sync::Arc;
@@ -64,8 +64,7 @@ async fn dynamic_cors_middleware(
         next.run(req).await
     };
 
-    let suppress_clipboard_origin =
-        is_clipboard && response.status() == StatusCode::FORBIDDEN;
+    let suppress_clipboard_origin = is_clipboard && response.status() == StatusCode::FORBIDDEN;
     let headers = response.headers_mut();
     if is_clipboard {
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -103,24 +102,10 @@ pub struct GitInfo {
 }
 
 fn read_git_info() -> GitInfo {
-    let lines: Vec<String> = fs::read_to_string("VERSION")
-        .ok()
-        .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
-        .unwrap_or_default();
-
-    let version = lines
-        .first()
-        .cloned()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-
-    let repo_url = lines
-        .get(1)
-        .cloned()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string());
-
-    GitInfo { version, repo_url }
+    GitInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        repo_url: env!("CARGO_PKG_REPOSITORY").to_string(),
+    }
 }
 
 #[derive(Clone)]
@@ -715,12 +700,13 @@ async fn main() {
     };
     let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
 
-    let plugins = Arc::new(plugin::PluginManager::new());
-    plugins.scan();
-    tracing::info!("Loaded {} plugins", plugins.list().len());
-
     let git_info = read_git_info();
     tracing::info!("Git info: {}", git_info.version);
+
+    let plugins =
+        Arc::new(plugin::PluginManager::new(format!("http://127.0.0.1:{port}"), "server".into()));
+    plugins.scan();
+    tracing::info!("Loaded {} plugins", plugins.list().len());
 
     // Initialize new modules
     let tokens = Arc::new(token::TokenManager::new(auth_token.clone()));
@@ -761,7 +747,7 @@ async fn main() {
         history: history_state,
         auth_token: auth_token.clone(),
         port,
-        plugins,
+        plugins: Arc::clone(&plugins),
         git_info,
         tokens,
         audit: audit_logger,
@@ -820,6 +806,17 @@ async fn main() {
                 post(settings::upload_background).get(settings::get_background),
             )
             .route("/api/log", get(settings::get_log))
+            .route(
+                "/api/templates",
+                get(templates::list_templates).post(templates::create_template),
+            )
+            .route("/api/templates/apply", post(templates::apply_template))
+            .route(
+                "/api/templates/:id",
+                get(templates::get_template)
+                    .put(templates::update_template)
+                    .delete(templates::delete_template),
+            )
             .route("/api/workspace/resolve", get(workspace::workspace_resolve))
             .route("/api/workspace/list", get(workspace::workspace_list))
             .route("/api/workspace/meta", get(workspace::workspace_meta))
@@ -973,5 +970,33 @@ async fn main() {
     tracing::info!("Listening on http://0.0.0.0:{}", port);
 
     notify_manager.set_notify_port(port);
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
+    let shutdown_plugins = Arc::clone(&plugins);
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            shutdown_plugins.shutdown_all().await;
+        })
+        .await
+        .unwrap();
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
 }

@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 const SESSION_REAP_TICK: Duration = Duration::from_secs(30);
-const SESSION_UNOWNED_GRACE: Duration = Duration::from_secs(60);
+const SESSION_UNOWNED_GRACE: Duration = Duration::from_mins(1);
 
 #[derive(Clone, Copy, Debug)]
 pub enum CloseReason {
@@ -52,6 +52,7 @@ enum PaneClosePlan {
     Layout(LayoutChanges),
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum SessionStatus {
     Connected,
     Detached { since: Instant },
@@ -498,24 +499,24 @@ impl SessionManager {
     /// Insert a session only when the pane generation is vacant.
     ///
     /// Returns false when another creator already published the pane.
-    pub fn insert_session(&self, pane_id: String, session: Arc<Session>) -> bool {
+    pub fn insert_session(&self, pane_id: &str, session: Arc<Session>) -> bool {
         let _lifecycle = self.lifecycle.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if self
             .session_reservations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&pane_id)
+            .contains(pane_id)
         {
             return false;
         }
-        let dashmap::mapref::entry::Entry::Vacant(entry) = self.sessions.entry(pane_id.clone())
+        let dashmap::mapref::entry::Entry::Vacant(entry) = self.sessions.entry(pane_id.to_string())
         else {
             return false;
         };
         self.unowned_since
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&pane_id);
+            .remove(pane_id);
         entry.insert(session);
         true
     }

@@ -27,6 +27,8 @@
       @open-plugin="openPlugin"
       @rename="onRenameTab"
       @open-overview="openOverview"
+      @save-as-template="openSaveTemplateDialog"
+      @apply-template="templatePickerVisible = true"
     >
       <template #left>
         <button
@@ -171,7 +173,12 @@
 
     <CommandPalette ref="paletteRef" :commands="paletteCommands" />
 
-    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" @token-changed="onTokenChanged" />
+    <SettingsPanel
+      :open="settingsOpen"
+      @close="settingsOpen = false"
+      @token-changed="onTokenChanged"
+      @open-plugin="openPlugin"
+    />
 
     <ConfirmCloseDialog @confirm="onConfirmClose" />
 
@@ -227,10 +234,11 @@
       @update:visible="(v: boolean) => (kbVisible = v)"
       @bookmarks="bookmarksRef?.open()"
       @app-action="dispatchAppAction"
+      @dismiss="onKeyboardDismiss"
     />
 
     <KbToggleButton
-      v-show="appSettings.show_virtual_keyboard && !kbVisible"
+      v-show="(appSettings.show_virtual_keyboard || hasOpenGuard(appSettings.keyboard_guard_mode)) && !kbVisible"
       :visible="kbVisible"
       @toggle="kbVisible = !kbVisible"
     />
@@ -255,6 +263,21 @@
       :items="cursorPickerItems"
       @confirm="onCursorPickerConfirm"
       @cancel="cursorPickerVisible = false"
+    />
+
+    <SaveTemplateDialog
+      :visible="saveTemplateVisible"
+      :source-tab-id="saveTemplateSourceTabId"
+      :source-layout="saveTemplateSourceLayout"
+      @close="saveTemplateVisible = false"
+      @saved="onTemplateSaved"
+    />
+
+    <TemplatePicker
+      :visible="templatePickerVisible"
+      :workspace-id="activeWorkspaceId"
+      @close="templatePickerVisible = false"
+      @apply="onTemplateApplied"
     />
   </div>
 </template>
@@ -286,6 +309,8 @@ import ConfirmModal from './components/ui/ConfirmModal.vue'
 import { confirmState, uiConfirm, confirmResolve, confirmCancel } from './composables/useConfirm'
 import PromptModal from './components/ui/PromptModal.vue'
 import MultiSelectPicker from './components/ui/MultiSelectPicker.vue'
+import SaveTemplateDialog from './components/ui/SaveTemplateDialog.vue'
+import TemplatePicker from './components/ui/TemplatePicker.vue'
 import { promptState, promptResolve, promptCancel } from './composables/usePrompt'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
@@ -304,7 +329,6 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
-  authFetch,
   markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
@@ -377,6 +401,7 @@ import {
   isDispatchableAppAction,
 } from './utils/appActionCatalog'
 import { createHostClipboardPasteController } from './utils/hostClipboardPaste'
+import { hasCollapseGuard, hasOpenGuard } from './utils/keyboardGuardMode'
 import type { AppActionOptions } from './components/keyboard/mkbTypes'
 
 // ── Stores ──────────────────────────────────────────────────────
@@ -560,6 +585,7 @@ const onSshConnectRef = shallowRef<(result: { tab_id: string; pane_id: string; l
 
 const {
   newTab,
+  applyTemplate,
   resolveTab,
   resolveTabWorkspace,
   clearResolvedTabNotifications,
@@ -941,6 +967,15 @@ function getSendFn(): SendDataFn | null {
   )
 }
 
+function onKeyboardDismiss() {
+  const tab = activeTab.value
+  if (tab?.type === 'terminal') {
+    termRefs[tab.activePaneId]?.blur()
+  }
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement) activeElement.blur()
+}
+
 async function onLoginSuccess() {
   markCookieAuthenticated()
   ui.setAuthenticated(true)
@@ -1005,7 +1040,7 @@ function onTerminalTouch(e: TouchEvent) {
     // Don't show keyboard when a scroll gesture was just detected
     if (scrollGestureDetected) {
       scrollGestureDetected = false
-      if (kbVisible.value && !appSettings.keyboard_keep_on_scroll) kbVisible.value = false
+      if (kbVisible.value && !hasCollapseGuard(appSettings.keyboard_guard_mode)) kbVisible.value = false
       return
     }
     const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
@@ -1013,10 +1048,10 @@ function onTerminalTouch(e: TouchEvent) {
     const term = paneId ? termRefs[paneId]?.getTerminal() : null
     if (term && term.touchMoved) {
       term.touchMoved = false
-      if (kbVisible.value && !appSettings.keyboard_keep_on_scroll) kbVisible.value = false
+      if (kbVisible.value && !hasCollapseGuard(appSettings.keyboard_guard_mode)) kbVisible.value = false
       return
     }
-    kbVisible.value = true
+    if (!hasOpenGuard(appSettings.keyboard_guard_mode)) kbVisible.value = true
   }
 }
 
@@ -1024,9 +1059,9 @@ function onTerminalScroll() {
   scrollGestureDetected = true
   clearTimeout(scrollGestureTimer)
   scrollGestureTimer = window.setTimeout(() => { scrollGestureDetected = false }, 300)
-  // With keep-on-scroll enabled, scrolling back through history must not
+  // With the collapse guard enabled, scrolling back through history must not
   // dismiss the keyboard the user is typing on.
-  if (appSettings.keyboard_keep_on_scroll) return
+  if (hasCollapseGuard(appSettings.keyboard_guard_mode)) return
   if (kbVisible.value) kbVisible.value = false
 }
 
@@ -1082,6 +1117,48 @@ function onNewMenuAction(
     case 'ssh-connect':
       return sshPanelRef.value?.open()
   }
+}
+
+// ─── Save as Template dialog ───────────────────────────────────────
+const saveTemplateVisible = ref(false)
+const saveTemplateSourceTabId = ref('')
+const saveTemplateSourceLayout = computed<PaneLayout | null>(() => {
+  const tab = tabs.value.find((t) => t.paneId === saveTemplateSourceTabId.value)
+  if (!tab || tab.type !== 'terminal') return null
+  return tab.layout
+})
+
+function openSaveTemplateDialog(tabId: string) {
+  const tab = tabs.value.find((t) => t.paneId === tabId)
+  if (!tab || tab.type !== 'terminal') return
+  saveTemplateSourceTabId.value = tabId
+  saveTemplateVisible.value = true
+}
+
+function onTemplateSaved(_templateId: string) {
+  toast?.success(t('template.savedToast'))
+}
+
+// ─── Apply Template dialog ───────────────────────────────────────────
+const templatePickerVisible = ref(false)
+
+async function onTemplateApplied(
+  templateId: string,
+  scope: 'workspace' | 'global',
+  workspaceId?: string,
+) {
+  try {
+    const result = await applyTemplate(templateId, workspaceId)
+    if (!result) return
+    if (result.warnings.length > 0) {
+      toast?.warning(t('template.applyWarningsToast').replace('{n}', String(result.warnings.length)))
+    } else {
+      toast?.success(t('template.applyToast'))
+    }
+  } catch (e: any) {
+    toast?.error(e?.message || 'Apply failed')
+  }
+  void scope
 }
 
 async function onClosePane(tabId: string, paneId: string) {
@@ -1261,6 +1338,19 @@ const paletteCommands = computed<Command[]>(() => {
       subtitle: t('palette.newLocalTerminalDesc'),
       action: () => splitPane.splitPane('horizontal', true, activeWorkspacePath.value),
     }] : []),
+    // Only show "Save as Template" when active tab is a terminal tab with a layout
+    ...(activeTab.value?.type === 'terminal' ? [{
+      icon: '⎘',
+      title: t('palette.saveAsTemplate'),
+      subtitle: t('palette.saveAsTemplateDesc'),
+      action: () => openSaveTemplateDialog(activeTab.value!.paneId),
+    }] : []),
+    {
+      icon: '⊷',
+      title: t('palette.applyTemplate'),
+      subtitle: t('palette.applyTemplateDesc'),
+      action: () => { templatePickerVisible.value = true },
+    },
   ]
 
   // Plugin-registered commands

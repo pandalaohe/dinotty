@@ -10,10 +10,11 @@ use axum_extra::extract::Multipart;
 
 use crate::platform::fs as platform_fs;
 
-use super::helpers::{plugin_err, validate_manifest};
+use super::helpers::{native_approval_response, plugin_err, require_native_approval};
 use super::manager::PluginManagerState;
 use super::types::{
-    DeleteQuery, DevLinkRequest, InstallDirRequest, PluginInfo, PluginManifest, PluginStateValue,
+    DeleteQuery, DevLinkRequest, InstallDirRequest, NativeApprovalQuery, PluginInfo,
+    PluginManifest, PluginStateValue,
 };
 
 #[allow(clippy::unused_async)]
@@ -59,15 +60,20 @@ pub async fn plugin_asset(
     };
     let mime = mime_guess::from_path(&file_path).first_or_octet_stream();
 
+    let is_dev_link = pm.registry.get(&id).is_some_and(|info| info.is_dev_link);
+    let cache_control = if is_dev_link { "no-cache" } else { "private, max-age=3600" };
+
     Response::builder()
         .header("Content-Type", mime.as_ref())
-        .header("Cache-Control", "no-cache")
+        .header("Cache-Control", cache_control)
+        .header("X-Content-Type-Options", "nosniff")
         .body(Body::from(content))
         .unwrap()
 }
 
 pub async fn install_plugin(
     State(pm): State<PluginManagerState>,
+    Query(query): Query<NativeApprovalQuery>,
     mut multipart: Multipart,
 ) -> Response {
     let field = match multipart.next_field().await {
@@ -80,15 +86,17 @@ pub async fn install_plugin(
         Err(e) => return plugin_err(StatusCode::BAD_REQUEST, &e.to_string()),
     };
 
-    match pm.install(&data) {
+    match pm.install_with_approval(&data, query.approve_native).await {
         Ok(manifest) => Json(manifest).into_response(),
-        Err(e) => plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => native_approval_response(&e)
+            .unwrap_or_else(|| plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e)),
     }
 }
 
 pub async fn update_plugin(
     Path(id): Path<String>,
     State(pm): State<PluginManagerState>,
+    Query(query): Query<NativeApprovalQuery>,
     mut multipart: Multipart,
 ) -> Response {
     let field = match multipart.next_field().await {
@@ -101,9 +109,10 @@ pub async fn update_plugin(
         Err(e) => return plugin_err(StatusCode::BAD_REQUEST, &e.to_string()),
     };
 
-    match pm.update(&id, &data) {
+    match pm.update_with_approval(&id, &data, query.approve_native).await {
         Ok(manifest) => Json(manifest).into_response(),
-        Err(e) => plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => native_approval_response(&e)
+            .unwrap_or_else(|| plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e)),
     }
 }
 
@@ -137,12 +146,27 @@ pub async fn dev_link_plugin(
         Err(e) => return plugin_err(StatusCode::BAD_REQUEST, &format!("invalid plugin.json: {e}")),
     };
 
-    if let Err(e) = validate_manifest(&manifest) {
+    if let Err(e) = pm.validate_for_host(&manifest) {
+        return plugin_err(StatusCode::BAD_REQUEST, &e);
+    }
+    if let Err(e) = require_native_approval(&manifest, body.approve_native) {
+        return native_approval_response(&e)
+            .unwrap_or_else(|| plugin_err(StatusCode::BAD_REQUEST, &e));
+    }
+    if let Err(e) = pm.prepare_binary(&src, &manifest) {
         return plugin_err(StatusCode::BAD_REQUEST, &e);
     }
 
     let link = pm.plugin_dir.join(&manifest.id);
+    let operation_lock = pm.operation_lock(&manifest.id);
+    let _operation = operation_lock.write_owned().await;
     if platform_fs::path_exists_or_symlink(&link) {
+        if std::fs::symlink_metadata(&link).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+            return plugin_err(StatusCode::CONFLICT, "a real plugin directory already exists");
+        }
+        if let Err(e) = pm.kill_plugin_processes(&manifest.id).await {
+            return plugin_err(StatusCode::CONFLICT, &e);
+        }
         if let Err(e) = platform_fs::remove_symlink_or_file(&link) {
             return plugin_err(StatusCode::CONFLICT, &e);
         }
@@ -169,7 +193,6 @@ pub async fn dev_link_plugin(
     Json(manifest).into_response()
 }
 
-#[allow(clippy::unused_async)]
 pub async fn install_from_dir(
     State(pm): State<PluginManagerState>,
     Json(body): Json<InstallDirRequest>,
@@ -182,17 +205,33 @@ pub async fn install_from_dir(
         return plugin_err(StatusCode::BAD_REQUEST, "path is not a directory");
     }
 
-    match pm.install_from_dir(&src, body.dev_link) {
+    match pm.install_from_dir_with_approval(&src, body.dev_link, body.approve_native).await {
         Ok(manifest) => Json(manifest).into_response(),
-        Err(e) => plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => {
+            if let Some(response) = native_approval_response(&e) {
+                return response;
+            }
+            let status = if e.contains("already installed") {
+                StatusCode::CONFLICT
+            } else if e.starts_with("failed to copy")
+                || e.starts_with("failed to validate copied")
+                || e.starts_with("failed to create plugin directory")
+                || e.starts_with("failed to create development link")
+            {
+                StatusCode::INTERNAL_SERVER_ERROR
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            plugin_err(status, &format!("folder install failed: {e}"))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::dev_link_plugin;
+    use super::{dev_link_plugin, plugin_asset};
     use crate::plugin::manager::PluginManager;
-    use crate::plugin::types::DevLinkRequest;
+    use crate::plugin::types::{DevLinkRequest, PluginInfo, PluginManifest, PluginStateValue};
     use axum::{extract::State, http::StatusCode, Json};
     use dashmap::DashMap;
     use std::path::Path;
@@ -204,6 +243,11 @@ mod tests {
             data_dir: root.join("plugin-data"),
             registry: DashMap::new(),
             processes: DashMap::new(),
+            operation_locks: DashMap::new(),
+            host_target: crate::plugin::HostTarget::current(),
+            host_origin: "http://127.0.0.1:8999".into(),
+            host_version: env!("CARGO_PKG_VERSION").into(),
+            host_mode: "test".into(),
         })
     }
 
@@ -218,6 +262,28 @@ mod tests {
         src
     }
 
+    fn test_plugin_info(id: &str, is_dev_link: bool) -> PluginInfo {
+        PluginInfo {
+            manifest: PluginManifest {
+                id: id.into(),
+                name: "Test".into(),
+                version: "1.0.0".into(),
+                min_app_version: None,
+                description: None,
+                icon: None,
+                entry: None,
+                bin: None,
+                commands: None,
+                styles: None,
+                permissions: None,
+            },
+            install_date: None,
+            state: PluginStateValue::Active,
+            error: None,
+            is_dev_link,
+        }
+    }
+
     // 验证 dev-link API 遇到真实目录冲突时不会删除原目录。
     #[tokio::test]
     async fn dev_link_plugin_conflicts_with_existing_real_directory_without_deleting_it() {
@@ -230,7 +296,10 @@ mod tests {
 
         let response = dev_link_plugin(
             State(Arc::clone(&manager)),
-            Json(DevLinkRequest { path: src.to_string_lossy().into_owned() }),
+            Json(DevLinkRequest {
+                path: src.to_string_lossy().into_owned(),
+                approve_native: false,
+            }),
         )
         .await;
 
@@ -238,5 +307,46 @@ mod tests {
         assert!(existing.join("sentinel.txt").is_file());
         assert!(!existing.is_symlink());
         assert!(!manager.registry.contains_key("real-dir-plugin"));
+    }
+
+    #[tokio::test]
+    async fn plugin_asset_sets_nosniff_and_private_cache_for_normal_plugin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = test_manager(tmp.path());
+        let plugin_id = "normal-plugin";
+        let plugin_dir = manager.plugin_dir.join(plugin_id);
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("main.js"), "console.log('hi')").unwrap();
+        manager.registry.insert(plugin_id.to_string(), test_plugin_info(plugin_id, false));
+
+        let response = plugin_asset(
+            axum::extract::Path((plugin_id.to_string(), "main.js".to_string())),
+            State(Arc::clone(&manager)),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("X-Content-Type-Options").unwrap(), "nosniff");
+        assert_eq!(response.headers().get("Cache-Control").unwrap(), "private, max-age=3600");
+    }
+
+    #[tokio::test]
+    async fn plugin_asset_sets_no_cache_for_dev_link_plugin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = test_manager(tmp.path());
+        let plugin_id = "dev-plugin";
+        let plugin_dir = manager.plugin_dir.join(plugin_id);
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("main.js"), "console.log('hi')").unwrap();
+        manager.registry.insert(plugin_id.to_string(), test_plugin_info(plugin_id, true));
+
+        let response = plugin_asset(
+            axum::extract::Path((plugin_id.to_string(), "main.js".to_string())),
+            State(Arc::clone(&manager)),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("Cache-Control").unwrap(), "no-cache");
     }
 }

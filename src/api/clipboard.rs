@@ -12,20 +12,29 @@ use crate::auth::{constant_time_eq, session::SessionStore, session_cookie_name};
 const MAX_CLIPBOARD_BYTES: usize = 256 * 1024;
 const NO_STORE: HeaderValue = HeaderValue::from_static("no-store");
 
+/// Clipboard read failed or is unavailable on this host.
+#[derive(Debug, Clone, Copy)]
+pub struct ClipboardError;
+
 pub trait ClipboardProvider: Send + Sync {
-    fn read_text(&self) -> Result<String, ()>;
+    /// Read text from the host clipboard.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClipboardError`] when the clipboard is unavailable or the read fails.
+    fn read_text(&self) -> Result<String, ClipboardError>;
 }
 
 #[derive(Default)]
 pub struct ArboardClipboardProvider;
 
 impl ClipboardProvider for ArboardClipboardProvider {
-    fn read_text(&self) -> Result<String, ()> {
-        let mut clipboard = arboard::Clipboard::new().map_err(|_| ())?;
+    fn read_text(&self) -> Result<String, ClipboardError> {
+        let mut clipboard = arboard::Clipboard::new().map_err(|_| ClipboardError)?;
         match clipboard.get_text() {
             Ok(text) => Ok(text),
             Err(arboard::Error::ContentNotAvailable) => Ok(String::new()),
-            Err(_) => Err(()),
+            Err(_) => Err(ClipboardError),
         }
     }
 }
@@ -63,10 +72,9 @@ struct ClipboardResponse {
 fn json_response(status: StatusCode, body: String) -> Response<Body> {
     let mut response = Response::new(Body::from(body));
     *response.status_mut() = status;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
     response.headers_mut().insert(header::CACHE_CONTROL, NO_STORE);
     response
 }
@@ -151,11 +159,8 @@ pub async fn get_clipboard(
     }
 
     let provider = state.provider.clone();
-    let text = match tokio::task::spawn_blocking(move || provider.read_text()).await {
-        Ok(Ok(text)) => text,
-        Ok(Err(())) | Err(_) => {
-            return error_response(StatusCode::SERVICE_UNAVAILABLE, "clipboard unavailable");
-        }
+    let Ok(Ok(text)) = tokio::task::spawn_blocking(move || provider.read_text()).await else {
+        return error_response(StatusCode::SERVICE_UNAVAILABLE, "clipboard unavailable");
     };
 
     if text.len() > MAX_CLIPBOARD_BYTES {
@@ -177,15 +182,15 @@ mod tests {
 
     use crate::settings::{Settings, SettingsState};
 
-    struct MockClipboard(Result<String, ()>);
+    struct MockClipboard(Result<String, ClipboardError>);
 
     impl ClipboardProvider for MockClipboard {
-        fn read_text(&self) -> Result<String, ()> {
+        fn read_text(&self) -> Result<String, ClipboardError> {
             self.0.clone()
         }
     }
 
-    fn state(token: &str, result: Result<String, ()>) -> ClipboardState {
+    fn state(token: &str, result: Result<String, ClipboardError>) -> ClipboardState {
         ClipboardState::new(
             Arc::new(tokio::sync::RwLock::new(token.to_string())),
             Arc::new(SessionStore::new(7)),
@@ -331,7 +336,7 @@ mod tests {
         assert_eq!(response_body(response).await, r#"{"error":"clipboard too large"}"#);
 
         let response = get_clipboard(
-            State(state("token", Err(()))),
+            State(state("token", Err(ClipboardError))),
             request(&[("authorization", "Bearer token")]),
         )
         .await;

@@ -18,8 +18,6 @@ fn rerun_if_dist_contents(dir: &Path) {
 }
 
 fn main() {
-    println!("cargo:rerun-if-changed=VERSION");
-
     let dist = Path::new("frontend/dist");
     println!("cargo:rerun-if-changed={}", dist.display());
     rerun_if_dist_contents(dist);

@@ -1,13 +1,19 @@
 [workspace]
 members = ["src-tauri"]
 
-[package]
-name = "dinotty-server"
-version = "0.18.0"
+[workspace.package]
+version = "0.19.0"
 edition = "2021"
 license = "MIT"
-build = "build.rs"
 repository = "https://github.com/xichan96/dinotty"
+
+[package]
+name = "dinotty-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+repository.workspace = true
 
 [dependencies]
 axum = { version = "0.7", features = ["ws", "macros"] }
@@ -15,6 +21,7 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 portable-pty = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

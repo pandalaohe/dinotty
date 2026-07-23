@@ -28,6 +28,7 @@ use dinotty_server::proxy;
 use dinotty_server::session::SessionManager;
 use dinotty_server::settings;
 use dinotty_server::tabs;
+use dinotty_server::templates;
 use dinotty_server::workspace;
 use dinotty_server::workspace_mgmt;
 use dinotty_server::ws;
@@ -244,7 +245,7 @@ fn generate_random_token() -> String {
 }
 
 fn read_git_info() -> GitInfo {
-    let version = option_env!("DINOTTY_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).to_string();
+    let version = env!("CARGO_PKG_VERSION").to_string();
 
     let mut command = std::process::Command::new("git");
     let repo_url = command
@@ -467,6 +468,14 @@ impl Drop for NotifyPortGuard {
     }
 }
 
+struct PluginProcessGuard(Arc<PluginManager>);
+
+impl Drop for PluginProcessGuard {
+    fn drop(&mut self) {
+        self.0.request_shutdown_all();
+    }
+}
+
 pub fn run_server(
     listener: std::net::TcpListener,
     manager: Arc<SessionManager>,
@@ -512,8 +521,13 @@ pub fn run_server(
             });
         }
         let history_state = HistoryState::new(Arc::clone(&manager.sync_clients));
-        let plugins = Arc::new(PluginManager::new());
+        let git_info = read_git_info();
+        let plugins = Arc::new(PluginManager::new(
+            format!("http://127.0.0.1:{local_port}"),
+            "desktop".into(),
+        ));
         plugins.scan();
+        let _plugin_process_guard = PluginProcessGuard(Arc::clone(&plugins));
 
         let initial_token = settings::load_token()
             .or_else(|| std::env::var("DINOTTY_TOKEN").ok())
@@ -530,8 +544,6 @@ pub fn run_server(
             initial_token
         };
         let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
-
-        let git_info = read_git_info();
 
         let session_ttl_days = settings::load_settings().auth.session_ttl_days;
         let sessions = Arc::new(SessionStore::new(session_ttl_days));
@@ -584,6 +596,17 @@ pub fn run_server(
                 post(settings::upload_background).get(settings::get_background),
             )
             .route("/api/log", get(settings::get_log))
+            .route(
+                "/api/templates",
+                get(templates::list_templates).post(templates::create_template),
+            )
+            .route("/api/templates/apply", post(templates::apply_template))
+            .route(
+                "/api/templates/:id",
+                get(templates::get_template)
+                    .put(templates::update_template)
+                    .delete(templates::delete_template),
+            )
             .route("/api/workspace/resolve", get(workspace::workspace_resolve))
             .route("/api/workspace/list", get(workspace::workspace_list))
             .route("/api/workspace/meta", get(workspace::workspace_meta))

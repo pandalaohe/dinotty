@@ -109,7 +109,7 @@ mod tests {
         let manager = Arc::new(SessionManager::new());
         let (input_tx, mut input_rx) = mpsc::unbounded_channel();
         assert!(manager
-            .insert_session("api-pane".to_string(), stub_session(InputState::Running(input_tx))));
+            .insert_session("api-pane", stub_session(InputState::Running(input_tx))));
 
         let response = post_input(
             State((manager, enabled_settings())),
@@ -128,7 +128,7 @@ mod tests {
     #[tokio::test]
     async fn post_input_returns_500_json_when_dispatcher_rejects() {
         let manager = Arc::new(SessionManager::new());
-        assert!(manager.insert_session("closed-pane".to_string(), stub_session(InputState::Closed)));
+        assert!(manager.insert_session("closed-pane", stub_session(InputState::Closed)));
 
         let response = post_input(
             State((manager, enabled_settings())),

@@ -60,7 +60,7 @@ function mountKeyboard() {
 }
 
 beforeEach(() => {
-  settings.keyboard_keep_on_scroll = false
+  settings.keyboard_guard_mode = 'off'
   selectedPath.value = null
 })
 
@@ -70,7 +70,7 @@ afterEach(() => {
   selectedPath.value = null
 })
 
-describe('MobileKeyboard pinned visibility', () => {
+describe('MobileKeyboard guarded visibility', () => {
   it('does not collapse from a terminal-scroll document event', async () => {
     const mounted = mountKeyboard()
 
@@ -80,8 +80,8 @@ describe('MobileKeyboard pinned visibility', () => {
     expect(mounted.emitted('update:visible')).toBeUndefined()
   })
 
-  it('does not collapse on path selection when keep-on-scroll is enabled', async () => {
-    settings.keyboard_keep_on_scroll = true
+  it('does not collapse on path selection in collapse_only mode', async () => {
+    settings.keyboard_guard_mode = 'collapse_only'
     const mounted = mountKeyboard()
 
     selectedPath.value = '/tmp/pinned.txt'
@@ -90,7 +90,7 @@ describe('MobileKeyboard pinned visibility', () => {
     expect(mounted.emitted('update:visible')).toBeUndefined()
   })
 
-  it('preserves path-selection collapse when keep-on-scroll is disabled', async () => {
+  it('preserves path-selection collapse in off mode', async () => {
     const mounted = mountKeyboard()
 
     selectedPath.value = '/tmp/collapse.txt'
