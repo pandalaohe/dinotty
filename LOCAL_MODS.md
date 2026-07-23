@@ -11,6 +11,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | `signing-identity` | no | n/a | n/a | private | n/a | | never — machine-local config |
 | `deploy-scripts` | no | n/a | n/a | private | n/a | | never — fork ops (dinotty-ops.sh / deploy-live.sh / dinotty launcher) |
 | `fork-meta` | no | n/a | n/a | private | n/a | | never — fork bookkeeping (.gitignore, .upstream-update.json, LOCAL_MODS.md, docs/task-files/) |
+| `eb14ee6a-quickkb-app-shortcuts` | maybe | | | candidate | pending | | open — decide PR after upstream opinion on host-clipboard endpoint security posture (`/api/clipboard` must never be auth-exempt) |
 
 - Index wins conflicts with narrative/tables below (those are provenance). Volatile API state (PR state / checked_at) lives in run receipts, not here.
 - Migrated v1→v2 `2026-07-22` by the upstream-update run; mod_id minted from commit short hash (feature rows) or stable slug (meta rows sharing re-apply commits `4d3367c5`/`4e4715e0`); never renumbered.
@@ -224,6 +225,34 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | #207 | i18n: supervise-tabs hint → functional wording shown on all platforms + Alt-as-Cmd toggle rename | OPEN (filed `2026-07-22`) |
 
 ### Ours-only — NOT in upstream (no PR, or PR not yet accepted)
+- **Mobile quick-keyboard: host-clipboard paste + terminal-sequence app-action keys** (2026-07-23;
+  `eb14ee6a` → `0b71556e`; incl. review fixes `99e2f358`, r3 rework `14057ca3`, polish `98c5fb1e`) —
+  QKB1. Lets a phone one-tap paste the HOST (Mac) clipboard into the terminal and send.
+  1. **Backend**: new `GET /api/clipboard` shared handler (`src/api/clipboard.rs`, arboard +
+     `spawn_blocking`) mounted on BOTH routers (`src/main.rs` + `src-tauri/src/embedded_server.rs`);
+     headless → 503; mockable provider for CI. Security posture deliberately STRICTER than the
+     global auth middleware — MUST persist across refactors: never added to any auth-exempt list;
+     empty-token mode → 403; IP-whitelist-only requests → 403; cookie-auth requires same-origin
+     proof (Sec-Fetch-Site same-origin/none when present, else Origin-vs-Host match) because the
+     embedded CORS echoes configured origins WITH credentials; Bearer requests exempt from the
+     same-origin check; clipboard content never logged; 256 KB cap → generic 413; `Cache-Control:
+     no-store` on every response path incl. OPTIONS preflight; generic error bodies.
+  2. **Frontend**: `pasteTerminal` is an OPT-IN selectable app-action key (key editor → 按键类型 →
+     应用快捷键), NOT a fixed strip; per-key 「发送后追加回车」 governs auto-enter (Rust keeps
+     `auto_enter` as presence-preserving `Option<bool>`). Paste flow: trim trailing newline runs →
+     empty → info toast; multiline → two-tap confirm (3 s disarm); sends through the same
+     input/broadcast path as typing (split-pane fanout). Existing toolbar phone-paste button
+     unchanged.
+  3. **r4**: 4 terminal-sequence keybindings (`term.newline` `\x1b\r`, `term.lineStart` `\x01`,
+     `term.lineEnd` `\x05`, `term.deleteToLineStart` `\x15`) exposed as selectable app-action
+     candidates via a derived catalog over `kind:'terminal'` defs; appendEnter checkbox hidden for
+     them; no keyboard binding is created, so desktop shortcuts are untouched.
+  i18n EN+ZH throughout. Tests: vitest 785/785, cargo 372 pass; scoped reviews PASS (final round
+  conf8, zero findings). Design contract: dinotty_mods
+  `docs/task-files/2607/260723_qkb1-quickkeyboard-shortcuts_design.md`.
+  upstreamable: **maybe** — feature is general, but the host-clipboard endpoint's security posture
+  (auth-exempt refusal + same-origin proof) needs upstream opinion before a PR · status:
+  **candidate** · upstream_pr: — · upstream_issue: —
 - **Mobile quick-keyboard: keep-on-scroll setting effective + persistent** (2026-07-23;
   `33c4b749`) — two general upstream bugs, both verified against upstream history:
   1. Upstream #193 (`55a0b451`) added `keyboard_keep_on_scroll` guards only to App.vue's three
