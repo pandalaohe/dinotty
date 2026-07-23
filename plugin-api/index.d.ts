@@ -121,6 +121,18 @@ export interface PluginContext {
       opts?: { target_plugin_id?: string },
     ): void
   }
+
+  /** 获取插件资源的 HTTP URL（不含认证信息，认证由调用方处理）
+   *  @param relativePath 相对于插件目录的路径，如 './vendor/lib.js'
+   *  @returns 完整 HTTP URL，路径段已 encodeURIComponent
+   */
+  assetUrl(relativePath: string): string
+
+  /** 以当前认证身份请求插件资源，返回 Response。
+   *  浏览器模式自动带 cookie；Tauri 模式走 tauri_fetch 带 Bearer。
+   *  用于 vendor JS 等需要 header 认证的场景；JSON/图片可直接用 fetch(ctx.assetUrl(path))。
+   */
+  fetchAsset(relativePath: string, init?: RequestInit): Promise<Response>
 }
 
 export interface PluginEvent {
