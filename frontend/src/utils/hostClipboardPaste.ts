@@ -14,11 +14,10 @@ export function clipboardLineCount(text: string): number {
 
 export interface HostClipboardPasteOptions {
   fetchText: () => Promise<string>
-  paste: (text: string) => void
+  paste: (text: string, autoEnter: boolean) => void
   clipboardEmpty: () => void
   pasteFailed: () => void
   confirmMultiline: (lines: number) => void
-  armedChanged: (armed: boolean, lines: number) => void
   confirmMs?: number
 }
 
@@ -30,14 +29,13 @@ export function createHostClipboardPasteController(options: HostClipboardPasteOp
     if (clearTimer) clearTimeout(clearTimer)
     clearTimer = null
     cachedMultiline = null
-    options.armedChanged(false, 0)
   }
 
-  async function trigger() {
+  async function trigger(autoEnter: boolean) {
     if (cachedMultiline !== null) {
       const text = cachedMultiline
       disarm()
-      options.paste(text)
+      options.paste(text, false)
       return
     }
 
@@ -56,13 +54,12 @@ export function createHostClipboardPasteController(options: HostClipboardPasteOp
     }
 
     if (!isMultilineText(text)) {
-      options.paste(text)
+      options.paste(text, autoEnter)
       return
     }
 
     const lines = clipboardLineCount(text)
     cachedMultiline = text
-    options.armedChanged(true, lines)
     options.confirmMultiline(lines)
     clearTimer = setTimeout(disarm, options.confirmMs ?? MULTILINE_CONFIRM_MS)
   }

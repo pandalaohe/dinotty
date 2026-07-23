@@ -255,7 +255,7 @@ function sendData(data: string, force?: boolean) {
   terminal?.sendData(data, force)
 }
 
-function pasteFromClipboard(text: string, autoEnter = settings.paste_auto_enter): boolean {
+function pasteFromClipboard(text: string, autoEnter = false): boolean {
   if (!paneAlive || !terminal || !text) return false
   terminal.focus()
   terminal.pasteText(text)

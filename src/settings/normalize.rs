@@ -225,7 +225,9 @@ fn normalize_action_key(key: &mut ActionKey) {
         key.send.clear();
         key.special = None;
         key.repeat = false;
-        key.auto_enter = false;
+        if key.action.as_deref() != Some("pasteTerminal") {
+            key.auto_enter = false;
+        }
     }
 }
 

@@ -10,14 +10,12 @@ function setup(fetchText: () => Promise<string>) {
   const clipboardEmpty = vi.fn()
   const pasteFailed = vi.fn()
   const confirmMultiline = vi.fn()
-  const armedChanged = vi.fn()
   const controller = createHostClipboardPasteController({
     fetchText,
     paste,
     clipboardEmpty,
     pasteFailed,
     confirmMultiline,
-    armedChanged,
   })
   return {
     controller,
@@ -25,7 +23,6 @@ function setup(fetchText: () => Promise<string>) {
     clipboardEmpty,
     pasteFailed,
     confirmMultiline,
-    armedChanged,
   }
 }
 
@@ -40,14 +37,25 @@ describe('host clipboard paste flow', () => {
     ['bare CR', 'echo ok\r\r'],
   ])('strips trailing %s newline runs before paste', async (_name, input) => {
     const flow = setup(async () => input)
-    await flow.controller.trigger()
+    await flow.controller.trigger(true)
     expect(flow.paste).toHaveBeenCalledOnce()
-    expect(flow.paste).toHaveBeenCalledWith('echo ok')
+    expect(flow.paste).toHaveBeenCalledWith('echo ok', true)
+  })
+
+  it('passes the tapped key auto_enter value for single-line text', async () => {
+    const enabled = setup(async () => 'echo enabled')
+    const disabled = setup(async () => 'echo disabled')
+
+    await enabled.controller.trigger(true)
+    await disabled.controller.trigger(false)
+
+    expect(enabled.paste).toHaveBeenCalledWith('echo enabled', true)
+    expect(disabled.paste).toHaveBeenCalledWith('echo disabled', false)
   })
 
   it('treats newline-only clipboard as empty with zero writes', async () => {
     const flow = setup(async () => '\r\n\r')
-    await flow.controller.trigger()
+    await flow.controller.trigger(true)
     expect(flow.clipboardEmpty).toHaveBeenCalledOnce()
     expect(flow.paste).not.toHaveBeenCalled()
   })
@@ -55,26 +63,23 @@ describe('host clipboard paste flow', () => {
   it('arms multiline on the first tap and pastes cached text on the second tap', async () => {
     const fetchText = vi.fn(async () => 'one\r\ntwo\n')
     const flow = setup(fetchText)
-    await flow.controller.trigger()
+    await flow.controller.trigger(true)
     expect(flow.paste).not.toHaveBeenCalled()
     expect(flow.confirmMultiline).toHaveBeenCalledWith(2)
-    expect(flow.armedChanged).toHaveBeenCalledWith(true, 2)
 
-    await flow.controller.trigger()
+    await flow.controller.trigger(true)
     expect(fetchText).toHaveBeenCalledOnce()
-    expect(flow.paste).toHaveBeenCalledWith('one\r\ntwo')
-    expect(flow.armedChanged).toHaveBeenLastCalledWith(false, 0)
+    expect(flow.paste).toHaveBeenCalledWith('one\r\ntwo', false)
   })
 
   it('drops cached multiline text when the three-second arm expires', async () => {
     vi.useFakeTimers()
     const fetchText = vi.fn(async () => 'one\ntwo')
     const flow = setup(fetchText)
-    await flow.controller.trigger()
+    await flow.controller.trigger(true)
     vi.advanceTimersByTime(3000)
-    expect(flow.armedChanged).toHaveBeenLastCalledWith(false, 0)
 
-    await flow.controller.trigger()
+    await flow.controller.trigger(true)
     expect(fetchText).toHaveBeenCalledTimes(2)
     expect(flow.paste).not.toHaveBeenCalled()
   })
@@ -83,7 +88,7 @@ describe('host clipboard paste flow', () => {
     const flow = setup(async () => {
       throw new Error('sensitive backend detail')
     })
-    await flow.controller.trigger()
+    await flow.controller.trigger(true)
     expect(flow.pasteFailed).toHaveBeenCalledOnce()
     expect(flow.paste).not.toHaveBeenCalled()
     expect(stripTrailingNewlines('a\rb\r')).toBe('a\rb')

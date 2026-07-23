@@ -109,6 +109,45 @@ describe('unified keybindings', () => {
     )
   })
 
+  it('offers pasteTerminal in the action-key selector with its own default-on auto_enter', async () => {
+    const previous = settings.action_keyboard
+    try {
+      settings.action_keyboard = { rows: [[{ label: 'new', send: '', auto_enter: true }]] }
+      const wrapper = trackWrapper(mount(KeyboardTab))
+
+      expect(wrapper.find('[data-kb-id="pasteTerminal"]').exists()).toBe(false)
+      await wrapper.get('.ak-wyg-label').trigger('click')
+      const kindSelect = wrapper
+        .findAll('.ak-modal select')
+        .find((select) => select.find('option[value="action"]').exists())!
+      await kindSelect.setValue('action')
+      await nextTick()
+
+      const actionSelect = wrapper
+        .findAll('.ak-modal select')
+        .find((select) => select.find('option[value="pasteTerminal"]').exists())!
+      const pasteOption = actionSelect.find('option[value="pasteTerminal"]')
+      expect(pasteOption.text()).toBe('Paste')
+
+      await actionSelect.setValue('pasteTerminal')
+      await nextTick()
+      const autoEnter = wrapper.get<HTMLInputElement>(
+        '.ak-modal .shortcut-check input[type="checkbox"]',
+      )
+      expect(autoEnter.element.checked).toBe(true)
+      await autoEnter.setValue(false)
+      await wrapper.get('.ak-modal .settings-save').trigger('click')
+
+      expect(settings.action_keyboard.rows[0][0]).toMatchObject({
+        kind: 'action',
+        action: 'pasteTerminal',
+        auto_enter: false,
+      })
+    } finally {
+      settings.action_keyboard = previous
+    }
+  })
+
   it('formats app bindings exactly as before and terminal bindings with literal modifiers', () => {
     const { formatBinding } = useKeybindings()
 

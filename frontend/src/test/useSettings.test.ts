@@ -20,10 +20,4 @@ describe('useSettings - confirm_before_close_tab mirror', () => {
     // set to false out of the box, matching the backend serde default.
     expect(settings.space_confirms_dialogs).toBe(false)
   })
-
-  it('exposes paste_auto_enter and defaults it to true', () => {
-    const field: keyof SettingsData = 'paste_auto_enter'
-    expect(field).toBe('paste_auto_enter')
-    expect(settings.paste_auto_enter).toBe(true)
-  })
 })

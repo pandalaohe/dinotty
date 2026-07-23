@@ -224,8 +224,6 @@
       :visible="kbVisible"
       :pane-id="activePaneId ?? ''"
       :get-send-fn="getSendFn"
-      :paste-armed="pasteTerminalArmed"
-      :paste-confirm-lines="pasteTerminalLines"
       @update:visible="(v: boolean) => (kbVisible = v)"
       @bookmarks="bookmarksRef?.open()"
       @app-action="dispatchAppAction"
@@ -374,6 +372,7 @@ import { buildRunCodeCommand } from './utils/runCodeCommand'
 import { resolveAbbr, resolveColor } from './utils/workspaceIcon'
 import { isDispatchableAppAction } from './utils/appActionCatalog'
 import { createHostClipboardPasteController } from './utils/hostClipboardPaste'
+import type { AppActionOptions } from './components/keyboard/mkbTypes'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
@@ -411,8 +410,6 @@ const notif = useNotification()
 const presentationSettings = useNotificationPresentation().settings
 const { supervise } = useSuperviseTabs()
 const toast = useToast()
-const pasteTerminalArmed = ref(false)
-const pasteTerminalLines = ref(0)
 const hostClipboardPaste = createHostClipboardPasteController({
   fetchText: async () => {
     const response = await authFetch(apiUrl('/api/clipboard'))
@@ -421,11 +418,11 @@ const hostClipboardPaste = createHostClipboardPasteController({
     if (typeof body.text !== 'string') throw new Error('invalid clipboard response')
     return body.text
   },
-  paste: (text) => {
+  paste: (text, autoEnter) => {
     if (!activePaneId.value) return
     const tab = tabs.value.find((candidate) => candidate.paneId === activePaneId.value)
     if (!tab || tab.type !== 'terminal') return
-    termRefs[tab.activePaneId]?.pasteFromClipboard(text)
+    termRefs[tab.activePaneId]?.pasteFromClipboard(text, autoEnter)
   },
   clipboardEmpty: () =>
     toast.info(t('mobileKb.clipboardEmpty'), { position: POSITION.BOTTOM_CENTER }),
@@ -435,10 +432,6 @@ const hostClipboardPaste = createHostClipboardPasteController({
     toast.info(t('mobileKb.confirmMultiline', { n: lines }), {
       position: POSITION.BOTTOM_CENTER,
     }),
-  armedChanged: (armed, lines) => {
-    pasteTerminalArmed.value = armed
-    pasteTerminalLines.value = lines
-  },
 })
 const cursorPicker = useCursorPicker({
   tabs,
@@ -1286,7 +1279,7 @@ const paletteCommands = computed<Command[]>(() => {
   return base
 })
 
-const keyActions: Record<string, () => void> = {
+const keyActions: Record<string, (options?: AppActionOptions) => void> = {
   togglePalette: () => paletteRef.value?.toggle(),
   openBookmarks: () => bookmarksRef.value?.open(),
   newTab: () => newTab(),
@@ -1313,7 +1306,7 @@ const keyActions: Record<string, () => void> = {
     if (!tab || tab.type !== 'terminal') return
     termRefs[tab.activePaneId]?.toggleSearch()
   },
-  pasteTerminal: () => void hostClipboardPaste.trigger(),
+  pasteTerminal: (options) => void hostClipboardPaste.trigger(options?.autoEnter ?? true),
   missionControl: () => openOverview(),
   superviseTabs: () =>
     void supervise((id) => activateTab(id, { defer: true }))
@@ -1329,10 +1322,10 @@ const keyActions: Record<string, () => void> = {
   addCursorsInFiles: () => triggerAddCursors(),
 }
 
-function dispatchAppAction(id: string) {
+function dispatchAppAction(id: string, options?: AppActionOptions) {
   if (!isDispatchableAppAction(id)) return
   if (id === 'closeTab') lastTabCloseShortcutAt = Date.now()
-  keyActions[id]?.()
+  keyActions[id]?.(options)
 }
 
 function onGlobalKeydown(e: KeyboardEvent) {

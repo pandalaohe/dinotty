@@ -27,7 +27,6 @@ vi.mock('vue-toastification', () => ({
 
 import TerminalPane from '../components/terminal/TerminalPane.vue'
 import { useSplitPane } from '../composables/useSplitPane'
-import { settings } from '../composables/useSettings'
 import type { Tab } from '../types/pane'
 
 function mountPane() {
@@ -39,14 +38,13 @@ function mountPane() {
 
 beforeEach(() => {
   paneMocks.instances.length = 0
-  settings.paste_auto_enter = true
 })
 
 describe('TerminalPane host clipboard input path', () => {
   it('sends single-line text and exactly one Enter through the same input event path', () => {
     const wrapper = mountPane()
     const terminal = paneMocks.instances[0]
-    expect((wrapper.vm as any).pasteFromClipboard('echo ok')).toBe(true)
+    expect((wrapper.vm as any).pasteFromClipboard('echo ok', true)).toBe(true)
     expect(terminal.pasteText).toHaveBeenCalledWith('echo ok')
     expect(terminal.sendInput).toHaveBeenCalledOnce()
     expect(terminal.sendInput).toHaveBeenCalledWith('\r')
@@ -54,16 +52,20 @@ describe('TerminalPane host clipboard input path', () => {
     wrapper.unmount()
   })
 
-  it('never auto-enters multiline text and honors paste_auto_enter off', () => {
+  it('never auto-enters multiline text even when the key enables auto_enter', () => {
     const wrapper = mountPane()
     const terminal = paneMocks.instances[0]
-    ;(wrapper.vm as any).pasteFromClipboard('one\ntwo')
+    ;(wrapper.vm as any).pasteFromClipboard('one\ntwo', true)
     expect(terminal.sendInput).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 
-    settings.paste_auto_enter = false
-    ;(wrapper.vm as any).pasteFromClipboard('single')
+  it('does not auto-enter single-line text when the key disables auto_enter', () => {
+    const wrapper = mountPane()
+    const terminal = paneMocks.instances[0]
+    ;(wrapper.vm as any).pasteFromClipboard('single', false)
     expect(terminal.sendInput).not.toHaveBeenCalled()
-    expect(terminal.pasteText).toHaveBeenNthCalledWith(2, 'single')
+    expect(terminal.pasteText).toHaveBeenCalledWith('single')
     wrapper.unmount()
   })
 

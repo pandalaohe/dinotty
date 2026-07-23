@@ -77,8 +77,6 @@ pub struct Settings {
     pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
     pub confirm_before_close_tab: bool,
-    #[serde(default = "default_true")]
-    pub paste_auto_enter: bool,
     #[serde(default)]
     pub reload_after_supervise_tabs: bool,
     #[serde(default)]
@@ -688,6 +686,7 @@ impl Serialize for ActionKey {
     {
         let is_valid_action = self.kind.as_deref() == Some("action")
             && self.action.as_deref().is_some_and(|action| !action.trim().is_empty());
+        let is_paste_action = is_valid_action && self.action.as_deref() == Some("pasteTerminal");
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("label", &self.label)?;
         if let Some(kind) = &self.kind {
@@ -712,6 +711,8 @@ impl Serialize for ActionKey {
             map.serialize_entry("send", &self.send)?;
             map.serialize_entry("repeat", &self.repeat)?;
             map.serialize_entry("special", &self.special)?;
+        }
+        if !is_valid_action || is_paste_action {
             map.serialize_entry("auto_enter", &self.auto_enter)?;
         }
         map.end()
@@ -767,7 +768,6 @@ impl Default for Settings {
             workspace_badge_mode: None,
             windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
-            paste_auto_enter: true,
             reload_after_supervise_tabs: false,
             space_confirms_dialogs: false,
             locale: default_locale(),

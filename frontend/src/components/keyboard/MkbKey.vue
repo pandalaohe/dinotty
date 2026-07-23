@@ -21,7 +21,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { KeyDef, ModState } from './mkbTypes'
+import type { AppActionOptions, KeyDef, ModState } from './mkbTypes'
 import { settings } from '../../composables/useSettings'
 
 let audioCtx: AudioContext | null = null
@@ -51,7 +51,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'key-press': [ch: string]
-  'app-action': [id: string]
+  'app-action': [id: string, options: AppActionOptions]
   special: [sp: string]
 }>()
 
@@ -82,7 +82,7 @@ let touchActive = false
 
 function fire() {
   if (props.k.act) {
-    emit('app-action', props.k.act)
+    emit('app-action', props.k.act, { autoEnter: props.k.autoEnter ?? true })
     return
   }
   if (props.k.sp) {

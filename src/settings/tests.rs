@@ -12,20 +12,6 @@ fn old_config_missing_confirm_before_close_tab_defaults_to_true() {
 }
 
 #[test]
-fn old_config_missing_paste_auto_enter_defaults_to_true() {
-    let settings: Settings = serde_json::from_str(r"{}").unwrap();
-    assert!(settings.paste_auto_enter);
-}
-
-#[test]
-fn paste_auto_enter_survives_settings_round_trip() {
-    let settings = Settings { paste_auto_enter: false, ..Settings::default() };
-    let serialized = serde_json::to_string(&settings).unwrap();
-    let restored: Settings = serde_json::from_str(&serialized).unwrap();
-    assert!(!restored.paste_auto_enter);
-}
-
-#[test]
 fn settings_defaults_locale_to_zh() {
     let settings: Settings = serde_json::from_str(r"{}").unwrap();
     assert_eq!(settings.locale, "zh");
@@ -707,6 +693,8 @@ fn action_keyboard_normalize_applies_kind_contract() {
                 {"label":"missing","kind":"action","send":"keep","repeat":true},
                 {"label":"blank","kind":"action","action":"  ","send":"keep","auto_enter":true},
                 {"label":"valid","kind":"action","action":"newTab","send":"remove","special":"bookmarks","repeat":true,"auto_enter":true,"grow":1.5},
+                {"label":"paste-on","kind":"action","action":"pasteTerminal","auto_enter":true},
+                {"label":"paste-off","kind":"action","action":"pasteTerminal","auto_enter":false},
                 {"label":"bookmarks","special":"bookmarks"}
             ]]
         }"#,
@@ -733,8 +721,13 @@ fn action_keyboard_normalize_applies_kind_contract() {
         assert!(valid_action_json.get(forbidden).is_none(), "{forbidden} survived");
     }
 
-    assert!(keys[4].send.is_empty());
-    assert_eq!(keys[4].special.as_deref(), Some("bookmarks"));
+    assert!(keys[4].auto_enter);
+    assert!(!keys[5].auto_enter);
+    assert_eq!(serde_json::to_value(&keys[4]).unwrap()["auto_enter"], true);
+    assert_eq!(serde_json::to_value(&keys[5]).unwrap()["auto_enter"], false);
+
+    assert!(keys[6].send.is_empty());
+    assert_eq!(keys[6].special.as_deref(), Some("bookmarks"));
 }
 
 #[test]
