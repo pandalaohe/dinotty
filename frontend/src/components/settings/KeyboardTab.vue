@@ -987,7 +987,7 @@ function saveActionKey() {
         action: edit.action,
         display: edit.display,
         style: edit.style || undefined,
-        auto_enter: edit.action === 'pasteTerminal' ? edit.auto_enter : undefined,
+        ...(edit.action === 'pasteTerminal' ? { auto_enter: edit.auto_enter } : {}),
         grow: edit.grow,
       }
     : {

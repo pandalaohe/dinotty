@@ -28,7 +28,7 @@ function normalize(cfg: ActionKeyboardConfig): ActionKeyboardConfig {
 }
 
 describe('app action catalog', () => {
-  it('appends pasteTerminal after the 20 app keybinding registry entries', () => {
+  it('appends pasteTerminal and the four terminal sequences after the app registry entries', () => {
     expect(APP_ACTIONS.map(({ id }) => id)).toEqual([
       'togglePalette',
       'openBookmarks',
@@ -51,8 +51,12 @@ describe('app action catalog', () => {
       'reloadApp',
       'fontSizeReset',
       'pasteTerminal',
+      'term.newline',
+      'term.lineStart',
+      'term.lineEnd',
+      'term.deleteToLineStart',
     ])
-    expect(APP_ACTIONS).toHaveLength(21)
+    expect(APP_ACTIONS).toHaveLength(25)
   })
 
   it('uses the registry icons for actions whose old catalog icons differed', () => {
@@ -63,11 +67,20 @@ describe('app action catalog', () => {
   })
 
   it('allows selector actions through the dispatch gate and no-ops unknown ids', () => {
-    expect(isDispatchableAppAction('pasteTerminal')).toBe(true)
+    for (const id of [
+      'pasteTerminal',
+      'term.newline',
+      'term.lineStart',
+      'term.lineEnd',
+      'term.deleteToLineStart',
+    ]) {
+      expect(isDispatchableAppAction(id), id).toBe(true)
+      expect(APP_ACTIONS.some((action) => action.id === id), id).toBe(true)
+    }
     expect(isDispatchableAppAction('searchTerminal')).toBe(true)
     expect(isDispatchableAppAction('unknown-action')).toBe(false)
-    expect(APP_ACTIONS.some(({ id }) => id === 'pasteTerminal')).toBe(true)
     expect(getAppAction('pasteTerminal')?.labelKey).toBe('mobileKb.pasteTerminal')
+    expect(getAppAction('term.newline')?.labelKey).toBe('keybinding.term.newline')
   })
 })
 
@@ -109,7 +122,14 @@ describe('actionKeyToKeyDef action display', () => {
     expect(def.autoEnter).toBe(autoEnter)
   })
 
-  it.each(['searchTerminal', 'newTab'])('omits autoEnter from %s key definitions', (action) => {
+  it.each([
+    'searchTerminal',
+    'newTab',
+    'term.newline',
+    'term.lineStart',
+    'term.lineEnd',
+    'term.deleteToLineStart',
+  ])('omits autoEnter from %s key definitions', (action) => {
     const def = actionKeyToKeyDef({
       label: action,
       kind: 'action',

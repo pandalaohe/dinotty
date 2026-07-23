@@ -23,7 +23,14 @@ describe('MkbKey app-action options', () => {
     wrapper.unmount()
   })
 
-  it.each(['searchTerminal', 'newTab'])('emits no autoEnter option for %s', async (action) => {
+  it.each([
+    'searchTerminal',
+    'newTab',
+    'term.newline',
+    'term.lineStart',
+    'term.lineEnd',
+    'term.deleteToLineStart',
+  ])('emits no autoEnter option for %s', async (action) => {
     const wrapper = mount(MkbKey, {
       props: {
         k: { l: action, act: action, autoEnter: true },

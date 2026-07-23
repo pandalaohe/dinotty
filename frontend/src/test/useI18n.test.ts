@@ -19,6 +19,10 @@ const TASK3_KEYS = [
 ] as const
 
 const QKB1_KEYS = [
+  'keybinding.term.newline',
+  'keybinding.term.lineStart',
+  'keybinding.term.lineEnd',
+  'keybinding.term.deleteToLineStart',
   'mobileKb.pasteTerminal',
   'mobileKb.findTerminal',
   'mobileKb.clipboardEmpty',

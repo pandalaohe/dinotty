@@ -370,7 +370,10 @@ import { useSettingsStore } from './stores/settingsStore'
 import { shellEscapePath } from './utils/shell'
 import { buildRunCodeCommand } from './utils/runCodeCommand'
 import { resolveAbbr, resolveColor } from './utils/workspaceIcon'
-import { isDispatchableAppAction } from './utils/appActionCatalog'
+import {
+  getTerminalSequenceAppAction,
+  isDispatchableAppAction,
+} from './utils/appActionCatalog'
 import { createHostClipboardPasteController } from './utils/hostClipboardPaste'
 import type { AppActionOptions } from './components/keyboard/mkbTypes'
 
@@ -1324,6 +1327,11 @@ const keyActions: Record<string, (options?: AppActionOptions) => void> = {
 
 function dispatchAppAction(id: string, options?: AppActionOptions) {
   if (!isDispatchableAppAction(id)) return
+  const terminalAction = getTerminalSequenceAppAction(id)
+  if (terminalAction) {
+    getSendFn()?.(terminalAction.sequence)
+    return
+  }
   if (id === 'closeTab') lastTabCloseShortcutAt = Date.now()
   keyActions[id]?.(options)
 }

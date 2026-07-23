@@ -175,6 +175,41 @@ describe('unified keybindings', () => {
     }
   })
 
+  it.each([
+    ['term.newline', 'Newline (do not send)'],
+    ['term.lineStart', 'Jump to Line Start'],
+    ['term.lineEnd', 'Jump to Line End'],
+    ['term.deleteToLineStart', 'Delete path or to Line Start'],
+  ])('offers %s in the action-key selector without auto_enter', async (id, label) => {
+    const previous = settings.action_keyboard
+    try {
+      settings.action_keyboard = { rows: [[{ label: 'new', send: '', auto_enter: true }]] }
+      const wrapper = trackWrapper(mount(KeyboardTab))
+
+      await wrapper.get('.ak-wyg-label').trigger('click')
+      const kindSelect = wrapper
+        .findAll('.ak-modal select')
+        .find((select) => select.find('option[value="action"]').exists())!
+      await kindSelect.setValue('action')
+      await nextTick()
+
+      const actionSelect = wrapper
+        .findAll('.ak-modal select')
+        .find((select) => select.find(`option[value="${id}"]`).exists())!
+      expect(actionSelect.find(`option[value="${id}"]`).text()).toBe(label)
+
+      await actionSelect.setValue(id)
+      await nextTick()
+      expect(wrapper.find('.ak-modal .shortcut-check input[type="checkbox"]').exists()).toBe(false)
+
+      await wrapper.get('.ak-modal .settings-save').trigger('click')
+      expect(settings.action_keyboard.rows[0][0]).toMatchObject({ kind: 'action', action: id })
+      expect(settings.action_keyboard.rows[0][0]).not.toHaveProperty('auto_enter')
+    } finally {
+      settings.action_keyboard = previous
+    }
+  })
+
   it('formats app bindings exactly as before and terminal bindings with literal modifiers', () => {
     const { formatBinding } = useKeybindings()
 
