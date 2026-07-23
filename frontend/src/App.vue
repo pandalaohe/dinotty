@@ -329,6 +329,7 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
+  authFetch,
   markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
