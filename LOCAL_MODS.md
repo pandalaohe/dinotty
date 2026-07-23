@@ -845,6 +845,10 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   rejection would otherwise be swallowed. It deliberately does not add a `channel` reconnect trigger:
   the native transport has no reconnect scheduler, and dispatcher failure now closes the session through
   the existing `exited` flow.
+- **Native escape hatch, commit 3/3 (2026-07-23)** — installs Tauri's default macOS application
+  menubar, preserving its standard Edit/clipboard role items, and appends `Reload UI` with reserved
+  `CmdOrCtrl+R` into the existing View submenu. Its app-wide native menu handler reloads the main
+  `WebviewWindow` without depending on DOM keyboard or IME event delivery; the tray menu remains separate.
 
 ## In-flight upstream PR
 - Keyboard-settings copy fixes — **PR #207 OPEN** (`2026-07-22`, branch

@@ -9,6 +9,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, OnceLock,
 };
+#[cfg(target_os = "macos")]
+use tauri::menu::{Menu, MenuItemKind, SubmenuBuilder};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -646,6 +648,42 @@ fn main() {
                     }
                 },
             )?;
+
+            #[cfg(target_os = "macos")]
+            {
+                let menu = Menu::default(app.handle())?;
+                let reload_item = MenuItemBuilder::with_id("reload_ui", "Reload UI")
+                    .accelerator("CmdOrCtrl+R")
+                    .build(app)?;
+
+                let mut view_submenu = None;
+                for item in menu.items()? {
+                    if let MenuItemKind::Submenu(submenu) = item {
+                        if submenu.text()? == "View" {
+                            view_submenu = Some(submenu);
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(view_submenu) = view_submenu {
+                    view_submenu.append(&reload_item)?;
+                } else {
+                    let recovery_submenu = SubmenuBuilder::with_id(app, "recovery", "Recovery")
+                        .item(&reload_item)
+                        .build()?;
+                    menu.append(&recovery_submenu)?;
+                }
+
+                app.set_menu(menu)?;
+                app.on_menu_event(|app, event| {
+                    if event.id().as_ref() == "reload_ui" {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.reload();
+                        }
+                    }
+                });
+            }
 
             // Build tray icon with context menu
             let show_item = MenuItemBuilder::with_id("show", "Show/Hide").build(app)?;
