@@ -357,7 +357,7 @@ describe('EPV1 embedded preview annotation', () => {
     expect(1200 * 12_000 * (2 * scale) ** 2).toBeCloseTo(pixelCap, 5)
   })
 
-  it('downloads instead of using execCommand when clipboard image decoding fails', async () => {
+  it('downloads when decode rejects even if the clipboard image has natural width', async () => {
     vi.stubGlobal('ClipboardItem', undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
     Object.defineProperty(HTMLImageElement.prototype, 'decode', {
@@ -370,7 +370,7 @@ describe('EPV1 embedded preview annotation', () => {
     })
     Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {
       configurable: true,
-      get: () => 0,
+      get: () => 1,
     })
     const execCommand = vi.fn().mockReturnValue(true)
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })

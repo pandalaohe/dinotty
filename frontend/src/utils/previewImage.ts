@@ -214,11 +214,7 @@ async function copyWithExecCommand(blob: Blob, t: I18nFn): Promise<boolean> {
     document.body.appendChild(holder)
 
     if (typeof image.decode === 'function') {
-      try {
-        await image.decode()
-      } catch (error) {
-        if (!image.complete || image.naturalWidth <= 0) throw error
-      }
+      await image.decode()
     } else {
       await new Promise<void>((resolve, reject) => {
         const verifyDecoded = () => {
