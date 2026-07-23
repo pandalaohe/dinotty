@@ -5,6 +5,7 @@ use portable_pty::{Child, ChildKiller, ExitStatus, NativePtySystem, PtySize, Pty
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use tracing_subscriber::fmt::MakeWriter;
 
 #[derive(Debug)]
 struct TestChild {
@@ -135,6 +136,38 @@ async fn write_input_blocking_waits_for_backend_lock() {
 struct ScriptedWriter {
     failures: VecDeque<bool>,
     attempts: mpsc::UnboundedSender<Vec<u8>>,
+}
+
+#[derive(Clone, Default)]
+struct TraceBuffer {
+    bytes: Arc<Mutex<Vec<u8>>>,
+}
+
+impl TraceBuffer {
+    fn contents(&self) -> String {
+        String::from_utf8(self.bytes.lock().unwrap().clone()).unwrap()
+    }
+}
+
+struct TraceBufferWriter(TraceBuffer);
+
+impl Write for TraceBufferWriter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.0.bytes.lock().unwrap().extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> MakeWriter<'writer> for TraceBuffer {
+    type Writer = TraceBufferWriter;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        TraceBufferWriter(self.clone())
+    }
 }
 
 impl Write for ScriptedWriter {
@@ -353,16 +386,23 @@ async fn close_drains_accepted_input_once_and_rejects_later_enqueues() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn three_local_eio_batches_close_once_without_retrying_bytes() {
+#[tokio::test]
+async fn three_local_eio_batches_log_once_stay_open_and_keep_attempting_writes() {
     let manager = Arc::new(SessionManager::new());
-    let (session, mut attempts) = scripted_local_session([true, true, true]);
+    let (session, mut attempts) = scripted_local_session([true, true, true, true]);
     let close_callbacks = Arc::new(AtomicUsize::new(0));
     let callback_count = Arc::clone(&close_callbacks);
     *session.tauri_on_exit.lock().unwrap() = Some(Arc::new(move |_, _| {
         callback_count.fetch_add(1, AtomicOrdering::SeqCst);
     }));
     let mut events = manager.event_bus.subscribe();
+    let trace_buffer = TraceBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(trace_buffer.clone())
+        .finish();
+    let _trace_guard = tracing::subscriber::set_default(subscriber);
     start_and_publish_dispatcher(&session, "local-eio", &manager);
 
     for input in ["one", "two", "three"] {
@@ -371,18 +411,28 @@ async fn three_local_eio_batches_close_once_without_retrying_bytes() {
         tokio::time::sleep(std::time::Duration::from_millis(60)).await;
     }
 
-    let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
-        .await
-        .expect("InputFailure close event timed out")
-        .unwrap();
-    assert!(matches!(event, BusEvent::SessionClosed { ref pane_id, .. } if pane_id == "local-eio"));
-    assert!(!manager.sessions.contains_key("local-eio"));
-    assert_eq!(close_callbacks.load(AtomicOrdering::SeqCst), 1);
-    assert_eq!(session.enqueue_input("four".to_string()), Err(InputError::Closed));
-    assert!(attempts.try_recv().is_err(), "failed bytes must never be retried");
+    assert!(manager.sessions.contains_key("local-eio"));
+    assert_eq!(close_callbacks.load(AtomicOrdering::SeqCst), 0);
+    assert!(session.enqueue_input("four".to_string()).is_ok());
+    assert_eq!(attempts.recv().await.unwrap(), b"four");
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), attempts.recv()).await.is_err(),
+        "failed bytes must be attempted exactly once without retry"
+    );
     assert!(tokio::time::timeout(std::time::Duration::from_millis(100), events.recv())
         .await
         .is_err());
+    let logs = trace_buffer.contents();
+    assert_eq!(
+        logs.matches(
+            "session input dead: 3 PTY write failures within 10s (pane local-eio); leaving session open for manual close"
+        )
+        .count(),
+        1,
+        "the threshold must log once and clear its failure buffer; logs:\n{logs}"
+    );
+    assert!(manager.close_session("local-eio", CloseReason::Explicit, true, None));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -417,13 +467,23 @@ fn local_failure_window_restarts_after_ten_seconds_and_success_resets() {
 }
 
 #[test]
-fn local_failure_window_counts_failures_straddling_fixed_window_boundary() {
+fn local_failure_window_straddles_fixed_boundary_then_clears_at_log_threshold() {
     let started = tokio::time::Instant::now();
     let mut window = InputFailureWindow::default();
-    assert_eq!(window.record_failure(started), 1);
-    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(9)), 2);
-    assert_eq!(window.record_failure(started + std::time::Duration::from_millis(10_500)), 2);
-    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(11)), 3);
+    assert!(!window.record_failure_and_clear_at_threshold(started));
+    assert!(
+        !window.record_failure_and_clear_at_threshold(started + std::time::Duration::from_secs(9))
+    );
+    assert!(!window
+        .record_failure_and_clear_at_threshold(started + std::time::Duration::from_millis(10_500)));
+    assert!(
+        window.record_failure_and_clear_at_threshold(started + std::time::Duration::from_secs(11))
+    );
+    assert_eq!(
+        window.record_failure(started + std::time::Duration::from_millis(11_100)),
+        1,
+        "logging the straddled threshold must clear the window without requesting a close"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

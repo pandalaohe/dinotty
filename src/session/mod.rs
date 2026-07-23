@@ -139,6 +139,15 @@ impl InputFailureWindow {
         self.failures.len() as u8
     }
 
+    fn record_failure_and_clear_at_threshold(&mut self, now: tokio::time::Instant) -> bool {
+        if self.record_failure(now) == 3 {
+            self.reset();
+            true
+        } else {
+            false
+        }
+    }
+
     fn reset(&mut self) {
         self.failures.clear();
     }
@@ -261,23 +270,17 @@ impl Session {
 
             match result {
                 Ok(()) => failure_window.reset(),
-                Err(write_error) => {
+                Err(_) => {
                     let now = tokio::time::Instant::now();
-                    let failure_count = failure_window.record_failure(now);
-                    error!(
-                        "PTY input dispatch failed; dropping {batch_len}B (failure {failure_count}/3 in 10s): {write_error}, pane={pane_id}"
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    let threshold_reached =
+                        failure_window.record_failure_and_clear_at_threshold(now);
 
-                    if failure_count == 3 {
-                        Self::close_after_input_failure(
-                            &pane_id,
-                            Arc::clone(&write_session),
-                            &manager,
-                        )
-                        .await;
-                        break;
+                    if threshold_reached {
+                        error!(
+                            "session input dead: 3 PTY write failures within 10s (pane {pane_id}); leaving session open for manual close"
+                        );
                     }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             }
         }
