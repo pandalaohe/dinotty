@@ -328,7 +328,6 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
-  authFetch,
   markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
@@ -401,6 +400,7 @@ import {
   isDispatchableAppAction,
 } from './utils/appActionCatalog'
 import { createHostClipboardPasteController } from './utils/hostClipboardPaste'
+import { readHostClipboard } from './utils/clipboard'
 import type { AppActionOptions } from './components/keyboard/mkbTypes'
 
 // ── Stores ──────────────────────────────────────────────────────
@@ -441,11 +441,9 @@ const { supervise } = useSuperviseTabs()
 const toast = useToast()
 const hostClipboardPaste = createHostClipboardPasteController({
   fetchText: async () => {
-    const response = await authFetch(apiUrl('/api/clipboard'))
-    if (!response.ok) throw new Error('clipboard request failed')
-    const body = (await response.json()) as { text?: unknown }
-    if (typeof body.text !== 'string') throw new Error('invalid clipboard response')
-    return body.text
+    const text = await readHostClipboard()
+    if (text === null) throw new Error('clipboard unavailable')
+    return text
   },
   paste: (text, autoEnter) => {
     if (!activePaneId.value) return
