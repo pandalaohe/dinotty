@@ -12,6 +12,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | `deploy-scripts` | no | n/a | n/a | private | n/a | | never — fork ops (dinotty-ops.sh / deploy-live.sh / dinotty launcher) |
 | `fork-meta` | no | n/a | n/a | private | n/a | | never — fork bookkeeping (.gitignore, .upstream-update.json, LOCAL_MODS.md, docs/task-files/) |
 | `eb14ee6a-quickkb-app-shortcuts` | maybe | | | candidate | pending | | open — decide PR after upstream opinion on host-clipboard endpoint security posture (`/api/clipboard` must never be auth-exempt) |
+| `6596abd9-plugin-ws-attribution` | yes | https://github.com/xichan96/dinotty/pull/210 | | pr-open | pending | fix/plugin-workspace-attribution | open — PR #210 merged upstream → absorbed (custom carries same change as `6596abd9`; PR branch cut from `upstream/dev` @ `348e8353`, clean cherry-pick, 774/774 + vue-tsc green on upstream base) |
 
 - Index wins conflicts with narrative/tables below (those are provenance). Volatile API state (PR state / checked_at) lives in run receipts, not here.
 - Migrated v1→v2 `2026-07-22` by the upstream-update run; mod_id minted from commit short hash (feature rows) or stable slug (meta rows sharing re-apply commits `4d3367c5`/`4e4715e0`); never renumbered.
