@@ -226,6 +226,28 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | #207 | i18n: supervise-tabs hint → functional wording shown on all platforms + Alt-as-Cmd toggle rename | OPEN (filed `2026-07-22`) |
 
 ### Ours-only — NOT in upstream (no PR, or PR not yet accepted)
+- **Detach-reap redesign: reference-based session liveness + crash-orphan boot sweep** (2026-07-23;
+  `7a9a1fea` task1 → `95b9fa4f` task2 → `80d8f798` task3 → `7e33f0fa` task4; review fixes
+  `c34b8c44` + `222578f0`) — TRC1 root fix for overnight workspace-tab loss. status: candidate;
+  upstreamable: YES (all touched reaper code is upstream-original; frame as data-loss fix; branch
+  from `upstream/dev` per W3, NEVER from `custom`). Design doc of record:
+  `dinotty_mods/docs/task-files/2607/260723_T260723-003_detach-reap-redesign_design.md` (rev2).
+  1. Time-based detach reap DELETED (`DINOTTY_DETACH_REAP_SECS` gone — supersedes the #154 S2
+     timeout): a session lives iff a `tab_layouts` terminal leaf references it (60s `unowned_since`
+     grace, `Connected` veto via atomic mirror, single lifecycle-critical-section reap claim).
+  2. Unified `close_session` chokepoint: single winner claim = `sessions.remove` under new
+     `lifecycle` mutex; ClosePlan side-effects after unlock; layout-only close for sessionless
+     panes; pane-generation identity (`Arc::ptr_eq`, vacant-only insertion).
+  3. `#[cfg(unix)]` PID ledger (`config_dir()/session-ledger.json`, per-entry owner identity,
+     flock, temp+rename) + boot sweep at BOTH entrypoints (start_time-verified TERM→KILL, never
+     kill on uncertainty); ledger removal only on confirmed termination. Windows: no-op stub.
+  4. Singleton layout registration at both layoutless creation paths (Tauri `pty_spawn` + WS
+     fallback) so every session is tab-referenced; post-broadcast membership recheck for SSH.
+  Accepted residual (flagged): microsecond insert→broadcast race can leave a client-side ghost tab
+  (manual close clears it via layout-only close path); review capped at 2 redo rounds.
+  QA: cargo 378/0/10; live crash-orphan sweep kill verified; user trial passed detach-survival
+  (2.75 min disconnect, 4/4 sessions kept). Deployed 8998 only; 8999 + upstream PR pending
+  overnight soak (board token TRC2).
 - **Mobile quick-keyboard: host-clipboard paste + terminal-sequence app-action keys** (2026-07-23;
   `eb14ee6a` → `0b71556e`; incl. review fixes `99e2f358`, r3 rework `14057ca3`, polish `98c5fb1e`) —
   QKB1. Lets a phone one-tap paste the HOST (Mac) clipboard into the terminal and send.
