@@ -841,6 +841,10 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   `CloseReason::InputFailure` and generation-safe `close_session_for_session` depend on fork-side
   lifecycle machinery absent upstream, so an upstream proposal must adapt that failure path first.
   Verified with server state/churn/detach/failure/SSH/HTTP tests plus server and desktop cargo checks.
+- **Frontend visibility, commit 2/3 (2026-07-23)** — warns in the console when a Tauri `pty_write`
+  rejection would otherwise be swallowed. It deliberately does not add a `channel` reconnect trigger:
+  the native transport has no reconnect scheduler, and dispatcher failure now closes the session through
+  the existing `exited` flow.
 
 ## In-flight upstream PR
 - Keyboard-settings copy fixes — **PR #207 OPEN** (`2026-07-22`, branch

@@ -207,6 +207,7 @@ export class TauriIpcTransport implements Transport {
   send(msg: ClientMsg) {
     if (msg.type === 'input') {
       this._invoke('pty_write', { data: msg.data }).catch((err: unknown) => {
+        console.warn('pty_write failed:', err)
         const errStr = typeof err === 'string' ? err : String(err)
         if (errStr.includes('timeout') || errStr.includes('exited')) {
           this._disconnectHandler?.()
