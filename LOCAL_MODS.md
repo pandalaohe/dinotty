@@ -11,7 +11,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | `signing-identity` | no | n/a | n/a | private | n/a | | never — machine-local config |
 | `deploy-scripts` | no | n/a | n/a | private | n/a | | never — fork ops (dinotty-ops.sh / deploy-live.sh / dinotty launcher) |
 | `fork-meta` | no | n/a | n/a | private | n/a | | never — fork bookkeeping (.gitignore, .upstream-update.json, LOCAL_MODS.md, docs/task-files/) |
-| `eb14ee6a-quickkb-app-shortcuts` | maybe | | | candidate | pending | | open — decide PR after upstream opinion on host-clipboard endpoint security posture (`/api/clipboard` must never be auth-exempt) |
+| `eb14ee6a-quickkb-app-shortcuts` | yes | https://github.com/xichan96/dinotty/pull/212 | | pr-open | pending | upstream-pr/mobile-quickkb-app-action-keys | open — PR #212 merged upstream → absorbed; PR body explicitly asks upstream's opinion on the `/api/clipboard` security posture (never auth-exempt; branch cut from `upstream/dev` @ `348e8353`, per-commit 3way replay, vitest 800/800 + cargo fmt/clippy/test green on upstream base) |
 | `6596abd9-plugin-ws-attribution` | yes | https://github.com/xichan96/dinotty/pull/210 | | pr-open | pending | fix/plugin-workspace-attribution | open — PR #210 merged upstream → absorbed (custom carries same change as `6596abd9`; PR branch cut from `upstream/dev` @ `348e8353`, clean cherry-pick, 774/774 + vue-tsc green on upstream base) |
 | `t260723-015-session-input-dispatcher` | maybe | | | candidate | pending | | open — adapt `InputFailure` close to upstream lifecycle infrastructure before proposing; not standalone as-is |
 
@@ -277,9 +277,9 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   i18n EN+ZH throughout. Tests: vitest 785/785, cargo 372 pass; scoped reviews PASS (final round
   conf8, zero findings). Design contract: dinotty_mods
   `docs/task-files/2607/260723_qkb1-quickkeyboard-shortcuts_design.md`.
-  upstreamable: **maybe** — feature is general, but the host-clipboard endpoint's security posture
-  (auth-exempt refusal + same-origin proof) needs upstream opinion before a PR · status:
-  **candidate** · upstream_pr: — · upstream_issue: —
+  upstreamable: **yes** — PR filed 2026-07-23 (user decision; the security-posture question is put
+  to upstream in the PR body itself instead of gating the filing) · status: **filed** ·
+  upstream_pr: https://github.com/xichan96/dinotty/pull/212 · upstream_issue: —
 - **Mobile quick-keyboard: keep-on-scroll setting effective + persistent** (2026-07-23;
   `33c4b749`) — two general upstream bugs, both verified against upstream history:
   1. Upstream #193 (`55a0b451`) added `keyboard_keep_on_scroll` guards only to App.vue's three
