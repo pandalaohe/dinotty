@@ -13,6 +13,7 @@ use rust_embed::Embed;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use dinotty_server::api::clipboard;
 use dinotty_server::auth;
 use dinotty_server::auth::session::SessionStore;
 use dinotty_server::events;
@@ -127,6 +128,12 @@ impl axum::extract::FromRef<AppState> for Arc<SessionStore> {
 impl axum::extract::FromRef<AppState> for Arc<tokio::sync::RwLock<String>> {
     fn from_ref(state: &AppState) -> Self {
         state.auth_token.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for clipboard::ClipboardState {
+    fn from_ref(state: &AppState) -> Self {
+        clipboard::ClipboardState::new(state.auth_token.clone(), state.sessions.clone(), state.port)
     }
 }
 
@@ -583,6 +590,7 @@ pub fn run_server(
             .route("/api/tabs/:tab_id/layout", put(tabs::update_layout))
             .route("/api/input", post(ws::post_input))
             .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
+            .route("/api/clipboard", get(clipboard::get_clipboard))
             .route(
                 "/api/settings/background",
                 post(settings::upload_background).get(settings::get_background),
@@ -729,6 +737,7 @@ pub fn run_server(
             ))
             .layer(middleware::from_fn(
                 |req: axum::extract::Request, next: middleware::Next| async move {
+                    let is_clipboard = req.uri().path() == "/api/clipboard";
                     let origin = req
                         .headers()
                         .get(header::ORIGIN)
@@ -740,7 +749,18 @@ pub fn run_server(
                     } else {
                         next.run(req).await
                     };
-                    if let Some(origin) = origin {
+                    if is_clipboard {
+                        if is_preflight {
+                            *response.status_mut() = StatusCode::NO_CONTENT;
+                        }
+                        response.headers_mut().insert(
+                            header::CACHE_CONTROL,
+                            axum::http::HeaderValue::from_static("no-store"),
+                        );
+                    }
+                    if let Some(origin) = origin
+                        .filter(|_| !(is_clipboard && response.status() == StatusCode::FORBIDDEN))
+                    {
                         let headers = response.headers_mut();
                         headers.insert(
                             header::ACCESS_CONTROL_ALLOW_ORIGIN,
