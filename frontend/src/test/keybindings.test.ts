@@ -64,10 +64,10 @@ function keyEvent(key: string, init: KeyboardEventInit = {}) {
   })
 }
 
-function dispatchWindowsAppBinding(event: KeyboardEvent, id: string, action: () => void) {
+function dispatchAppBinding(event: KeyboardEvent, id: string, action: () => void) {
   const binding = useKeybindings().getBinding(id)
   const appCommand =
-    (event.ctrlKey || (settings.windowsAltAsCmd && event.altKey)) &&
+    (event.metaKey || event.ctrlKey || (settings.windowsAltAsCmd && event.altKey)) &&
     !(event.ctrlKey && event.altKey)
   if (appCommand && keyEventMatchesBinding(event, binding)) action()
 }
@@ -107,6 +107,33 @@ describe('unified keybindings', () => {
     expect(appDefs.every((def) => Object.keys(def.defaultBinding).join(',') === 'key,shift')).toBe(
       true
     )
+  })
+
+  it('keeps pasteTerminal out of the keybinding registry', () => {
+    expect(useKeybindings().defs.some((def) => def.id === 'pasteTerminal')).toBe(false)
+  })
+
+  it('ignores a persisted pasteTerminal keybinding override', () => {
+    settings.keybindings.pasteTerminal = { key: 'v', shift: false }
+
+    const binding = useKeybindings().getBinding('pasteTerminal')
+    expect(binding).toEqual({ key: '', shift: false })
+    expect(keyEventMatchesBinding(keyEvent('v', { metaKey: true }), binding)).toBe(false)
+    expect(keyEventMatchesBinding(keyEvent('v', { ctrlKey: true }), binding)).toBe(false)
+  })
+
+  it.each([
+    ['Cmd', { metaKey: true }],
+    ['Ctrl', { ctrlKey: true }],
+  ])('does not dispatch pasteTerminal for %s+V', (_modifier, init) => {
+    settings.keybindings.pasteTerminal = { key: 'v', shift: false }
+    const dispatch = vi.fn()
+    const event = keyEvent('v', init)
+
+    dispatchAppBinding(event, 'pasteTerminal', dispatch)
+
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
   })
 
   it('offers pasteTerminal in the action-key selector with its own default-on auto_enter', async () => {
@@ -255,17 +282,17 @@ describe('unified keybindings', () => {
     settings.windowsAltAsCmd = true
     const dispatch = vi.fn()
 
-    dispatchWindowsAppBinding(
+    dispatchAppBinding(
       keyEvent('`', { code: 'Backquote', altKey: true }),
       'superviseTabs',
       dispatch
     )
-    dispatchWindowsAppBinding(
+    dispatchAppBinding(
       keyEvent('`', { code: 'Backquote', ctrlKey: true }),
       'superviseTabs',
       dispatch
     )
-    dispatchWindowsAppBinding(keyEvent('`', { code: 'Backquote' }), 'superviseTabs', dispatch)
+    dispatchAppBinding(keyEvent('`', { code: 'Backquote' }), 'superviseTabs', dispatch)
 
     expect(dispatch).toHaveBeenCalledTimes(2)
   })
@@ -274,13 +301,13 @@ describe('unified keybindings', () => {
     settings.windowsAltAsCmd = false
     const dispatch = vi.fn()
 
-    dispatchWindowsAppBinding(
+    dispatchAppBinding(
       keyEvent('t', { ctrlKey: true, altKey: true }),
       'newTab',
       dispatch
     )
-    dispatchWindowsAppBinding(keyEvent('t', { ctrlKey: true }), 'newTab', dispatch)
-    dispatchWindowsAppBinding(keyEvent('t', { altKey: true }), 'newTab', dispatch)
+    dispatchAppBinding(keyEvent('t', { ctrlKey: true }), 'newTab', dispatch)
+    dispatchAppBinding(keyEvent('t', { altKey: true }), 'newTab', dispatch)
 
     expect(dispatch).toHaveBeenCalledOnce()
   })

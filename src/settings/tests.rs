@@ -36,6 +36,14 @@ fn settings_empty_json_is_valid() {
 }
 
 #[test]
+fn settings_ignores_removed_global_paste_auto_enter() {
+    let settings: Settings = serde_json::from_str(r#"{"paste_auto_enter":false}"#)
+        .expect("settings with removed paste_auto_enter should still parse");
+
+    assert_eq!(settings.settings_version, 0);
+}
+
+#[test]
 fn old_config_missing_keyboard_keep_on_scroll_defaults_to_false() {
     let settings: Settings = serde_json::from_str(r#"{"keyboard_sound":true}"#)
         .expect("old config without keyboard_keep_on_scroll should still parse");
@@ -560,9 +568,32 @@ fn action_keyboard_plain_send_omits_absent_optional_fields() {
     assert!(key.get("action").is_none());
     assert!(key.get("style").is_none());
     assert!(key.get("grow").is_none());
+    assert!(key.get("auto_enter").is_none());
 
     let round_trip: ActionKeyboardConfig = serde_json::from_value(serialized).unwrap();
     assert_eq!(round_trip, config);
+}
+
+#[test]
+fn action_keyboard_normalize_defaults_only_missing_paste_auto_enter() {
+    let mut config = parse_action_keyboard(
+        r#"{
+            "rows":[[
+                {"label":"paste-default","kind":"action","action":"pasteTerminal"},
+                {"label":"paste-off","kind":"action","action":"pasteTerminal","auto_enter":false},
+                {"label":"send-default","kind":"send","send":"echo ok"}
+            ]]
+        }"#,
+    );
+
+    config.normalize();
+
+    let keys = &config.rows[0];
+    assert_eq!(keys[0].auto_enter, Some(true));
+    assert_eq!(keys[1].auto_enter, Some(false));
+    assert_eq!(keys[2].auto_enter, None);
+    assert!(!keys[2].auto_enter.unwrap_or(false));
+    assert!(serde_json::to_value(&keys[2]).unwrap().get("auto_enter").is_none());
 }
 
 #[test]
@@ -710,19 +741,19 @@ fn action_keyboard_normalize_applies_kind_contract() {
     assert_eq!(keys[1].send, "keep");
     assert!(keys[1].repeat);
     assert_eq!(keys[2].send, "keep");
-    assert!(keys[2].auto_enter);
+    assert_eq!(keys[2].auto_enter, Some(true));
 
     assert!(keys[3].send.is_empty());
     assert!(keys[3].special.is_none());
     assert!(!keys[3].repeat);
-    assert!(!keys[3].auto_enter);
+    assert_eq!(keys[3].auto_enter, None);
     let valid_action_json = serde_json::to_value(&keys[3]).unwrap();
     for forbidden in ["send", "special", "repeat", "auto_enter"] {
         assert!(valid_action_json.get(forbidden).is_none(), "{forbidden} survived");
     }
 
-    assert!(keys[4].auto_enter);
-    assert!(!keys[5].auto_enter);
+    assert_eq!(keys[4].auto_enter, Some(true));
+    assert_eq!(keys[5].auto_enter, Some(false));
     assert_eq!(serde_json::to_value(&keys[4]).unwrap()["auto_enter"], true);
     assert_eq!(serde_json::to_value(&keys[5]).unwrap()["auto_enter"], false);
 

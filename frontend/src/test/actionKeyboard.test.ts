@@ -109,6 +109,18 @@ describe('actionKeyToKeyDef action display', () => {
     expect(def.autoEnter).toBe(autoEnter)
   })
 
+  it.each(['searchTerminal', 'newTab'])('omits autoEnter from %s key definitions', (action) => {
+    const def = actionKeyToKeyDef({
+      label: action,
+      kind: 'action',
+      action,
+      auto_enter: true,
+    })
+
+    expect(def.act).toBe(action)
+    expect(def).not.toHaveProperty('autoEnter')
+  })
+
   it('marks an unsupported action key as disabled with the action id in the label', () => {
     const def = actionKeyToKeyDef({
       label: 'Ignored',

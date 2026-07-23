@@ -673,8 +673,8 @@ pub struct ActionKey {
     pub repeat: bool,
     #[serde(default)]
     pub special: Option<String>,
-    #[serde(default)]
-    pub auto_enter: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_enter: Option<bool>,
     #[serde(default)]
     pub grow: Option<f64>,
 }
@@ -712,7 +712,7 @@ impl Serialize for ActionKey {
             map.serialize_entry("repeat", &self.repeat)?;
             map.serialize_entry("special", &self.special)?;
         }
-        if !is_valid_action || is_paste_action {
+        if (!is_valid_action || is_paste_action) && self.auto_enter.is_some() {
             map.serialize_entry("auto_enter", &self.auto_enter)?;
         }
         map.end()

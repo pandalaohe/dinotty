@@ -225,8 +225,10 @@ fn normalize_action_key(key: &mut ActionKey) {
         key.send.clear();
         key.special = None;
         key.repeat = false;
-        if key.action.as_deref() != Some("pasteTerminal") {
-            key.auto_enter = false;
+        if key.action.as_deref() == Some("pasteTerminal") {
+            key.auto_enter.get_or_insert(true);
+        } else {
+            key.auto_enter = None;
         }
     }
 }
@@ -242,7 +244,7 @@ fn default_action_enter(label: String) -> ActionKey {
         shape: None,
         repeat: false,
         special: None,
-        auto_enter: false,
+        auto_enter: None,
         grow: None,
     }
 }

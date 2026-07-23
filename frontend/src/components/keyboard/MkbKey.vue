@@ -82,7 +82,9 @@ let touchActive = false
 
 function fire() {
   if (props.k.act) {
-    emit('app-action', props.k.act, { autoEnter: props.k.autoEnter ?? true })
+    const options =
+      props.k.act === 'pasteTerminal' ? { autoEnter: props.k.autoEnter ?? true } : {}
+    emit('app-action', props.k.act, options)
     return
   }
   if (props.k.sp) {
