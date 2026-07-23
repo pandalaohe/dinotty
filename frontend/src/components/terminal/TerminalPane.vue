@@ -310,27 +310,22 @@ function onMenuCopy() {
 async function onMenuPaste() {
   if (!terminal) return
   let text: string | null = null
-  let readFailed = false
   if (isTauri()) {
     try {
       text = await readClipboardText()
-    } catch {
-      readFailed = true
-    }
+    } catch {}
   }
-  if (!text) {
+  if (text === null) {
     try {
       text = await navigator.clipboard.readText()
-    } catch {
-      readFailed = true
-    }
+    } catch {}
   }
-  if (!text) {
-    if (readFailed) {
-      toast.error(t('mobileKb.pasteFailed'), { position: POSITION.BOTTOM_CENTER })
-    } else {
-      toast.info(t('mobileKb.clipboardEmpty'), { position: POSITION.BOTTOM_CENTER })
-    }
+  if (text === null) {
+    toast.error(t('mobileKb.pasteFailed'), { position: POSITION.BOTTOM_CENTER })
+    return
+  }
+  if (text === '') {
+    toast.info(t('mobileKb.clipboardEmpty'), { position: POSITION.BOTTOM_CENTER })
     return
   }
   pasteFromClipboard(text, false)

@@ -18,7 +18,6 @@ import {
 import { actionKeyToKeyDef } from '../utils/actionKeyDef'
 import {
   APP_ACTIONS,
-  DISPATCH_ONLY_ACTIONS,
   getAppAction,
   isDispatchableAppAction,
 } from '../utils/appActionCatalog'
@@ -62,7 +61,6 @@ describe('app action catalog', () => {
   })
 
   it('widens dispatch for pasteTerminal without exposing it to action-key selection', () => {
-    expect(DISPATCH_ONLY_ACTIONS).toEqual(new Set(['pasteTerminal']))
     expect(isDispatchableAppAction('pasteTerminal')).toBe(true)
     expect(isDispatchableAppAction('searchTerminal')).toBe(true)
     expect(isDispatchableAppAction('unknown-action')).toBe(false)

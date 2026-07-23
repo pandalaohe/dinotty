@@ -67,6 +67,9 @@ async fn dynamic_cors_middleware(
     let suppress_clipboard_origin =
         is_clipboard && response.status() == StatusCode::FORBIDDEN;
     let headers = response.headers_mut();
+    if is_clipboard {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
     if let Some(ref ao) = allowed_origin.filter(|_| !suppress_clipboard_origin) {
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, ao.parse().unwrap());
         headers.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));

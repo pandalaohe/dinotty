@@ -372,7 +372,7 @@ import { useSettingsStore } from './stores/settingsStore'
 import { shellEscapePath } from './utils/shell'
 import { buildRunCodeCommand } from './utils/runCodeCommand'
 import { resolveAbbr, resolveColor } from './utils/workspaceIcon'
-import { APP_ACTION_IDS, DISPATCH_ONLY_ACTIONS } from './utils/appActionCatalog'
+import { isDispatchableAppAction } from './utils/appActionCatalog'
 import { createHostClipboardPasteController } from './utils/hostClipboardPaste'
 
 // ── Stores ──────────────────────────────────────────────────────
@@ -1330,7 +1330,7 @@ const keyActions: Record<string, () => void> = {
 }
 
 function dispatchAppAction(id: string) {
-  if (!APP_ACTION_IDS.has(id) && !DISPATCH_ONLY_ACTIONS.has(id)) return
+  if (!isDispatchableAppAction(id)) return
   if (id === 'closeTab') lastTabCloseShortcutAt = Date.now()
   keyActions[id]?.()
 }

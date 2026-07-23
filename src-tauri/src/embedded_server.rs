@@ -726,6 +726,15 @@ pub fn run_server(
                     } else {
                         next.run(req).await
                     };
+                    if is_clipboard {
+                        if is_preflight {
+                            *response.status_mut() = StatusCode::NO_CONTENT;
+                        }
+                        response.headers_mut().insert(
+                            header::CACHE_CONTROL,
+                            axum::http::HeaderValue::from_static("no-store"),
+                        );
+                    }
                     if let Some(origin) = origin
                         .filter(|_| !(is_clipboard && response.status() == StatusCode::FORBIDDEN))
                     {
