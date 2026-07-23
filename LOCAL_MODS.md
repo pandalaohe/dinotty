@@ -15,6 +15,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | `6596abd9-plugin-ws-attribution` | yes | https://github.com/xichan96/dinotty/pull/210 | | pr-open | pending | fix/plugin-workspace-attribution | open — PR #210 merged upstream → absorbed (custom carries same change as `6596abd9`; PR branch cut from `upstream/dev` @ `348e8353`, clean cherry-pick, 774/774 + vue-tsc green on upstream base) |
 | `t260723-015-session-input-dispatcher` | maybe | | | candidate | pending | | open — adapt `InputFailure` close to upstream lifecycle infrastructure before proposing; not standalone as-is |
 | `qkb5-quick-send-threshold` | yes | https://github.com/xichan96/dinotty/pull/214 | | pr-open | pending | upstream-pr/quickkb-send-threshold | open — PR #214 merged upstream → absorbed (branch cut from `upstream/dev` @ `3d17d8e3`, cherry-pick 4d1001c6+938e2738 minus fork-local lines, vue-tsc + vitest 836/836 + cargo 416/0 green on upstream base, hygiene --pre-pr CLEAN) |
+| `ff9c1049-preview-loopback-auth` | yes | | | candidate | pending | | open — upstream absorbs the loopback bypass in `check_preview_auth` (enabling `preview.allow_external` must not 401 localhost) |
 
 - Index wins conflicts with narrative/tables below (those are provenance). Volatile API state (PR state / checked_at) lives in run receipts, not here.
 - `qkb5-quick-send-threshold`: adds the persisted/clamped `quick_send_threshold`, keyboard settings UI and EN/ZH copy, split-send policy/guards, frozen broadcast routing, async send-result forwarding, and focused frontend/Rust coverage. Files: `src/settings/{types,normalize,handlers,io,mod,tests}.rs`, `frontend/src/{App.vue,components/keyboard/MobileKeyboard.vue,components/settings/KeyboardTab.vue,components/terminal/TerminalPane.vue,composables/useI18n.ts,composables/useSettings.ts,composables/useTerminal.ts,composables/useTransport.ts,utils/frozenSend.ts,test/MobileKeyboard.sendThreshold.test.ts}`.
@@ -229,6 +230,15 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | #207 | i18n: supervise-tabs hint → functional wording shown on all platforms + Alt-as-Cmd toggle rename | OPEN (filed `2026-07-22`) |
 
 ### Ours-only — NOT in upstream (no PR, or PR not yet accepted)
+- **Preview proxy loopback-auth fix** (2026-07-23; `ff9c1049`, `src/proxy/mod.rs`
+  `check_preview_auth`) — with `preview.allow_external = true`, the session-auth requirement also
+  applied to loopback clients; the localhost UI is auth-exempt (no session cookie), so enabling
+  external access broke local `/preview/*` panes (observed live: loopback curl → 401, WebScope
+  local pane dead). Fix: unconditional `real_ip.is_loopback() → allow` before both checks —
+  restores the implicit pre-`allow_external` trust; external clients still need
+  allow_external + session cookie/Bearer. upstreamable: **yes** (general upstream defect in the
+  preview auth model, not fork-specific) · status: **candidate** · exit-condition: upstream absorbs
+  the loopback bypass.
 - **Detach-reap redesign: reference-based session liveness + crash-orphan boot sweep** (2026-07-23;
   `7a9a1fea` task1 → `95b9fa4f` task2 → `80d8f798` task3 → `7e33f0fa` task4; review fixes
   `c34b8c44` + `222578f0`) — TRC1 root fix for overnight workspace-tab loss. status: filed;
