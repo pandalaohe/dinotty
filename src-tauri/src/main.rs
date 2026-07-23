@@ -631,6 +631,7 @@ fn main() {
     let _ = EMBEDDED_HTTP_PORT.set(port);
 
     let manager = Arc::new(SessionManager::new());
+    dinotty_server::session::ledger::boot_sweep();
 
     if args.contains(&"--server".to_string()) {
         let rt = tokio::runtime::Runtime::new().unwrap();
