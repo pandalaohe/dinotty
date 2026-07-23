@@ -154,16 +154,18 @@ impl Write for ScriptedWriter {
 
 struct HeldWriter {
     started: mpsc::UnboundedSender<Vec<u8>>,
-    release: std::sync::mpsc::Receiver<()>,
+    release: Option<std::sync::mpsc::Receiver<()>>,
     completed: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 impl Write for HeldWriter {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         let _ = self.started.send(data.to_vec());
-        self.release
-            .recv()
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "write release dropped"))?;
+        if let Some(release) = self.release.take() {
+            release
+                .recv()
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "write release dropped"))?;
+        }
         let _ = self.completed.send(data.to_vec());
         Ok(data.len())
     }
@@ -322,23 +324,32 @@ async fn close_drains_accepted_input_once_and_rejects_later_enqueues() {
     let (completed_tx, mut completed_rx) = mpsc::unbounded_channel();
     let session = local_session_with_writer(Box::new(HeldWriter {
         started: started_tx,
-        release: release_rx,
+        release: Some(release_rx),
         completed: completed_tx,
     }));
     start_and_publish_dispatcher(&session, "close-drain", &manager);
 
-    session.enqueue_input("accepted-before-close".to_string()).unwrap();
-    assert_eq!(started_rx.recv().await.unwrap(), b"accepted-before-close");
+    session.enqueue_input("in-flight-before-close".to_string()).unwrap();
+    assert_eq!(started_rx.recv().await.unwrap(), b"in-flight-before-close");
+    session.enqueue_input("buffered-before-close".to_string()).unwrap();
     session.close_input();
     assert_eq!(session.enqueue_input("rejected-after-close".to_string()), Err(InputError::Closed));
 
     release_tx.send(()).unwrap();
-    assert_eq!(completed_rx.recv().await.unwrap(), b"accepted-before-close");
+    assert_eq!(completed_rx.recv().await.unwrap(), b"in-flight-before-close");
+    assert_eq!(started_rx.recv().await.unwrap(), b"buffered-before-close");
+    assert_eq!(completed_rx.recv().await.unwrap(), b"buffered-before-close");
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(100), started_rx.recv())
             .await
             .is_err(),
-        "accepted bytes must be drained exactly once without retry"
+        "in-flight and buffered bytes must each be attempted exactly once without retry"
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), completed_rx.recv())
+            .await
+            .is_err(),
+        "in-flight and buffered bytes must each complete exactly once"
     );
 }
 
