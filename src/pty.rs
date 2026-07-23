@@ -336,7 +336,7 @@ pub fn create_session(
         clients: std::sync::Mutex::new(Vec::new()),
         next_client_id: std::sync::atomic::AtomicU64::new(1),
         tauri_client_id: std::sync::Mutex::new(None),
-        input_tx: std::sync::Mutex::new(None),
+        input_state: std::sync::Mutex::new(crate::session::InputState::Uninitialized),
         status: std::sync::Mutex::new(SessionStatus::Connected),
         is_connected: std::sync::atomic::AtomicBool::new(true),
         size: std::sync::Mutex::new((80, 24)),
@@ -360,7 +360,10 @@ pub fn create_session(
         output_rx: std::sync::Mutex::new(Some(output_rx)),
         pending_results: std::sync::Mutex::new(Vec::new()),
     });
+    Session::start_input_dispatcher(&session, pane_id.to_string(), Arc::downgrade(manager))
+        .map_err(|error| format!("failed to start input dispatcher: {error}"))?;
     if !reservation.publish(Arc::clone(&session)) {
+        session.close_input();
         return Err(format!("session already exists for pane {pane_id}"));
     }
     pending_spawn.disarm();

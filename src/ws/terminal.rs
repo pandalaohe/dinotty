@@ -175,41 +175,6 @@ async fn handle_socket(
             info!("WS forwarder (reconnect): channel closed, exiting pane={}", fwd_pane);
         });
 
-        // Input channel: replaces old channel so only this connection writes to PTY
-        let mut input_rx = session.replace_input_channel();
-        let write_session = Arc::clone(&session);
-        let write_pane = pane_id.clone();
-        let is_ssh = write_session.is_ssh();
-        tokio::spawn(async move {
-            while let Some(first) = input_rx.recv().await {
-                if write_session.is_exited() {
-                    break;
-                }
-                // Batch: drain all pending messages to minimize lock acquisitions
-                let mut batch = first;
-                while let Ok(data) = input_rx.try_recv() {
-                    batch.push_str(&data);
-                }
-                let batch_len = batch.len();
-                let result = if is_ssh {
-                    write_session.write_input_async(batch.as_bytes()).await
-                } else {
-                    let ws = Arc::clone(&write_session);
-                    tokio::task::spawn_blocking(move || ws.write_input_blocking(batch.as_bytes()))
-                        .await
-                        .unwrap_or_else(|e| Err(e.to_string()))
-                };
-                match result {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
-                        break;
-                    }
-                }
-            }
-            info!("PTY write task (reconnect) exited, pane={}", write_pane);
-        });
-
         // Read loop
         while let Some(Ok(msg)) = ws_rx.next().await {
             match msg {
@@ -233,12 +198,9 @@ async fn handle_socket(
                                 input_buffer.push(ch);
                             }
                         }
-                        let tx = session
-                            .input_tx
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        if let Some(tx) = tx.as_ref() {
-                            let _ = tx.send(data);
+                        if let Err(input_error) = session.enqueue_input(data) {
+                            error!("WS input rejected: {input_error}, pane={pane_id}");
+                            break;
                         }
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
@@ -266,7 +228,6 @@ async fn handle_socket(
         }
 
         fwd.abort();
-        writer_task.abort();
         ping_task.abort();
         session.remove_client(client_id);
 
@@ -340,41 +301,6 @@ async fn handle_socket(
         info!("WS forwarder: channel closed, exiting pane={}", fwd_pane);
     });
 
-    // Input channel: dedicated write task reads from channel -> PTY writer
-    let mut input_rx = session.replace_input_channel();
-    let write_session = Arc::clone(&session);
-    let write_pane = pane_id.clone();
-    let is_ssh = write_session.is_ssh();
-    tokio::spawn(async move {
-        while let Some(first) = input_rx.recv().await {
-            if write_session.is_exited() {
-                break;
-            }
-            // Batch: drain all pending messages to minimize lock acquisitions
-            let mut batch = first;
-            while let Ok(data) = input_rx.try_recv() {
-                batch.push_str(&data);
-            }
-            let batch_len = batch.len();
-            let result = if is_ssh {
-                write_session.write_input_async(batch.as_bytes()).await
-            } else {
-                let ws = Arc::clone(&write_session);
-                tokio::task::spawn_blocking(move || ws.write_input_blocking(batch.as_bytes()))
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()))
-            };
-            match result {
-                Ok(()) => {}
-                Err(e) => {
-                    error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
-                    break;
-                }
-            }
-        }
-        info!("PTY write task exited, pane={}", write_pane);
-    });
-
     // WS read loop
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
@@ -398,10 +324,9 @@ async fn handle_socket(
                             input_buffer.push(ch);
                         }
                     }
-                    let tx =
-                        session.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if let Some(tx) = tx.as_ref() {
-                        let _ = tx.send(data);
+                    if let Err(input_error) = session.enqueue_input(data) {
+                        error!("WS input rejected: {input_error}, pane={pane_id}");
+                        break;
                     }
                 }
                 Ok(ClientMsg::Resize { cols, rows }) => {
@@ -428,7 +353,6 @@ async fn handle_socket(
     }
 
     fwd.abort();
-    writer_task.abort();
     ping_task.abort();
     session.remove_client(client_id);
 

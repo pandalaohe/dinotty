@@ -13,6 +13,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 | `fork-meta` | no | n/a | n/a | private | n/a | | never — fork bookkeeping (.gitignore, .upstream-update.json, LOCAL_MODS.md, docs/task-files/) |
 | `eb14ee6a-quickkb-app-shortcuts` | maybe | | | candidate | pending | | open — decide PR after upstream opinion on host-clipboard endpoint security posture (`/api/clipboard` must never be auth-exempt) |
 | `6596abd9-plugin-ws-attribution` | yes | https://github.com/xichan96/dinotty/pull/210 | | pr-open | pending | fix/plugin-workspace-attribution | open — PR #210 merged upstream → absorbed (custom carries same change as `6596abd9`; PR branch cut from `upstream/dev` @ `348e8353`, clean cherry-pick, 774/774 + vue-tsc green on upstream base) |
+| `t260723-015-session-input-dispatcher` | maybe | | | candidate | pending | | open — adapt `InputFailure` close to upstream lifecycle infrastructure before proposing; not standalone as-is |
 
 - Index wins conflicts with narrative/tables below (those are provenance). Volatile API state (PR state / checked_at) lives in run receipts, not here.
 - Migrated v1→v2 `2026-07-22` by the upstream-update run; mod_id minted from commit short hash (feature rows) or stable slug (meta rows sharing re-apply commits `4d3367c5`/`4e4715e0`); never renumbered.
@@ -827,6 +828,19 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   (user declined the 8998 rebuild — code/test-level verification only).
   Known minor flaw: the reset button reuses `AppearanceTab`'s literal English "reset to default" text
   instead of i18n wiring — consistent with the existing implementation; revisit if unified later.
+
+## Session-owned input dispatcher (T260723-015)
+
+- **Server fix, commit 1/3 (2026-07-23)** — replaces the connection-owned, last-attacher-wins
+  input channel with one dispatcher owned by each `Session`. Tauri, terminal WebSocket, and HTTP
+  `/api/input` channel-class entrances enqueue through that dispatcher; direct synchronous REST,
+  agent, and MCP writers deliberately retain their written-not-queued contract. Local write errors
+  drop the failed batch without retry and canonically close after 3 failures in 10 seconds; a dead
+  SSH command channel closes immediately. Attach/detach no longer replaces or aborts input ownership.
+  The change is upstreamable in principle but **not a standalone upstream PR as implemented**:
+  `CloseReason::InputFailure` and generation-safe `close_session_for_session` depend on fork-side
+  lifecycle machinery absent upstream, so an upstream proposal must adapt that failure path first.
+  Verified with server state/churn/detach/failure/SSH/HTTP tests plus server and desktop cargo checks.
 
 ## In-flight upstream PR
 - Keyboard-settings copy fixes — **PR #207 OPEN** (`2026-07-22`, branch

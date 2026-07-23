@@ -22,11 +22,11 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
 };
 use tokio::sync::{mpsc, watch};
-use tracing::info;
+use tracing::{error, info};
 
 /// Force-flush buffered synchronized output at this limit (256KB).
 /// Prevents massive single payloads that freeze the frontend UI thread.
@@ -91,6 +91,56 @@ pub struct ClientEndpoint {
     pub snapshot_pending: std::sync::atomic::AtomicBool,
 }
 
+pub(crate) enum InputState {
+    Uninitialized,
+    Running(mpsc::UnboundedSender<String>),
+    Closed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputError {
+    Closed,
+    NotInitialized,
+    AlreadyInitialized,
+}
+
+impl std::fmt::Display for InputError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Closed => formatter.write_str("input dispatcher closed"),
+            Self::NotInitialized => formatter.write_str("input dispatcher not initialized"),
+            Self::AlreadyInitialized => formatter.write_str("input dispatcher already initialized"),
+        }
+    }
+}
+
+impl std::error::Error for InputError {}
+
+#[derive(Default)]
+struct InputFailureWindow {
+    count: u8,
+    started_at: Option<tokio::time::Instant>,
+}
+
+impl InputFailureWindow {
+    fn record_failure(&mut self, now: tokio::time::Instant) -> u8 {
+        if self.started_at.is_none_or(|started_at| {
+            now.saturating_duration_since(started_at) > std::time::Duration::from_secs(10)
+        }) {
+            self.count = 1;
+            self.started_at = Some(now);
+        } else {
+            self.count = self.count.saturating_add(1);
+        }
+        self.count
+    }
+
+    fn reset(&mut self) {
+        self.count = 0;
+        self.started_at = None;
+    }
+}
+
 pub struct Session {
     /// 传输后端（本地 PTY 或 SSH）
     pub backend: tokio::sync::Mutex<SessionBackend>,
@@ -100,7 +150,7 @@ pub struct Session {
     pub clients: Mutex<Vec<ClientEndpoint>>,
     pub next_client_id: AtomicU64,
     pub tauri_client_id: Mutex<Option<u64>>,
-    pub input_tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
+    pub(crate) input_state: Mutex<InputState>,
     pub status: Mutex<SessionStatus>,
     /// Conservative lock-free mirror used only by lifecycle-locked reap claims.
     pub(crate) is_connected: AtomicBool,
@@ -146,6 +196,148 @@ pub struct Session {
 }
 
 impl Session {
+    pub(crate) fn start_input_dispatcher(
+        session: &Arc<Self>,
+        pane_id: String,
+        manager: Weak<SessionManager>,
+    ) -> Result<(), InputError> {
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        {
+            let mut state =
+                session.input_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !matches!(*state, InputState::Uninitialized) {
+                return Err(InputError::AlreadyInitialized);
+            }
+            *state = InputState::Running(input_tx);
+        }
+
+        let session = Arc::downgrade(session);
+        tokio::spawn(async move {
+            Self::run_input_dispatcher(session, input_rx, pane_id, manager).await;
+        });
+        Ok(())
+    }
+
+    async fn run_input_dispatcher(
+        session: Weak<Self>,
+        mut input_rx: mpsc::UnboundedReceiver<String>,
+        pane_id: String,
+        manager: Weak<SessionManager>,
+    ) {
+        let mut failure_window = InputFailureWindow::default();
+
+        while let Some(first) = input_rx.recv().await {
+            let Some(write_session) = session.upgrade() else {
+                break;
+            };
+
+            let mut batch = first;
+            while let Ok(data) = input_rx.try_recv() {
+                batch.push_str(&data);
+            }
+            let batch_len = batch.len();
+
+            if write_session.is_ssh() {
+                if let Err(write_error) = write_session.write_input_async(batch.as_bytes()).await {
+                    error!(
+                        "SSH input dispatch failed ({batch_len}B): {write_error}, pane={pane_id}"
+                    );
+                    Self::close_after_input_failure(&pane_id, Arc::clone(&write_session), &manager)
+                        .await;
+                    break;
+                }
+                continue;
+            }
+
+            let blocking_session = Arc::clone(&write_session);
+            let result = tokio::task::spawn_blocking(move || {
+                blocking_session.write_input_blocking(batch.as_bytes())
+            })
+            .await
+            .unwrap_or_else(|join_error| Err(join_error.to_string()));
+
+            match result {
+                Ok(()) => failure_window.reset(),
+                Err(write_error) => {
+                    let now = tokio::time::Instant::now();
+                    let failure_count = failure_window.record_failure(now);
+                    error!(
+                        "PTY input dispatch failed; dropping {batch_len}B (failure {failure_count}/3 in 10s): {write_error}, pane={pane_id}"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+                    if failure_count == 3 {
+                        Self::close_after_input_failure(
+                            &pane_id,
+                            Arc::clone(&write_session),
+                            &manager,
+                        )
+                        .await;
+                        break;
+                    }
+                }
+            }
+        }
+
+        info!("Session input dispatcher exited, pane={pane_id}");
+    }
+
+    async fn close_after_input_failure(
+        pane_id: &str,
+        session: Arc<Self>,
+        manager: &Weak<SessionManager>,
+    ) {
+        let Some(manager) = manager.upgrade() else {
+            session.close_input();
+            return;
+        };
+        let pane_id = pane_id.to_string();
+        let fallback_session = Arc::clone(&session);
+        let closed = tokio::task::spawn_blocking(move || {
+            manager.close_session_for_session(
+                &pane_id,
+                &session,
+                CloseReason::InputFailure,
+                true,
+                None,
+            )
+        })
+        .await
+        .unwrap_or(false);
+        if !closed {
+            fallback_session.close_input();
+        }
+    }
+
+    /// Queue input for the session-owned dispatcher. `Ok(())` means queued,
+    /// not necessarily written to the backend yet.
+    ///
+    /// # Errors
+    /// Returns [`InputError::NotInitialized`] before dispatcher startup and
+    /// [`InputError::Closed`] after session close or dispatcher termination.
+    pub fn enqueue_input(&self, data: String) -> Result<(), InputError> {
+        let mut state = self.input_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            InputState::Uninitialized => Err(InputError::NotInitialized),
+            InputState::Running(input_tx) => {
+                if input_tx.send(data).is_err() {
+                    *state = InputState::Closed;
+                    Err(InputError::Closed)
+                } else {
+                    Ok(())
+                }
+            }
+            InputState::Closed => Err(InputError::Closed),
+        }
+    }
+
+    pub(crate) fn close_input(&self) {
+        let mut state = self.input_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if matches!(*state, InputState::Running(_)) {
+            *state = InputState::Closed;
+        }
+    }
+
     /// Publish status without ever co-holding the manager lifecycle lock.
     /// Connected is mirrored before the status value becomes visible; Detached
     /// clears the mirror only after the status value is committed.
@@ -580,17 +772,6 @@ impl Session {
         cwd::sniff_cwd_from_title_osc(sniff_buf, data, home, cwd);
     }
 
-    /// Replace the input channel, closing the old one (if any) so the previous
-    /// PTY write task exits. Returns the new receiver for the caller to spawn
-    /// a write task on.
-    pub fn replace_input_channel(&self) -> mpsc::UnboundedReceiver<String> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let old =
-            self.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).replace(tx);
-        drop(old); // close old sender -> old write task's recv() returns None
-        rx
-    }
-
     pub fn add_client(&self) -> (u64, mpsc::Receiver<SessionClientEvent>) {
         // Bounded channel with non-blocking try_send: messages are dropped when
         // full rather than blocking the PTY reader. Keeps the shell responsive.
@@ -786,7 +967,7 @@ mod session_stub_tests {
             clients: Mutex::new(Vec::new()),
             next_client_id: AtomicU64::new(1),
             tauri_client_id: Mutex::new(None),
-            input_tx: Mutex::new(None),
+            input_state: Mutex::new(InputState::Uninitialized),
             status: Mutex::new(SessionStatus::Connected),
             is_connected: AtomicBool::new(true),
             size: Mutex::new((80, 24)),

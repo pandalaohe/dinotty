@@ -1,23 +1,30 @@
 use super::*;
+use crate::event_bus::BusEvent;
+use crate::settings::SshAuthMethod;
 use portable_pty::{Child, ChildKiller, ExitStatus, NativePtySystem, PtySize, PtySystem};
-use std::io;
+use std::collections::VecDeque;
+use std::io::{self, Write};
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 #[derive(Debug)]
-struct TestChild;
+struct TestChild {
+    killed: bool,
+}
 
 impl ChildKiller for TestChild {
     fn kill(&mut self) -> io::Result<()> {
+        self.killed = true;
         Ok(())
     }
 
     fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
-        Box::new(Self)
+        Box::new(Self { killed: self.killed })
     }
 }
 
 impl Child for TestChild {
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        Ok(None)
+        Ok(self.killed.then(|| ExitStatus::with_exit_code(0)))
     }
 
     fn wait(&mut self) -> io::Result<ExitStatus> {
@@ -35,6 +42,10 @@ impl Child for TestChild {
 }
 
 fn local_session_for_write_input() -> Arc<Session> {
+    local_session_with_writer(Box::new(io::sink()))
+}
+
+fn local_session_with_writer(writer: Box<dyn Write + Send>) -> Arc<Session> {
     let pair = NativePtySystem::default()
         .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
         .unwrap();
@@ -44,16 +55,16 @@ fn local_session_for_write_input() -> Arc<Session> {
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     Arc::new(Session {
         backend: tokio::sync::Mutex::new(SessionBackend::Local {
-            writer: Box::new(io::sink()),
+            writer,
             master: pair.master,
-            child: Box::new(TestChild),
+            child: Box::new(TestChild { killed: false }),
         }),
         ssh_params: None,
         screen: Mutex::new(VirtualScreen::new(80, 24)),
         clients: Mutex::new(Vec::new()),
         next_client_id: AtomicU64::new(1),
         tauri_client_id: Mutex::new(None),
-        input_tx: Mutex::new(None),
+        input_state: Mutex::new(InputState::Uninitialized),
         status: Mutex::new(SessionStatus::Connected),
         is_connected: AtomicBool::new(true),
         size: Mutex::new((80, 24)),
@@ -119,6 +130,255 @@ async fn write_input_blocking_waits_for_backend_lock() {
 
     drop(backend);
     assert_eq!(writer.await.expect("spawn_blocking panicked"), Ok(()));
+}
+
+struct ScriptedWriter {
+    failures: VecDeque<bool>,
+    attempts: mpsc::UnboundedSender<Vec<u8>>,
+}
+
+impl Write for ScriptedWriter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let _ = self.attempts.send(data.to_vec());
+        if self.failures.pop_front().unwrap_or(false) {
+            Err(io::Error::from_raw_os_error(libc::EIO))
+        } else {
+            Ok(data.len())
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn scripted_local_session(
+    failures: impl IntoIterator<Item = bool>,
+) -> (Arc<Session>, mpsc::UnboundedReceiver<Vec<u8>>) {
+    let (attempts, attempts_rx) = mpsc::unbounded_channel();
+    let writer = ScriptedWriter { failures: failures.into_iter().collect(), attempts };
+    (local_session_with_writer(Box::new(writer)), attempts_rx)
+}
+
+fn ssh_session_for_dispatcher(ssh_cmd_tx: mpsc::UnboundedSender<SshCmd>) -> Arc<Session> {
+    let (resize_tx, _resize_rx) = watch::channel(None);
+    let (output_tx, output_rx) = mpsc::unbounded_channel();
+    Arc::new(Session {
+        backend: tokio::sync::Mutex::new(SessionBackend::Ssh),
+        ssh_params: Some(SshSessionParams {
+            host: "example.invalid".to_string(),
+            port: 22,
+            username: "test".to_string(),
+            auth_method: SshAuthMethod::default(),
+            default_command: None,
+            profile_id: None,
+            initial_cwd: None,
+        }),
+        screen: Mutex::new(VirtualScreen::new(80, 24)),
+        clients: Mutex::new(Vec::new()),
+        next_client_id: AtomicU64::new(1),
+        tauri_client_id: Mutex::new(None),
+        input_state: Mutex::new(InputState::Uninitialized),
+        status: Mutex::new(SessionStatus::Connected),
+        is_connected: AtomicBool::new(true),
+        size: Mutex::new((80, 24)),
+        exited: Mutex::new(false),
+        shell_type: "ssh".to_string(),
+        tauri_on_exit: Mutex::new(None),
+        cwd_state: Mutex::new(CwdState { cwd: PathBuf::from("/"), sniff_buf: Vec::new() }),
+        sync: Mutex::new(SyncState::default()),
+        sync_disable_hook: Mutex::new(None),
+        resize_tx,
+        ssh_cmd_tx: Mutex::new(Some(ssh_cmd_tx)),
+        ssh_handle: tokio::sync::Mutex::new(None),
+        sftp_session: Mutex::new(None),
+        remote_home: Mutex::new(None),
+        remote_user: Mutex::new(None),
+        output_tx,
+        output_rx: Mutex::new(Some(output_rx)),
+        pending_results: Mutex::new(Vec::new()),
+    })
+}
+
+fn start_and_publish_dispatcher(
+    session: &Arc<Session>,
+    pane_id: &str,
+    manager: &Arc<SessionManager>,
+) {
+    Session::start_input_dispatcher(session, pane_id.to_string(), Arc::downgrade(manager)).unwrap();
+    assert!(manager.insert_session(pane_id.to_string(), Arc::clone(session)));
+}
+
+#[test]
+fn enqueue_rejects_uninitialized_and_closed_states() {
+    let session = local_session_for_write_input();
+    assert_eq!(session.enqueue_input("x".to_string()), Err(InputError::NotInitialized));
+
+    *session.input_state.lock().unwrap() = InputState::Closed;
+    assert_eq!(session.enqueue_input("y".to_string()), Err(InputError::Closed));
+}
+
+#[tokio::test]
+async fn input_dispatcher_rejects_double_initialization() {
+    let manager = Arc::new(SessionManager::new());
+    let session = local_session_for_write_input();
+    Session::start_input_dispatcher(&session, "double-init".to_string(), Arc::downgrade(&manager))
+        .unwrap();
+
+    assert_eq!(
+        Session::start_input_dispatcher(
+            &session,
+            "double-init".to_string(),
+            Arc::downgrade(&manager),
+        ),
+        Err(InputError::AlreadyInitialized)
+    );
+    session.close_input();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_detach_churn_and_detached_session_keep_one_dispatcher() {
+    let manager = Arc::new(SessionManager::new());
+    let (session, mut attempts) = scripted_local_session([false; 5]);
+    start_and_publish_dispatcher(&session, "churn", &manager);
+
+    let (native_id, _native_rx) = session.add_client();
+    let (first_web_id, _first_web_rx) = session.add_client();
+    let (second_web_id, _second_web_rx) = session.add_client();
+
+    for (input, detached_client) in
+        [("native", first_web_id), ("web-a", second_web_id), ("web-b", native_id)]
+    {
+        session.enqueue_input(input.to_string()).unwrap();
+        assert_eq!(attempts.recv().await.unwrap(), input.as_bytes());
+        session.remove_client(detached_client);
+    }
+
+    session.set_status(SessionStatus::Detached { since: std::time::Instant::now() });
+    session.enqueue_input("after-detach".to_string()).unwrap();
+    assert_eq!(attempts.recv().await.unwrap(), b"after-detach");
+    assert_eq!(
+        Session::start_input_dispatcher(&session, "churn".to_string(), Arc::downgrade(&manager),),
+        Err(InputError::AlreadyInitialized)
+    );
+    session.close_input();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_race_is_atomic_idempotent_and_bounded() {
+    let manager = Arc::new(SessionManager::new());
+    let (session, _attempts) = scripted_local_session([false]);
+    start_and_publish_dispatcher(&session, "close-race", &manager);
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+
+    let closing_session = Arc::clone(&session);
+    let closing_barrier = Arc::clone(&barrier);
+    let close_task = tokio::spawn(async move {
+        closing_barrier.wait().await;
+        closing_session.close_input();
+    });
+    let enqueue_session = Arc::clone(&session);
+    let enqueue_barrier = Arc::clone(&barrier);
+    let enqueue_task = tokio::spawn(async move {
+        enqueue_barrier.wait().await;
+        enqueue_session.enqueue_input("raced".to_string())
+    });
+
+    barrier.wait().await;
+    close_task.await.unwrap();
+    let raced = enqueue_task.await.unwrap();
+    assert!(matches!(raced, Ok(()) | Err(InputError::Closed)));
+    assert_eq!(session.enqueue_input("after".to_string()), Err(InputError::Closed));
+    session.close_input();
+    session.close_input();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn three_local_eio_batches_close_once_without_retrying_bytes() {
+    let manager = Arc::new(SessionManager::new());
+    let (session, mut attempts) = scripted_local_session([true, true, true]);
+    let close_callbacks = Arc::new(AtomicUsize::new(0));
+    let callback_count = Arc::clone(&close_callbacks);
+    *session.tauri_on_exit.lock().unwrap() = Some(Arc::new(move |_, _| {
+        callback_count.fetch_add(1, AtomicOrdering::SeqCst);
+    }));
+    let mut events = manager.event_bus.subscribe();
+    start_and_publish_dispatcher(&session, "local-eio", &manager);
+
+    for input in ["one", "two", "three"] {
+        session.enqueue_input(input.to_string()).unwrap();
+        assert_eq!(attempts.recv().await.unwrap(), input.as_bytes());
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    }
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+        .await
+        .expect("InputFailure close event timed out")
+        .unwrap();
+    assert!(matches!(event, BusEvent::SessionClosed { ref pane_id, .. } if pane_id == "local-eio"));
+    assert!(!manager.sessions.contains_key("local-eio"));
+    assert_eq!(close_callbacks.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(session.enqueue_input("four".to_string()), Err(InputError::Closed));
+    assert!(attempts.try_recv().is_err(), "failed bytes must never be retried");
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(100), events.recv())
+        .await
+        .is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn successful_local_write_resets_the_failure_window() {
+    let manager = Arc::new(SessionManager::new());
+    let (session, mut attempts) = scripted_local_session([true, false, true, true]);
+    start_and_publish_dispatcher(&session, "success-reset", &manager);
+
+    for input in ["fail-1", "ok", "fail-2", "fail-3"] {
+        session.enqueue_input(input.to_string()).unwrap();
+        assert_eq!(attempts.recv().await.unwrap(), input.as_bytes());
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    }
+
+    assert!(manager.sessions.contains_key("success-reset"));
+    assert!(session.enqueue_input("still-open".to_string()).is_ok());
+    assert!(manager.close_session("success-reset", CloseReason::Explicit, true, None));
+}
+
+#[test]
+fn local_failure_window_restarts_after_ten_seconds_and_success_resets() {
+    let started = tokio::time::Instant::now();
+    let mut window = InputFailureWindow::default();
+    assert_eq!(window.record_failure(started), 1);
+    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(11)), 1);
+    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(22)), 1);
+
+    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(23)), 2);
+    window.reset();
+    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(24)), 1);
+    assert_eq!(window.record_failure(started + std::time::Duration::from_secs(25)), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ssh_dispatcher_queues_input_then_closes_immediately_on_dead_command_channel() {
+    let manager = Arc::new(SessionManager::new());
+    let (ssh_cmd_tx, mut ssh_cmd_rx) = mpsc::unbounded_channel();
+    let session = ssh_session_for_dispatcher(ssh_cmd_tx);
+    let mut events = manager.event_bus.subscribe();
+    start_and_publish_dispatcher(&session, "ssh-input", &manager);
+
+    session.enqueue_input("remote".to_string()).unwrap();
+    match ssh_cmd_rx.recv().await.unwrap() {
+        SshCmd::Input(data) => assert_eq!(data, b"remote"),
+        SshCmd::Resize(_, _) | SshCmd::Close => panic!("unexpected SSH command"),
+    }
+
+    drop(ssh_cmd_rx);
+    session.enqueue_input("dead".to_string()).unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+        .await
+        .expect("SSH InputFailure close event timed out")
+        .unwrap();
+    assert!(matches!(event, BusEvent::SessionClosed { ref pane_id, .. } if pane_id == "ssh-input"));
+    assert!(!manager.sessions.contains_key("ssh-input"));
+    assert_eq!(session.enqueue_input("after".to_string()), Err(InputError::Closed));
 }
 
 // ── helpers ──────────────────────────────────────────────────────

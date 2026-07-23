@@ -23,6 +23,7 @@ const SESSION_UNOWNED_GRACE: Duration = Duration::from_secs(60);
 #[derive(Clone, Copy, Debug)]
 pub enum CloseReason {
     Explicit,
+    InputFailure,
     NaturalExit,
     Reaped,
     Shutdown,
@@ -914,6 +915,7 @@ impl SessionManager {
         plan: ClosePlan,
     ) -> bool {
         info!("Closing session: pane={pane_id}, reason={reason:?}, kill={kill}");
+        plan.session.close_input();
         let termination_confirmed = if kill {
             plan.session.kill_child_and_confirm()
         } else if matches!(reason, CloseReason::NaturalExit) {
@@ -931,7 +933,6 @@ impl SessionManager {
             );
         }
 
-        plan.session.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
         let _ = plan.session.output_tx.send(Vec::new());
         let _ = plan.session.notify_exit_and_mark_exited(pane_id, exit_code);
         self.pane_closed_notify(pane_id);

@@ -141,46 +141,6 @@ fn spawn_tauri_output_forwarder(
     }
 }
 
-/// Spawn a dedicated write task for the session that reads from the input channel
-/// and writes to the PTY. This avoids the thread-leak problem where each `pty_write`
-/// command spawned a `spawn_blocking` with a timeout — if `write_all` blocked (PTY
-/// input buffer full), the timeout fired but the thread was never reclaimed.
-fn spawn_tauri_write_task(session: Arc<dinotty_server::session::Session>, pane_id: String) {
-    let mut input_rx = session.replace_input_channel();
-    let write_session = Arc::clone(&session);
-    let write_pane = pane_id.clone();
-    tauri::async_runtime::spawn(async move {
-        let is_ssh = write_session.is_ssh();
-        while let Some(first) = input_rx.recv().await {
-            if write_session.is_exited() {
-                break;
-            }
-            // Batch: drain all pending messages to minimize lock acquisitions
-            let mut batch = first;
-            while let Ok(data) = input_rx.try_recv() {
-                batch.push_str(&data);
-            }
-            let batch_len = batch.len();
-            let result = if is_ssh {
-                write_session.write_input_async(batch.as_bytes()).await
-            } else {
-                let ws = Arc::clone(&write_session);
-                tokio::task::spawn_blocking(move || ws.write_input_blocking(batch.as_bytes()))
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()))
-            };
-            match result {
-                Ok(()) => {}
-                Err(e) => {
-                    tracing::error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
-                    break;
-                }
-            }
-        }
-        tracing::info!("PTY write task exited, pane={}", write_pane);
-    });
-}
-
 /// Emit `pty-reconnected` only — does NOT push a snapshot. The frontend will
 /// converge its layout, fit once, then invoke `pty_snapshot_request` to get
 /// the scrollback+snapshot via the replay transaction (pty-replay-begin →
@@ -238,8 +198,6 @@ fn pty_spawn(
         // for this client until ReplayEnd is enqueued.
         spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
         emit_reconnected(&app, &pane_id, &session);
-        // Set up channel-based write task (replaces old input channel, if any)
-        spawn_tauri_write_task(Arc::clone(&session), pane_id.clone());
         return Ok(session.shell_type.clone());
     }
 
@@ -248,7 +206,6 @@ fn pty_spawn(
     manager.register_singleton_tab(&pane_id, &session, &shell_type);
 
     spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
-    spawn_tauri_write_task(Arc::clone(&session), pane_id.clone());
 
     Ok(shell_type)
 }
@@ -260,19 +217,7 @@ async fn pty_write(
     state: State<'_, Arc<SessionManager>>,
 ) -> Result<(), String> {
     let session = state.sessions.get(&pane_id).ok_or("session not found")?.value().clone();
-    if session.is_exited() {
-        return Err("session exited".into());
-    }
-    // Send through the input channel — the dedicated write task handles the actual
-    // PTY write. This avoids the old pattern of spawn_blocking + timeout which leaked
-    // a thread per call when write_all blocked (PTY input buffer full).
-    let tx = session.input_tx.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(tx) = tx.as_ref() {
-        tx.send(data).map_err(|_| "input channel closed".to_string())?;
-        Ok(())
-    } else {
-        Err("input channel not initialized".to_string())
-    }
+    session.enqueue_input(data).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
