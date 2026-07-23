@@ -11,7 +11,7 @@
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
+      @pointercancel="onPointerCancel"
     ></canvas>
     <input
       v-if="textInput"
@@ -129,20 +129,40 @@ function onPointerDown(event: PointerEvent) {
 function onPointerMove(event: PointerEvent) {
   const command = activeCommand.value
   if (!command || !props.enabled) return
-  const [x, y] = normalizedPoint(event)
-  if (command.tool === 'pen') command.points.push(x, y)
-  else command.points.splice(2, 2, x, y)
+  updateCommandEndpoint(command, event)
   render()
+}
+
+function updateCommandEndpoint(command: DrawCommand, event: PointerEvent) {
+  const [x, y] = normalizedPoint(event)
+  if (command.tool === 'pen') {
+    const last = command.points.length - 2
+    if (command.points[last] !== x || command.points[last + 1] !== y) command.points.push(x, y)
+  } else {
+    command.points.splice(2, 2, x, y)
+  }
+}
+
+function releasePointer(event: PointerEvent) {
+  if (canvasRef.value?.hasPointerCapture?.(event.pointerId)) {
+    canvasRef.value.releasePointerCapture(event.pointerId)
+  }
 }
 
 function onPointerUp(event: PointerEvent) {
   const command = activeCommand.value
   if (!command) return
-  if (canvasRef.value?.hasPointerCapture?.(event.pointerId)) {
-    canvasRef.value.releasePointerCapture(event.pointerId)
-  }
+  updateCommandEndpoint(command, event)
+  releasePointer(event)
   activeCommand.value = undefined
   pushCommand(command)
+}
+
+function onPointerCancel(event: PointerEvent) {
+  if (!activeCommand.value) return
+  releasePointer(event)
+  activeCommand.value = undefined
+  render()
 }
 
 function pushCommand(command: DrawCommand) {

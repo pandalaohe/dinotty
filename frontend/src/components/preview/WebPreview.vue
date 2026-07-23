@@ -50,15 +50,15 @@
           </button>
           <span class="toolbar-separator"></span>
           <button
-            v-for="paletteColor in palette"
-            :key="paletteColor"
+            v-for="paletteEntry in palette"
+            :key="paletteEntry.color"
             type="button"
             class="color-button"
-            :class="{ active: selectedColor === paletteColor }"
-            :style="{ '--annotation-color': paletteColor }"
-            :title="t('preview.annotation.color')"
-            :aria-label="t('preview.annotation.color')"
-            @click="selectColor(paletteColor)"
+            :class="{ active: selectedColor === paletteEntry.color }"
+            :style="{ '--annotation-color': paletteEntry.color }"
+            :title="t(paletteEntry.labelKey)"
+            :aria-label="t(paletteEntry.labelKey)"
+            @click="selectColor(paletteEntry.color)"
           ></button>
           <button
             type="button"
@@ -177,6 +177,7 @@ import {
 } from '../../utils/previewImage'
 
 const PIXEL_CAP = 8_294_400
+const CAPTURE_TIMEOUT_MS = 15_000
 
 type PreviewState = 'live' | 'capturing' | 'frozen'
 type AnnotationLayerApi = {
@@ -213,7 +214,14 @@ const selectedTool = ref<DrawTool>('pen')
 const selectedColor = ref('#ff3b30')
 const contentSize = ref({ width: 0, height: 0 })
 const isLandscape = ref(window.innerWidth > window.innerHeight)
-const palette = ['#ff3b30', '#ffcc00', '#34c759', '#007aff', '#ffffff', '#111111']
+const palette = [
+  { color: '#ff3b30', labelKey: 'preview.annotation.colorRed' },
+  { color: '#ffcc00', labelKey: 'preview.annotation.colorYellow' },
+  { color: '#34c759', labelKey: 'preview.annotation.colorGreen' },
+  { color: '#007aff', labelKey: 'preview.annotation.colorBlue' },
+  { color: '#ffffff', labelKey: 'preview.annotation.colorWhite' },
+  { color: '#111111', labelKey: 'preview.annotation.colorBlack' },
+]
 const toolEntries = [
   { tool: 'pen' as const, icon: Pencil, labelKey: 'preview.annotation.toolPen' },
   { tool: 'arrow' as const, icon: MoveUpRight, labelKey: 'preview.annotation.toolArrow' },
@@ -228,8 +236,11 @@ let mounted = false
 const resolvedSrc = computed(() => {
   if (!currentUrl.value) return 'about:blank'
   const base = urlToPreviewSrc(currentUrl.value, previewHttpBase.value || undefined)
-  const sep = base.includes('?') ? '&' : '?'
-  return `${base}${sep}_t=${navCounter.value}`
+  const hashIndex = base.indexOf('#')
+  const queryTarget = hashIndex >= 0 ? base.slice(0, hashIndex) : base
+  const fragment = hashIndex >= 0 ? base.slice(hashIndex) : ''
+  const sep = queryTarget.includes('?') ? '&' : '?'
+  return `${queryTarget}${sep}_t=${navCounter.value}${fragment}`
 })
 
 const direction = computed(() => (isLandscape.value ? 'horizontal' : 'vertical'))
@@ -306,14 +317,14 @@ function navigateFromInput() {
   if (val.startsWith('http://') || val.startsWith('https://')) {
     currentUrl.value = val
   } else if (val.match(/^:?(\d+)(\/.*)?$/)) {
-    const match = val.match(/^:?(\d+)(\/.*)?$/)!
-    currentUrl.value = `http://localhost:${match[1]}${match[2] || '/'}`
+    const m = val.match(/^:?(\d+)(\/.*)?$/)!
+    currentUrl.value = `http://localhost:${m[1]}${m[2] || '/'}`
     addressValue.value = currentUrl.value
   } else if (val.startsWith('/')) {
     try {
-      const previous = new URL(currentUrl.value)
-      previous.pathname = val
-      currentUrl.value = previous.toString()
+      const prev = new URL(currentUrl.value)
+      prev.pathname = val
+      currentUrl.value = prev.toString()
       addressValue.value = currentUrl.value
     } catch {
       return
@@ -349,13 +360,41 @@ async function waitForFonts(doc: Document): Promise<void> {
   try {
     await Promise.race([
       fonts.ready.then(() => undefined),
-      new Promise<never>((_, reject) => {
-        timer = window.setTimeout(() => reject(new Error('font wait timed out')), 1000)
+      new Promise<void>((resolve) => {
+        timer = window.setTimeout(resolve, 1000)
       }),
     ])
   } finally {
     window.clearTimeout(timer)
   }
+}
+
+function captureWithTimeout(iframe: HTMLIFrameElement): Promise<HTMLCanvasElement> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = window.setTimeout(() => {
+      settled = true
+      reject(new Error('preview capture timed out'))
+    }, CAPTURE_TIMEOUT_MS)
+
+    void captureViewport(iframe, { pixelCap: PIXEL_CAP }).then(
+      (canvas) => {
+        if (settled) {
+          releaseCanvas(canvas)
+          return
+        }
+        settled = true
+        window.clearTimeout(timer)
+        resolve(canvas)
+      },
+      (error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
 }
 
 function drawFrozenBitmap() {
@@ -387,7 +426,8 @@ async function freeze() {
     await waitForFonts(doc)
     await nextFrame()
     await nextFrame()
-    captured = await captureViewport(iframe, { pixelCap: PIXEL_CAP })
+    if (captureGeneration !== generation) return
+    captured = await captureWithTimeout(iframe)
     if (captureGeneration !== generation) {
       releaseCanvas(captured)
       return
@@ -474,16 +514,16 @@ function startDrag(e: MouseEvent) {
   overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:col-resize;'
   document.body.appendChild(overlay)
 
-  const onMove = (event: MouseEvent) => {
+  const onMove = (ev: MouseEvent) => {
     const rect = parent.getBoundingClientRect()
-    const horizontal = direction.value === 'horizontal'
-    const total = horizontal ? rect.width : rect.height
-    const mousePosition = horizontal ? event.clientX - rect.left : event.clientY - rect.top
-    const terminalPercent = Math.max(15, Math.min(85, (mousePosition / total) * 100))
-    const terminal = parent.querySelector(':scope > .terminal-pane-container') as HTMLElement
-    const preview = parent.querySelector(':scope > .web-preview') as HTMLElement
-    if (terminal) terminal.style.flex = `0 0 ${terminalPercent}%`
-    if (preview) preview.style.flex = `0 0 ${100 - terminalPercent}%`
+    const horiz = direction.value === 'horizontal'
+    const total = horiz ? rect.width : rect.height
+    const mousePos = horiz ? ev.clientX - rect.left : ev.clientY - rect.top
+    const termPct = Math.max(15, Math.min(85, (mousePos / total) * 100))
+    const termChild = parent.querySelector(':scope > .terminal-pane-container') as HTMLElement
+    const previewChild = parent.querySelector(':scope > .web-preview') as HTMLElement
+    if (termChild) termChild.style.flex = `0 0 ${termPct}%`
+    if (previewChild) previewChild.style.flex = `0 0 ${100 - termPct}%`
   }
   const onUp = () => {
     overlay.remove()
@@ -500,17 +540,17 @@ function startDragTouch(e: TouchEvent) {
   const parent = el?.parentElement
   if (!parent) return
 
-  const onMove = (event: TouchEvent) => {
+  const onMove = (ev: TouchEvent) => {
     const rect = parent.getBoundingClientRect()
-    const touch = event.touches[0]
-    const horizontal = direction.value === 'horizontal'
-    const total = horizontal ? rect.width : rect.height
-    const touchPosition = horizontal ? touch.clientX - rect.left : touch.clientY - rect.top
-    const terminalPercent = Math.max(15, Math.min(85, (touchPosition / total) * 100))
-    const terminal = parent.querySelector(':scope > .terminal-pane-container') as HTMLElement
-    const preview = parent.querySelector(':scope > .web-preview') as HTMLElement
-    if (terminal) terminal.style.flex = `0 0 ${terminalPercent}%`
-    if (preview) preview.style.flex = `0 0 ${100 - terminalPercent}%`
+    const touch = ev.touches[0]
+    const horiz = direction.value === 'horizontal'
+    const total = horiz ? rect.width : rect.height
+    const touchPos = horiz ? touch.clientX - rect.left : touch.clientY - rect.top
+    const termPct = Math.max(15, Math.min(85, (touchPos / total) * 100))
+    const termChild = parent.querySelector(':scope > .terminal-pane-container') as HTMLElement
+    const previewChild = parent.querySelector(':scope > .web-preview') as HTMLElement
+    if (termChild) termChild.style.flex = `0 0 ${termPct}%`
+    if (previewChild) previewChild.style.flex = `0 0 ${100 - termPct}%`
   }
   const onEnd = () => {
     window.removeEventListener('touchmove', onMove)

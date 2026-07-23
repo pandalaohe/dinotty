@@ -11,9 +11,21 @@ export interface DrawCommand {
 
 export type I18nFn = (key: string) => string
 
-async function snapDocument(root: Element, dpr: number): Promise<HTMLCanvasElement> {
+async function snapDocument(root: Element, dpr: number, scale: number): Promise<HTMLCanvasElement> {
   const { snapdom } = await import('@zumer/snapdom')
-  return snapdom.toCanvas(root, { dpr, embedFonts: true })
+  return snapdom.toCanvas(root, { dpr, scale, embedFonts: true })
+}
+
+export function calculateCaptureScale(
+  documentWidth: number,
+  documentHeight: number,
+  dpr: number,
+  pixelCap: number
+): number {
+  if (documentWidth <= 0 || documentHeight <= 0 || dpr <= 0 || pixelCap <= 0) {
+    throw new Error('capture dimensions must be positive')
+  }
+  return Math.min(1, Math.sqrt(pixelCap / (documentWidth * documentHeight * dpr * dpr)))
 }
 
 function viewportMetrics(iframe: HTMLIFrameElement) {
@@ -34,17 +46,19 @@ export async function captureViewport(
   { pixelCap }: { pixelCap: number }
 ): Promise<HTMLCanvasElement> {
   const { win, root, width, height } = viewportMetrics(iframe)
+  const documentWidth = Math.max(root.scrollWidth, root.offsetWidth, width)
+  const documentHeight = Math.max(root.scrollHeight, root.offsetHeight, height)
   const deviceDpr = Math.max(1, win.devicePixelRatio || window.devicePixelRatio || 1)
-  const capScale = Math.min(1, Math.sqrt(pixelCap / (width * height * deviceDpr * deviceDpr)))
+  const capScale = calculateCaptureScale(documentWidth, documentHeight, deviceDpr, pixelCap)
   const outputDpr = deviceDpr * capScale
-  const snapshot = await snapDocument(root, outputDpr)
+  const snapshot = await snapDocument(root, deviceDpr, capScale)
+  let output: HTMLCanvasElement | undefined
+  let succeeded = false
 
   try {
-    const documentWidth = Math.max(root.scrollWidth, root.offsetWidth, width)
-    const documentHeight = Math.max(root.scrollHeight, root.offsetHeight, height)
     const scaleX = snapshot.width / documentWidth
     const scaleY = snapshot.height / documentHeight
-    const output = document.createElement('canvas')
+    output = document.createElement('canvas')
     output.width = Math.max(1, Math.floor(width * outputDpr))
     output.height = Math.max(1, Math.floor(height * outputDpr))
     const ctx = output.getContext('2d')
@@ -56,10 +70,15 @@ export async function captureViewport(
     const sh = Math.min(snapshot.height - sy, height * scaleY)
     if (sw <= 0 || sh <= 0) throw new Error('captured viewport is empty')
     ctx.drawImage(snapshot, sx, sy, sw, sh, 0, 0, output.width, output.height)
+    succeeded = true
     return output
   } finally {
     snapshot.width = 0
     snapshot.height = 0
+    if (!succeeded && output) {
+      output.width = 0
+      output.height = 0
+    }
   }
 }
 
@@ -117,60 +136,100 @@ export function renderDrawCommands(
   ctx.restore()
 }
 
-export function compositePng(base: HTMLCanvasElement, commands: DrawCommand[]): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const output = document.createElement('canvas')
+export async function compositePng(base: HTMLCanvasElement, commands: DrawCommand[]): Promise<Blob> {
+  const output = document.createElement('canvas')
+  try {
     output.width = base.width
     output.height = base.height
     const ctx = output.getContext('2d')
     if (!ctx || output.width <= 0 || output.height <= 0) {
-      reject(new Error('2D canvas is unavailable'))
-      return
+      throw new Error('2D canvas is unavailable')
     }
     ctx.drawImage(base, 0, 0)
     renderDrawCommands(ctx, commands, output.width, output.height)
-    output.toBlob((blob) => {
-      output.width = 0
-      output.height = 0
-      if (blob) resolve(blob)
-      else reject(new Error('PNG encoding failed'))
-    }, 'image/png')
-  })
+    return await new Promise<Blob>((resolve, reject) => {
+      let settled = false
+      let timer = 0
+      const finish = (callback: () => void) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        callback()
+      }
+      timer = window.setTimeout(
+        () => finish(() => reject(new Error('PNG encoding timed out'))),
+        10_000
+      )
+      try {
+        output.toBlob(
+          (blob) =>
+            finish(() => {
+              if (blob) resolve(blob)
+              else reject(new Error('PNG encoding failed'))
+            }),
+          'image/png'
+        )
+      } catch (error) {
+        finish(() => reject(error))
+      }
+    })
+  } finally {
+    output.width = 0
+    output.height = 0
+  }
 }
 
 export function downloadPng(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.style.display = 'none'
-  document.body.appendChild(link)
+  let link: HTMLAnchorElement | undefined
   try {
+    link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.style.display = 'none'
+    document.body.appendChild(link)
     link.click()
   } finally {
-    link.remove()
-    URL.revokeObjectURL(url)
+    try {
+      link?.remove()
+    } finally {
+      URL.revokeObjectURL(url)
+    }
   }
 }
 
 async function copyWithExecCommand(blob: Blob, t: I18nFn): Promise<boolean> {
   const url = URL.createObjectURL(blob)
-  const holder = document.createElement('div')
-  const image = document.createElement('img')
-  holder.contentEditable = 'true'
-  holder.setAttribute('aria-hidden', 'true')
-  holder.style.cssText = 'position:fixed;left:-10000px;top:0;opacity:0;pointer-events:none;'
-  image.src = url
-  image.alt = t('preview.annotation.clipboardImageAlt')
-  holder.appendChild(image)
-  document.body.appendChild(holder)
+  let holder: HTMLDivElement | undefined
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve()
-      image.onerror = () => reject(new Error('clipboard image failed to load'))
-      if (image.complete) resolve()
-    })
+    holder = document.createElement('div')
+    const image = document.createElement('img')
+    holder.contentEditable = 'true'
+    holder.setAttribute('aria-hidden', 'true')
+    holder.style.cssText = 'position:fixed;left:-10000px;top:0;opacity:0;pointer-events:none;'
+    image.src = url
+    image.alt = t('preview.annotation.clipboardImageAlt')
+    holder.appendChild(image)
+    document.body.appendChild(holder)
+
+    if (typeof image.decode === 'function') {
+      try {
+        await image.decode()
+      } catch (error) {
+        if (!image.complete || image.naturalWidth <= 0) throw error
+      }
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        const verifyDecoded = () => {
+          if (image.naturalWidth > 0) resolve()
+          else reject(new Error('clipboard image failed to decode'))
+        }
+        image.onload = verifyDecoded
+        image.onerror = () => reject(new Error('clipboard image failed to load'))
+        if (image.complete) verifyDecoded()
+      })
+    }
     const selection = window.getSelection()
     const range = document.createRange()
     range.selectNode(image)
@@ -178,9 +237,15 @@ async function copyWithExecCommand(blob: Blob, t: I18nFn): Promise<boolean> {
     selection?.addRange(range)
     return typeof document.execCommand === 'function' && document.execCommand('copy')
   } finally {
-    window.getSelection()?.removeAllRanges()
-    holder.remove()
-    URL.revokeObjectURL(url)
+    try {
+      try {
+        window.getSelection()?.removeAllRanges()
+      } finally {
+        holder?.remove()
+      }
+    } finally {
+      URL.revokeObjectURL(url)
+    }
   }
 }
 

@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settings } from '../composables/useSettings'
 import WebAnnotationLayer from '../components/preview/WebAnnotationLayer.vue'
 import WebPreview from '../components/preview/WebPreview.vue'
-import { copyPngWithFallback, downloadPng, type DrawCommand } from '../utils/previewImage'
+import {
+  calculateCaptureScale,
+  copyPngWithFallback,
+  downloadPng,
+  type DrawCommand,
+} from '../utils/previewImage'
 
 const mocks = vi.hoisted(() => ({
   snapdomToCanvas: vi.fn(),
@@ -196,6 +201,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   document.body.innerHTML = ''
@@ -282,6 +288,10 @@ describe('EPV1 embedded preview annotation', () => {
       configurable: true,
       get: () => true,
     })
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {
+      configurable: true,
+      get: () => 1,
+    })
     const execCommand = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false)
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
     const blob = new Blob(['png'], { type: 'image/png' })
@@ -291,6 +301,145 @@ describe('EPV1 embedded preview annotation', () => {
     expect(execCommand).toHaveBeenCalledTimes(2)
     expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledOnce()
     expect(createdUrls).toEqual(revokedUrls)
+  })
+
+  it('proceeds with capture when document fonts take longer than one second', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountReadyPreview()
+    const iframe = wrapper.get('iframe').element as HTMLIFrameElement
+    Object.defineProperty(iframe.contentDocument!, 'fonts', {
+      configurable: true,
+      value: { ready: new Promise(() => {}) },
+    })
+
+    await wrapper.get('button[aria-label="Freeze preview"]').trigger('click')
+    await flushPromises()
+    expect(mocks.snapdomToCanvas).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(mocks.snapdomToCanvas).toHaveBeenCalledOnce()
+    expect(wrapper.find('button[aria-label="Return to live preview"]').exists()).toBe(true)
+    expect(mocks.toastError).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('times out capture after fifteen seconds, reports failure, and releases a late canvas', async () => {
+    vi.useFakeTimers()
+    let resolveCapture!: (canvas: HTMLCanvasElement) => void
+    mocks.snapdomToCanvas.mockReturnValue(
+      new Promise<HTMLCanvasElement>((resolve) => {
+        resolveCapture = resolve
+      })
+    )
+    const wrapper = await mountReadyPreview()
+    await wrapper.get('button[aria-label="Freeze preview"]').trigger('click')
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    await flushPromises()
+    expect(wrapper.find('button[aria-label="Freeze preview"]').exists()).toBe(true)
+    expect(mocks.toastError).toHaveBeenCalledWith('Could not freeze this preview')
+
+    const lateCanvas = makeCanvas()
+    resolveCapture(lateCanvas)
+    await flushPromises()
+    expect(lateCanvas.width).toBe(0)
+    expect(lateCanvas.height).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('calculates capture scale from the full tall-document raster extent', () => {
+    const pixelCap = 8_294_400
+    const scale = calculateCaptureScale(1200, 12_000, 2, pixelCap)
+
+    expect(scale).toBeCloseTo(Math.sqrt(pixelCap / (1200 * 12_000 * 2 * 2)), 12)
+    expect(1200 * 12_000 * (2 * scale) ** 2).toBeCloseTo(pixelCap, 5)
+  })
+
+  it('downloads instead of using execCommand when clipboard image decoding fails', async () => {
+    vi.stubGlobal('ClipboardItem', undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      configurable: true,
+      value: vi.fn().mockRejectedValue(new Error('decode failed')),
+    })
+    Object.defineProperty(HTMLImageElement.prototype, 'complete', {
+      configurable: true,
+      get: () => true,
+    })
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {
+      configurable: true,
+      get: () => 0,
+    })
+    const execCommand = vi.fn().mockReturnValue(true)
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+
+    await expect(
+      copyPngWithFallback(new Blob(['png'], { type: 'image/png' }), (key) => key)
+    ).resolves.toBe('download')
+    expect(execCommand).not.toHaveBeenCalled()
+    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledOnce()
+    expect(createdUrls).toEqual(revokedUrls)
+  })
+
+  it('commits the pointer-up endpoint for a quick drag and discards pointer cancellation', async () => {
+    const layer = mount(WebAnnotationLayer, {
+      props: { visible: true, enabled: true, width: 100, height: 100 },
+    })
+    const host = layer.get('.web-annotation-layer')
+    const canvas = layer.get('canvas')
+    setRect(host.element, 100, 100)
+    setRect(canvas.element, 100, 100)
+
+    await canvas.trigger('pointerdown', {
+      button: 0,
+      pointerId: 1,
+      clientX: 10,
+      clientY: 10,
+    })
+    await canvas.trigger('pointerup', { pointerId: 1, clientX: 80, clientY: 70 })
+    const exposed = layer.vm as unknown as { getCommands: () => DrawCommand[] }
+    expect(exposed.getCommands()).toHaveLength(1)
+    expect(exposed.getCommands()[0].points.slice(-2)).toEqual([0.8, 0.7])
+
+    await canvas.trigger('pointerdown', {
+      button: 0,
+      pointerId: 2,
+      clientX: 20,
+      clientY: 20,
+    })
+    await canvas.trigger('pointercancel', { pointerId: 2, clientX: 90, clientY: 90 })
+    expect(exposed.getCommands()).toHaveLength(1)
+    layer.unmount()
+  })
+
+  it('keeps the frozen state and annotations when composite export fails', async () => {
+    const wrapper = await mountReadyPreview()
+    await freezePreview(wrapper)
+    const layer = wrapper.get('.web-annotation-layer')
+    const canvas = layer.get('canvas')
+    setRect(layer.element, 320, 200)
+    setRect(canvas.element, 320, 200)
+    await canvas.trigger('pointerdown', { button: 0, pointerId: 1, clientX: 20, clientY: 20 })
+    await canvas.trigger('pointerup', { pointerId: 1, clientX: 120, clientY: 80 })
+    Object.defineProperty(HTMLCanvasElement.prototype, 'toBlob', {
+      configurable: true,
+      value: vi.fn(() => {
+        throw new Error('encoding failed')
+      }),
+    })
+
+    await wrapper.get('button[aria-label="Download annotated PNG"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('button[aria-label="Return to live preview"]').exists()).toBe(true)
+    expect(wrapper.get('button[aria-label="Undo annotation"]').attributes('disabled')).toBeUndefined()
+    const exposed = wrapper.findComponent(WebAnnotationLayer).vm as unknown as {
+      getCommands: () => DrawCommand[]
+    }
+    expect(exposed.getCommands()).toHaveLength(1)
+    expect(mocks.toastError).toHaveBeenCalledWith('Could not export the annotated preview')
+    wrapper.unmount()
   })
 
   it('re-renders normalized commands at resized CSS and DPR dimensions without distortion', async () => {
