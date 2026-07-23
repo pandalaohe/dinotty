@@ -90,8 +90,9 @@ fn is_valid_proxy_host(host: &str) -> bool {
 }
 
 /// Auth check for `/preview/*` requests.
-/// - `allow_external = false`: only loopback IPs allowed.
-/// - `allow_external = true`: any IP, but must have a valid session cookie or Bearer token.
+/// - Loopback IPs are always allowed.
+/// - Non-loopback IPs are forbidden unless `allow_external = true`, in which case they must have
+///   a valid session cookie or Bearer token.
 ///
 /// Returns `Some(Response)` if the request should be rejected, `None` to proceed.
 fn check_preview_auth(
@@ -101,6 +102,12 @@ fn check_preview_auth(
     sessions: &SessionStore,
     token: &str,
 ) -> Option<Response> {
+    // Loopback clients were implicitly trusted before allow_external existed;
+    // enabling external access must not degrade localhost.
+    if real_ip.is_loopback() {
+        return None;
+    }
+
     if !allow_external && !real_ip.is_loopback() {
         return Some(
             Response::builder()
