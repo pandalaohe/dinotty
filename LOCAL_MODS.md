@@ -229,7 +229,10 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 ### Ours-only — NOT in upstream (no PR, or PR not yet accepted)
 - **Detach-reap redesign: reference-based session liveness + crash-orphan boot sweep** (2026-07-23;
   `7a9a1fea` task1 → `95b9fa4f` task2 → `80d8f798` task3 → `7e33f0fa` task4; review fixes
-  `c34b8c44` + `222578f0`) — TRC1 root fix for overnight workspace-tab loss. status: candidate;
+  `c34b8c44` + `222578f0`) — TRC1 root fix for overnight workspace-tab loss. status: filed;
+  upstream_pr: https://github.com/xichan96/dinotty/pull/211 (branch `fix/session-detach-data-loss`
+  from `upstream/dev` 348e8353, worktree `../dinotty-pr-worktree`; range-diff verified — sole delta
+  vs custom series is the LOCAL_MODS.md exclusion; hygiene --pre-pr CLEAN; CI on branch 388/0/10);
   upstreamable: YES (all touched reaper code is upstream-original; frame as data-loss fix; branch
   from `upstream/dev` per W3, NEVER from `custom`). Design doc of record:
   `dinotty_mods/docs/task-files/2607/260723_T260723-003_detach-reap-redesign_design.md` (rev2).
@@ -247,8 +250,8 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   Accepted residual (flagged): microsecond insert→broadcast race can leave a client-side ghost tab
   (manual close clears it via layout-only close path); review capped at 2 redo rounds.
   QA: cargo 378/0/10; live crash-orphan sweep kill verified; user trial passed detach-survival
-  (2.75 min disconnect, 4/4 sessions kept). Deployed 8998 only; 8999 + upstream PR pending
-  overnight soak (board token TRC2).
+  (2.75 min disconnect, 4/4 sessions kept). Deployed 8998 only; overnight soak SKIPPED by user
+  decision (PR filed directly 2026-07-23); 8999 deploy still pending user release (board token TRC2).
 - **Mobile quick-keyboard: host-clipboard paste + terminal-sequence app-action keys** (2026-07-23;
   `eb14ee6a` → `0b71556e`; incl. review fixes `99e2f358`, r3 rework `14057ca3`, polish `98c5fb1e`) —
   QKB1. Lets a phone one-tap paste the HOST (Mac) clipboard into the terminal and send.
