@@ -335,11 +335,12 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   Reviewer risk to watch: the retained legacy bool is dead weight for a user who only ever ran
   upstream (the field was never persisted there) — drop it if the maintainer objects; fork users
   need it.
-  NOT in this branch: the `custom`-only sticky-typing mode (`9ca9978c..3c7ee4e6`), which disables
-  every `.xterm-helper-textarea` while the user types so a terminal tap cannot close the iOS
-  system keyboard. Held back pending real-device QA; decide separately whether it joins this PR
-  or files as a follow-up.
-  upstreamable: **yes** · status: **candidate** · upstream_pr: — · upstream_issue: —
+  Also in this branch (added after real-device QA passed): sticky-typing mode, squashed as
+  `b52bb50f` on the PR branch (custom lineage `9ca9978c..e5652f57`). While the user types in the
+  app's own textarea it disables every `.xterm-helper-textarea` so a terminal tap or scroll cannot
+  hand focus to the input-suppressing helper and close the iOS system keyboard. Reviewer risk to
+  watch: disabling all xterm helper textareas is more opinionated than the mode field.
+  upstreamable: **yes** · status: **candidate** · upstream_pr: https://github.com/xichan96/dinotty/pull/215 · upstream_issue: —
 - **Terminal output-path concurrency: sync-mode race + reader deadlock** (2026-07-21;
   `fd982c3c` + `1367fcd9`) — two general upstream bugs in `src/session/mod.rs` + `src/pty.rs`,
   both verified present verbatim in `upstream/dev @ d5a819e8`:
