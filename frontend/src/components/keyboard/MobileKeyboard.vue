@@ -798,6 +798,7 @@ function onViewportChange() {
   const vh = window.visualViewport.height
   if (vh > naturalVH) naturalVH = vh
   const off = window.innerHeight - (window.visualViewport.offsetTop + vh)
+  const wasSysKbOpen = sysKbOpen
   sysKbOpen = naturalVH - vh > 120
   // Set --kb-open: either system keyboard or custom keyboard is visible
   document.documentElement.style.setProperty('--kb-open', sysKbOpen || props.visible ? '1' : '0')
@@ -817,6 +818,24 @@ function onViewportChange() {
   }
   if (textInputFocused.value) resizeTextInput()
   updateHeight()
+  // iOS owns dismiss affordances the page cannot intercept: Safari's keyboard-down
+  // button in the input accessory bar, and the Done check in the standalone-PWA
+  // accessory bar. Both hide the system keyboard while leaving our textarea
+  // focused, which strands the UI in typing mode — toolbar shown, shortcut
+  // keyboard hidden, no keyboard at all — and, with the sticky typing guard on,
+  // the terminal cannot take focus either, so there is no way back. Detect the
+  // outcome instead of the button: on the open→closed edge with our input still
+  // holding focus, run the same path our own dismiss button runs, landing on the
+  // shortcut keyboard. Guarding on activeElement keeps this from double-firing
+  // after our own button, which has already blurred by then.
+  if (
+    wasSysKbOpen &&
+    !sysKbOpen &&
+    textInputFocused.value &&
+    document.activeElement === textInputRef.value
+  ) {
+    dismissSystemKeyboard()
+  }
 }
 
 watch(
