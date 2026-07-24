@@ -113,6 +113,7 @@ vi.mock('../composables/useHistory', async () => {
 vi.mock('../composables/useTerminal', () => ({
   isTouchDevice: () => false,
   setActivePaneId: () => {},
+  setKbTypingLock: () => {},
 }))
 vi.mock('../utils/clientPlatform', () => ({ isWindowsClient: true }))
 // Per-binding key map so Cmd+W can be dispatched without colliding with

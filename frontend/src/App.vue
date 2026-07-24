@@ -340,7 +340,7 @@ import {
   markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
-import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
+import { isTouchDevice, setActivePaneId, setKbTypingLock } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
 import { usePluginNotifyBridge } from './composables/usePluginNotifyBridge'
@@ -680,6 +680,17 @@ function adjustActiveTerminalFontSize(delta: number) {
     ref.adjustFontSize(delta)
   }
 }
+
+// Sticky typing mode: the terminal must not be able to take focus while the user
+// is typing on the mobile keyboard, otherwise the iOS system keyboard closes.
+// Only under the collapse guard, so off/open_only stay upstream-equivalent.
+watch(
+  [kbTyping, () => appSettings.keyboard_guard_mode],
+  ([typing, mode]) => {
+    setKbTypingLock(isTouchDevice() && typing && hasCollapseGuard(mode))
+  },
+  { immediate: true },
+)
 
 // Capture plugin preview when active tab changes to a plugin tab (handles initial load)
 watch(

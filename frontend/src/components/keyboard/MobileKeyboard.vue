@@ -470,6 +470,9 @@ function onTextInputBlur() {
 }
 
 function dismissSystemKeyboard() {
+  // Lift the sticky-typing guard BEFORE blurring so the terminal becomes
+  // focusable again the moment the user leaves typing mode.
+  emit('typing-change', false)
   textInputRef.value?.blur()
   emit('dismiss')
 }

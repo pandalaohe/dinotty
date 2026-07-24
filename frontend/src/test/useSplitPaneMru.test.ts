@@ -15,7 +15,10 @@ vi.mock('../composables/useTabApi', () => ({
   apiSplitPane: api.split,
   apiClosePane: api.close,
 }))
-vi.mock('../composables/useTerminal', () => ({ setActivePaneId: vi.fn() }))
+vi.mock('../composables/useTerminal', () => ({
+  setActivePaneId: vi.fn(),
+  setKbTypingLock: () => {},
+}))
 vi.mock('../composables/useAppForeground', () => ({
   getIsAppForeground: () => triggers.foreground,
 }))
