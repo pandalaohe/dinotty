@@ -451,6 +451,11 @@ function onTextInputFocus() {
     blurTimer = null
   }
   textInputFocused.value = true
+  // Arm iOS-dismiss detection now if the system keyboard is ALREADY open — e.g.
+  // the user moved focus here from the search or preview-address input without
+  // the keyboard closing, so onViewportChange sees no fresh open edge to arm on.
+  // Without this, a later iOS dismiss would not fall back to the shortcut keyboard.
+  if (sysKbOpen) sysKbArmed = true
   emit('typing-change', true)
   nextTick(resizeTextInput)
 }
@@ -887,6 +892,12 @@ let roAf = 0
 let resizeObserver: ResizeObserver | null = null
 function onOrientationChange() {
   resetTextareaMetrics()
+  // Disarm SYNCHRONOUSLY: the viewport resize events that a rotation fires arrive
+  // before the 300ms baseline reset below, and against the stale naturalVH a
+  // height change can look like an iOS dismissal. Clearing the arming now means
+  // no dismiss can fire during the rotation window; the timeout re-establishes
+  // the baseline once the new orientation settles.
+  sysKbArmed = false
   setTimeout(() => {
     naturalVH = window.visualViewport!.height
     // The baseline just moved, so any pending open-edge arming is stale.

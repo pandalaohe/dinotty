@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { setKbTypingLock } from '../composables/useTerminal'
+import { isKbTypingLocked, setKbTypingLock } from '../composables/useTerminal'
 
 function createHelperTextarea() {
   const textarea = document.createElement('textarea')
@@ -15,6 +15,16 @@ afterEach(() => {
 })
 
 describe('setKbTypingLock', () => {
+  it('tracks whether keyboard typing is locked', () => {
+    expect(isKbTypingLocked()).toBe(false)
+
+    setKbTypingLock(true)
+    expect(isKbTypingLocked()).toBe(true)
+
+    setKbTypingLock(false)
+    expect(isKbTypingLocked()).toBe(false)
+  })
+
   it('disables every existing xterm helper textarea', () => {
     const first = createHelperTextarea()
     const second = createHelperTextarea()

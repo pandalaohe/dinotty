@@ -1068,8 +1068,18 @@ function onLinkActivate() {
 // activation (SplitContainer's own mousedown -> focusPane) and link clicks still
 // fire. The lock is only ever set on touch under the collapse guard, so desktop
 // and off / open_only never reach this.
+//
+// #tab-content also holds the preview panel, whose address field and other real
+// inputs the user must still be able to focus while typing — cancelling their
+// default action would make them uneditable. So skip genuine focus targets
+// (form controls / contenteditable) and only guard taps on inert terminal
+// chrome. Buttons and links are unaffected either way: preventing a mousedown's
+// default does not cancel the subsequent click.
 function onTabContentMouseDownCapture(e: MouseEvent) {
-  if (isKbTypingLocked()) e.preventDefault()
+  if (!isKbTypingLocked()) return
+  const target = e.target as HTMLElement | null
+  if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+  e.preventDefault()
 }
 
 function onTerminalTouch(e: TouchEvent) {

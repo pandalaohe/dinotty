@@ -111,6 +111,7 @@ vi.mock('../composables/useHistory', async () => {
   }
 })
 vi.mock('../composables/useTerminal', () => ({
+  isKbTypingLocked: () => false,
   isTouchDevice: () => false,
   setActivePaneId: () => {},
   setKbTypingLock: () => {},
