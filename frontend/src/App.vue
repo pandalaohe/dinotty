@@ -91,7 +91,7 @@
       id="tab-content"
       @touchstart.capture="onTerminalTouchStartCapture"
       @touchend="onTerminalTouch"
-      @mousedown.capture="onTerminalMouseDownCapture"
+      @focusin.capture="onTerminalFocusInCapture"
     >
       <div
         v-for="tab in tabs"
@@ -1042,20 +1042,30 @@ function onLinkActivate() {
   linkJustActivated = true
 }
 
-// On iOS a TAP emits a synthesized mousedown AFTER touchend, and that is where
-// xterm steals focus into its own helper textarea (which has inputMode=none),
-// closing the system keyboard. A SCROLL emits no synthesized mouse events, which
-// is why scrolling already kept the keyboard. Suppressing the default action of
-// that mousedown blocks the focus move without touching the touch stream, so
-// terminal scrolling is unaffected. xterm's own listeners still run
-// (preventDefault is not stopPropagation), so selection/links keep working.
-function onTerminalMouseDownCapture(e: MouseEvent) {
+// Sticky typing mode, focus-landing interceptor.
+//
+// On a TAP (not a scroll — WebKit synthesizes no mouse events for a scroll
+// gesture) two independent sites pull focus into xterm's helper textarea, which
+// carries inputMode='none' and therefore closes the iOS system keyboard:
+//   1. xterm's own always-on 'mousedown' listener (Terminal.bindMouse) runs
+//      `ev.preventDefault(); this.focus()` — an explicit programmatic .focus(),
+//      so cancelling the event's default action cannot stop it, and
+//      stopPropagation would also kill xterm's selection + link handlers.
+//   2. SplitContainer's leaf focus emit -> useSplitPane.focusPane, which focuses
+//      the pane again on a later tick.
+// Intercepting where the focus LANDS defeats both regardless of origin and
+// regardless of timing, without touching the touch stream (scrolling unaffected)
+// and without swallowing any mouse event (selection and links unaffected).
+// MobileKeyboard's 100ms blur grace tolerates the transient bounce, so the
+// toolbar does not flip back to its action layout.
+function onTerminalFocusInCapture(e: FocusEvent) {
   if (!isTouchDevice()) return
   if (!kbTyping.value) return
   if (!hasCollapseGuard(appSettings.keyboard_guard_mode)) return
-  const target = e.target as HTMLElement
-  if (!target.closest('.terminal-pane-container')) return
-  e.preventDefault()
+  const target = e.target as HTMLElement | null
+  if (!target || typeof target.matches !== 'function') return
+  if (!target.matches('.xterm-helper-textarea')) return
+  mobileKbRef.value?.focusInput()
 }
 
 // Capture typing state BEFORE the native focus-steal blurs our input, so
