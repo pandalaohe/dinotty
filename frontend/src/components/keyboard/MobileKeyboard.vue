@@ -351,6 +351,7 @@ const emit = defineEmits<{
   bookmarks: []
   'app-action': [id: string, options: AppActionOptions]
   dismiss: []
+  'typing-change': [focused: boolean]
 }>()
 
 const { settings } = useSettings()
@@ -449,6 +450,7 @@ function onTextInputFocus() {
     blurTimer = null
   }
   textInputFocused.value = true
+  emit('typing-change', true)
   nextTick(resizeTextInput)
 }
 
@@ -460,6 +462,7 @@ function onTextInputBlur() {
       return
     }
     textInputFocused.value = false
+    emit('typing-change', false)
     resetTextInputHeight()
     nextTick(updateHeight)
     blurTimer = null
@@ -470,6 +473,14 @@ function dismissSystemKeyboard() {
   textInputRef.value?.blur()
   emit('dismiss')
 }
+
+// Re-focus our text input synchronously inside a user gesture (touchend) so the
+// iOS system keyboard is kept alive across terminal taps/scrolls in typing mode.
+function focusInput() {
+  textInputRef.value?.focus()
+}
+
+defineExpose({ focusInput })
 
 function onCompositionStart() {
   composing = true

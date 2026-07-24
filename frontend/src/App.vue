@@ -87,7 +87,7 @@
       </template>
     </TabBar>
 
-    <div id="tab-content" @touchend="onTerminalTouch">
+    <div id="tab-content" @touchstart.capture="onTerminalTouchStartCapture" @touchend="onTerminalTouch">
       <div
         v-for="tab in tabs"
         :key="tabKey(tab)"
@@ -228,6 +228,7 @@
     />
 
     <MobileKeyboard
+      ref="mobileKbRef"
       :visible="kbVisible"
       :pane-id="activePaneId ?? ''"
       :get-send-fn="getSendFn"
@@ -235,6 +236,7 @@
       @bookmarks="bookmarksRef?.open()"
       @app-action="dispatchAppAction"
       @dismiss="onKeyboardDismiss"
+      @typing-change="(v: boolean) => (kbTyping = v)"
     />
 
     <KbToggleButton
@@ -423,8 +425,14 @@ const windowCloseConfirmVisible = ref(false)
 let linkJustActivated = false
 let scrollGestureDetected = false
 let scrollGestureTimer = 0
+// Sticky typing mode: while the mobile keyboard text input is focused, terminal
+// taps/scrolls must not close the iOS system keyboard. We capture the typing
+// state at touchstart (before the native blur) and re-focus in touchend.
+const kbTyping = ref(false)
+let wasTypingBeforeTouch = false
 
 // ── Template refs (purely UI concerns) ─────────────────────────
+const mobileKbRef = ref<InstanceType<typeof MobileKeyboard>>()
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
 const tabBarRef = ref<InstanceType<typeof TabBar> | null>(null)
 const previewPanelRef = ref<InstanceType<typeof PreviewPanel> | null>(null)
@@ -1029,10 +1037,27 @@ function onLinkActivate() {
   linkJustActivated = true
 }
 
+// Capture typing state BEFORE the native focus-steal blurs our input, so
+// onTerminalTouch (touchend) can decide whether to keep the iOS keyboard alive.
+function onTerminalTouchStartCapture(e: TouchEvent) {
+  if (!isTouchDevice()) return
+  const target = e.target as HTMLElement
+  wasTypingBeforeTouch = kbTyping.value && !!target.closest('.terminal-pane-container')
+}
+
 function onTerminalTouch(e: TouchEvent) {
   if (!isTouchDevice()) return
   const target = e.target as HTMLElement
   if (target.closest('.terminal-pane-container')) {
+    // Sticky typing mode: re-focus our text input within this user gesture so
+    // the iOS system keyboard survives the terminal tap/scroll. Only when the
+    // collapse guard is on — off/open_only stay upstream-equivalent.
+    if (wasTypingBeforeTouch) {
+      wasTypingBeforeTouch = false
+      if (hasCollapseGuard(appSettings.keyboard_guard_mode)) {
+        mobileKbRef.value?.focusInput()
+      }
+    }
     // Don't show keyboard when tapping a link (file path or URL)
     if (linkJustActivated) {
       linkJustActivated = false
