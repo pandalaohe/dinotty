@@ -146,11 +146,30 @@ export function useTabLifecycle(opts: TabLifecycleOptions): TabLifecycleState {
   ): Promise<{ tabId: string; warnings: string[] } | null> {
     try {
       const result = await apiApplyTemplate({ template_id: templateId, workspace_id: workspaceId })
+
+      // Determine the workspace this new tab belongs to. Prefer the explicit
+      // workspace_id requested by the caller; fall back to matching by the
+      // cwd / connection_id returned by the backend.
+      const targetWorkspace = workspaceId
+        ? workspaces.value.find((w) => w.id === workspaceId) ?? null
+        : matchWorkspace(result.cwd ?? '', result.connection_id, undefined)
+      const targetWorkspaceId = targetWorkspace?.id ?? null
+
+      const tabFields = {
+        cwd: result.cwd,
+        connectionId: result.connection_id,
+        workspaceId: targetWorkspaceId ?? undefined,
+      }
+
       const existing = tabs.value.find(
         (t) => t.type === 'terminal' && t.paneId === result.tab_id,
       )
       if (existing) {
+        Object.assign(existing, tabFields)
         commitLocalActivePane(result.tab_id)
+        if (targetWorkspaceId && targetWorkspaceId !== activeWorkspaceId.value) {
+          await activateWorkspace(targetWorkspaceId)
+        }
         persist()
         nextTick(() => focusActive())
         return { tabId: result.tab_id, warnings: result.warnings }
@@ -169,8 +188,12 @@ export function useTabLifecycle(opts: TabLifecycleOptions): TabLifecycleState {
         previewAddress: '',
         previewUrl: '',
         previewKind: 'web',
+        ...tabFields,
       })
       commitLocalActivePane(result.tab_id)
+      if (targetWorkspaceId && targetWorkspaceId !== activeWorkspaceId.value) {
+        await activateWorkspace(targetWorkspaceId)
+      }
       persist()
       nextTick(() => focusActive())
       return { tabId: result.tab_id, warnings: result.warnings }

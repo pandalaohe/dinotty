@@ -26,6 +26,7 @@ use crate::platform::shell;
 use crate::plugin::PluginManagerState;
 use crate::pty;
 use crate::session::{SessionManager, SyncMsg};
+use crate::workspace_mgmt;
 
 use super::store::{StoreError, TemplateStore};
 use super::types::{ApplyTemplateBody, Template, TemplateScope};
@@ -55,6 +56,7 @@ fn prepare_layout(
     created_pty_ids: &mut Vec<String>,
     startup_commands: &mut Vec<(String, String)>,
     warnings: &mut Vec<String>,
+    workspace: Option<&workspace_mgmt::Workspace>,
 ) -> Result<(), (StatusCode, String)> {
     let Some(node_type) = layout.get("type").and_then(|v| v.as_str()).map(str::to_string) else {
         return Ok(());
@@ -66,16 +68,31 @@ fn prepare_layout(
 
         match kind.as_str() {
             "terminal" => {
-                // Resolve cwd: template-provided > home.
+                // Resolve cwd: template-provided > workspace root > home.
+                let workspace_path = workspace.map(|ws| PathBuf::from(&ws.path));
                 let cwd = layout.get("cwd").and_then(|v| v.as_str());
                 let cwd_path = match cwd {
                     Some(p) if !p.is_empty() && PathBuf::from(p).is_dir() => Some(PathBuf::from(p)),
                     Some(p) if !p.is_empty() => {
-                        warnings.push(format!("cwd '{p}' not found, using home"));
-                        Some(shell::home_dir())
+                        warnings.push(format!("cwd '{p}' not found, using workspace root"));
+                        workspace_path.clone()
                     }
-                    _ => None,
+                    _ => workspace_path.clone(),
                 };
+                let cwd_path = cwd_path.filter(|p| p.is_dir()).or_else(|| Some(shell::home_dir()));
+
+                // Check if this was originally an SSH pane (we can't restore
+                // the connection). Downgrade to a plain terminal with a warning.
+                let is_ssh =
+                    layout.get("shell_type").and_then(|v| v.as_str()).is_some_and(|s| s == "ssh");
+                if is_ssh {
+                    warnings.push(
+                        "SSH pane downgraded to local terminal (reconnect manually)".to_string(),
+                    );
+                    if let Some(obj) = layout.as_object_mut() {
+                        obj.remove("shell_type");
+                    }
+                }
 
                 // Check if this was originally an SSH pane (we can't restore
                 // the connection). Downgrade to a plain terminal with a warning.
@@ -183,6 +200,7 @@ fn prepare_layout(
                     created_pty_ids,
                     startup_commands,
                     warnings,
+                    workspace,
                 )?;
             }
         }
@@ -210,12 +228,23 @@ fn load_template_any_scope(req: &ApplyTemplateBody) -> Result<Template, (StatusC
 
 /// `POST /api/templates/apply`
 pub async fn apply_template(
-    State((plugins, manager)): State<(PluginManagerState, Arc<SessionManager>)>,
+    State((plugins, manager, workspaces)): State<(
+        PluginManagerState,
+        Arc<SessionManager>,
+        workspace_mgmt::WorkspacesState,
+    )>,
     Json(req): Json<ApplyTemplateBody>,
 ) -> impl IntoResponse {
     let template = match load_template_any_scope(&req) {
         Ok(t) => t,
         Err((status, msg)) => return err_response(status, &msg),
+    };
+
+    let workspace = match req.workspace_id.as_deref() {
+        Some(id) if !id.is_empty() => {
+            workspaces.read().await.iter().find(|ws| ws.id == id).cloned()
+        }
+        _ => None,
     };
 
     let installed_plugin_ids: HashSet<String> =
@@ -238,6 +267,7 @@ pub async fn apply_template(
         &mut created_pty_ids,
         &mut startup_commands,
         &mut warnings,
+        workspace.as_ref(),
     ) {
         for pane_id in &created_pty_ids {
             manager.kill_and_remove(pane_id);
@@ -249,6 +279,12 @@ pub async fn apply_template(
     // fallback when the tree is degenerate).
     let active_pane_id =
         collect_first_pane_id(&layout).unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    let effective_cwd = workspace.as_ref().map(|ws| ws.path.clone()).or_else(|| {
+        // Fallback: derive cwd from the first terminal leaf (legacy behavior).
+        collect_first_terminal_cwd(&layout)
+    });
+    let connection_id = workspace.as_ref().and_then(|ws| ws.connection_id.clone());
 
     manager.insert_tab(
         new_tab_id.clone(),
@@ -264,8 +300,8 @@ pub async fn apply_template(
         tab_id: new_tab_id.clone(),
         pane_id: active_pane_id.clone(),
         layout: Some(layout.clone()),
-        cwd: None,
-        connection_id: None,
+        cwd: effective_cwd.clone(),
+        connection_id: connection_id.clone(),
     });
     manager.broadcast_sync(&SyncMsg::LayoutUpdated {
         pane_id: new_tab_id.clone(),
@@ -295,6 +331,8 @@ pub async fn apply_template(
         "tab_id": new_tab_id,
         "layout": layout,
         "warnings": warnings,
+        "cwd": effective_cwd,
+        "connection_id": connection_id,
     }))
     .into_response()
 }
@@ -308,6 +346,24 @@ fn collect_first_pane_id(layout: &Value) -> Option<String> {
         for child in children {
             if let Some(id) = collect_first_pane_id(child) {
                 return Some(id);
+            }
+        }
+    }
+    None
+}
+
+/// Return the `cwd` of the first terminal leaf in the tree (pre-order traversal).
+fn collect_first_terminal_cwd(layout: &Value) -> Option<String> {
+    if layout.get("type").and_then(|v| v.as_str()) == Some("leaf") {
+        if layout.get("kind").and_then(|v| v.as_str()).unwrap_or("terminal") == "terminal" {
+            return layout.get("cwd").and_then(|v| v.as_str()).map(str::to_string);
+        }
+        return None;
+    }
+    if let Some(children) = layout.get("children").and_then(|c| c.as_array()) {
+        for child in children {
+            if let Some(cwd) = collect_first_terminal_cwd(child) {
+                return Some(cwd);
             }
         }
     }
@@ -378,6 +434,7 @@ mod tests {
             &mut created,
             &mut startup,
             &mut warnings,
+            None,
         )
         .unwrap();
 
@@ -412,6 +469,7 @@ mod tests {
             &mut created,
             &mut startup,
             &mut warnings,
+            None,
         )
         .unwrap();
 
@@ -445,6 +503,7 @@ mod tests {
             &mut created,
             &mut startup,
             &mut warnings,
+            None,
         )
         .unwrap();
 
@@ -482,6 +541,7 @@ mod tests {
             &mut created,
             &mut startup,
             &mut warnings,
+            None,
         )
         .unwrap();
 
@@ -516,6 +576,7 @@ mod tests {
             &mut created,
             &mut startup,
             &mut warnings,
+            None,
         )
         .unwrap();
 
@@ -549,6 +610,7 @@ mod tests {
             &mut created,
             &mut startup,
             &mut warnings,
+            None,
         )
         .unwrap();
 
@@ -591,12 +653,61 @@ mod tests {
             &mut created,
             &mut startup,
             &mut warnings,
+            None,
         )
         .unwrap();
 
         assert_eq!(created.len(), 1);
         assert_eq!(startup.len(), 1);
         assert_eq!(startup[0].1, "echo hello");
+
+        // Cleanup spawned PTY so the test process can exit.
+        for pane_id in &created {
+            manager.kill_and_remove(pane_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_terminal_leaf_uses_workspace_path_when_cwd_missing() {
+        let manager = Arc::new(SessionManager::new());
+        let plugins = fresh_plugin_manager();
+        let installed = HashSet::<String>::new();
+        // Use the temp directory as a guaranteed-existing workspace path.
+        let workspace_path = std::env::temp_dir().to_string_lossy().into_owned();
+        let workspace = workspace_mgmt::Workspace {
+            id: "ws-test".into(),
+            name: "Test".into(),
+            path: workspace_path.clone(),
+            order: 0,
+            connection_id: None,
+            abbr: None,
+            color: None,
+        };
+        let mut layout = json!({
+            "type": "leaf",
+            "kind": "terminal",
+            "paneId": "orig",
+            "title": "Term"
+        });
+        let mut created = Vec::new();
+        let mut startup = Vec::new();
+        let mut warnings = Vec::new();
+
+        prepare_layout(
+            &mut layout,
+            &manager,
+            &plugins,
+            "tab-1",
+            &installed,
+            &mut created,
+            &mut startup,
+            &mut warnings,
+            Some(&workspace),
+        )
+        .unwrap();
+
+        assert_eq!(created.len(), 1, "PTY should be created using workspace path");
+        assert!(warnings.is_empty(), "no warnings when workspace path is valid");
 
         // Cleanup spawned PTY so the test process can exit.
         for pane_id in &created {

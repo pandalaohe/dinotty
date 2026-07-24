@@ -119,6 +119,14 @@ impl axum::extract::FromRef<AppState> for (PluginManagerState, Arc<SessionManage
     }
 }
 
+impl axum::extract::FromRef<AppState>
+    for (PluginManagerState, Arc<SessionManager>, workspace_mgmt::WorkspacesState)
+{
+    fn from_ref(state: &AppState) -> Self {
+        (state.plugins.clone(), state.manager.clone(), state.workspaces.clone())
+    }
+}
+
 impl axum::extract::FromRef<AppState> for Arc<SessionStore> {
     fn from_ref(state: &AppState) -> Self {
         state.sessions.clone()
