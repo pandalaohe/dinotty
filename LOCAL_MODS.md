@@ -309,8 +309,37 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   → i18n. Tests: backend missing-field default + round-trip; frontend pin behavior ON/OFF.
   Known accepted risk: a stale already-open client PUTs the full Settings without the field and
   resets a saved true → refresh clients after deploy (no field-merge built for one bool).
-  upstreamable: **yes** (both — #193 is incomplete upstream) · status: **candidate** ·
-  upstream_pr: — · upstream_issue: —
+  upstreamable: **yes** (both — #193 is incomplete upstream) · status: **superseded by
+  `keyboard-guard-mode` below** — that branch carries the same two fixes plus the mode field, so
+  the bool is never filed on its own · upstream_pr: — · upstream_issue: —
+- **Mobile keyboard: guard mode (4 modes) + app-owned dismiss button** (2026-07-24; merged into
+  `custom` at `49dc1f0e`; PR branch `feature/keyboard-guard-mode` off `upstream/dev`) — supersedes
+  the `33c4b749` bool above and subsumes both of its upstream bug fixes.
+  1. `keyboard_keep_on_scroll` (frontend-only on upstream: declared in `useSettings.ts` but absent
+     from the Rust `Settings` struct, so the typed `Json<Settings>` PUT dropped it) is replaced by
+     a real backend field `keyboard_guard_mode`: enum `off | collapse_only | open_only | both`,
+     hand-written `Deserialize` folding any unknown/missing value to `off`, settings v7 migration
+     mapping the legacy `true` → `collapse_only`. The legacy bool stays as a
+     `deserialize_with = tolerant_legacy_bool, skip_serializing` input so v6 configs and older
+     clients migrate instead of erroring; it is never written back.
+  2. The two guards are now independent: collapse-guard (only the toolbar ▼ closes the keyboard)
+     and open-guard (a plain terminal tap no longer auto-opens it; only the floating icon does).
+     `off` is the default, so a fresh install behaves exactly as upstream today.
+  3. Includes the `33c4b749` duplicate `terminal-scroll` listener deletion.
+  4. App-owned dismiss button in the toolbar. iOS's own dismiss entry points cannot be relied on:
+     the input-accessory bar varies per IME and Safari's keyboard-down button disappears in
+     standalone PWA mode, and a page can neither detect nor drive either one.
+  Tests: Rust settings migration/tolerance/round-trip (`src/settings/tests.rs`), frontend
+  predicates + wiring + off-mode lock (`keyboardGuardMode.test.ts`, `MobileKeyboard.pin.test.ts`,
+  `AppPaneClose.test.ts`). All four upstream CI gates run locally on the rebased branch.
+  Reviewer risk to watch: the retained legacy bool is dead weight for a user who only ever ran
+  upstream (the field was never persisted there) — drop it if the maintainer objects; fork users
+  need it.
+  NOT in this branch: the `custom`-only sticky-typing mode (`9ca9978c..3c7ee4e6`), which disables
+  every `.xterm-helper-textarea` while the user types so a terminal tap cannot close the iOS
+  system keyboard. Held back pending real-device QA; decide separately whether it joins this PR
+  or files as a follow-up.
+  upstreamable: **yes** · status: **candidate** · upstream_pr: — · upstream_issue: —
 - **Terminal output-path concurrency: sync-mode race + reader deadlock** (2026-07-21;
   `fd982c3c` + `1367fcd9`) — two general upstream bugs in `src/session/mod.rs` + `src/pty.rs`,
   both verified present verbatim in `upstream/dev @ d5a819e8`:
