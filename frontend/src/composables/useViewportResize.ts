@@ -82,12 +82,18 @@ export function useViewportResize(opts: ViewportResizeOptions): ViewportResizeSt
   }
 
   function revalidate() {
-    if (!window.visualViewport) {
+    const viewport = window.visualViewport
+    if (!viewport) {
       reset()
       return
     }
-    naturalVH = 0
-    sampleViewport(true)
+    // Only re-establish the natural-height baseline from a confirmed-unoccluded
+    // sample. If the IME is still occluding (off > 0), keep the existing baseline
+    // so detection survives focus/pageshow/orientation revalidation instead of
+    // getting stuck false until the keyboard fully closes and reopens.
+    const off = Math.max(0, window.innerHeight - (viewport.offsetTop + viewport.height))
+    if (off === 0) naturalVH = 0
+    sampleViewport(off === 0)
   }
 
   function onVisibilityChange() {
