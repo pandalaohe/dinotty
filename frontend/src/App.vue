@@ -87,7 +87,11 @@
       </template>
     </TabBar>
 
-    <div id="tab-content" @touchend="onTerminalTouch">
+    <div
+      id="tab-content"
+      @mousedown.capture="onTabContentMouseDownCapture"
+      @touchend="onTerminalTouch"
+    >
       <div
         v-for="tab in tabs"
         :key="tabKey(tab)"
@@ -334,7 +338,12 @@ import {
   markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
-import { isTouchDevice, setActivePaneId, setKbTypingLock } from './composables/useTerminal'
+import {
+  isKbTypingLocked,
+  isTouchDevice,
+  setActivePaneId,
+  setKbTypingLock,
+} from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
 import { usePluginNotifyBridge } from './composables/usePluginNotifyBridge'
@@ -1041,6 +1050,26 @@ function onTerminalRunCode(e: Event) {
 
 function onLinkActivate() {
   linkJustActivated = true
+}
+
+// Sticky typing mode, native focus-move guard.
+//
+// While typing, disabling every xterm helper textarea already stops a tap that
+// LANDS on a terminal from stealing focus (xterm's own mousedown handler calls
+// preventDefault() and then focus() on a now-unfocusable textarea). But a tap on
+// pane chrome that xterm does not cover — a split pane's header, the reduced-
+// opacity inactive-pane surface, the gap between panes — has no such
+// preventDefault, so the browser's default mousedown action moves focus off our
+// mobile keyboard input, which is exactly what closes the iOS system keyboard.
+// This is why a single-pane tap (always on the terminal) was fine while tapping
+// the other pane in a split was not. Cancel that default action for every
+// mousedown inside the terminal area while the lock is on. Capture phase so it
+// runs before the target's default focus handling; no stopPropagation, so pane
+// activation (SplitContainer's own mousedown -> focusPane) and link clicks still
+// fire. The lock is only ever set on touch under the collapse guard, so desktop
+// and off / open_only never reach this.
+function onTabContentMouseDownCapture(e: MouseEvent) {
+  if (isKbTypingLocked()) e.preventDefault()
 }
 
 function onTerminalTouch(e: TouchEvent) {
