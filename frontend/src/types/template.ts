@@ -61,4 +61,6 @@ export interface ApplyTemplateResult {
   tab_id: string
   layout: PaneLayout
   warnings: string[]
+  cwd?: string
+  connection_id?: string
 }
