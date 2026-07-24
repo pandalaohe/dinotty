@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@zumer/snapdom': 781e740bd6d65782f9995cbe0c7f601c215ab1b2923f1fa12d3d608d63f489b0
+
 importers:
 
   .:
@@ -34,7 +37,7 @@ importers:
         version: 5.5.0
       '@zumer/snapdom':
         specifier: 2.18.0
-        version: 2.18.0
+        version: 2.18.0(patch_hash=781e740bd6d65782f9995cbe0c7f601c215ab1b2923f1fa12d3d608d63f489b0)
       chart.js:
         specifier: ^4.5.1
         version: 4.5.1
@@ -2767,7 +2770,7 @@ snapshots:
 
   '@xterm/xterm@5.5.0': {}
 
-  '@zumer/snapdom@2.18.0': {}
+  '@zumer/snapdom@2.18.0(patch_hash=781e740bd6d65782f9995cbe0c7f601c215ab1b2923f1fa12d3d608d63f489b0)': {}
 
   abbrev@2.0.0: {}
 

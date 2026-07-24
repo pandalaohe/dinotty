@@ -2,3 +2,5 @@ allowBuilds:
   esbuild: true
   tesseract.js: true
   vue-demi: true
+patchedDependencies:
+  '@zumer/snapdom': patches/@zumer__snapdom.patch
