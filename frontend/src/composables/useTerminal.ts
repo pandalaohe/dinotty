@@ -59,9 +59,9 @@ export function setActivePaneId(paneId: string | null) {
 // is exactly what closes the iOS system keyboard; keeping focus from EVER leaving
 // our textarea is what makes this flicker-free instead of restoring it after the
 // fact. The query covers hidden split panes too.
+// Deliberately sweep on every call so late-created or re-enabled helpers are reconciled.
 let _kbTypingLock = false
 export function setKbTypingLock(active: boolean) {
-  if (_kbTypingLock === active) return
   _kbTypingLock = active
   document.querySelectorAll('.xterm-helper-textarea').forEach((el) => {
     ;(el as HTMLTextAreaElement).disabled = active
