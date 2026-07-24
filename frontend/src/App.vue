@@ -592,7 +592,7 @@ const notificationPaneLabels = computed(() => {
 
 const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
 
-const { isLandscape, imeOccluding, dispose: disposeViewport } = useViewportResize({ kbVisible, activePaneId, tabs, termRefs })
+const { isLandscape, dispose: disposeViewport } = useViewportResize({ kbVisible, activePaneId, tabs, termRefs })
 
 const onSshConnectRef = shallowRef<(result: { tab_id: string; pane_id: string; layout: any; connection_id?: string }) => Promise<void>>(
   async () => { throw new Error('onSshConnect not wired') },
@@ -730,7 +730,6 @@ const hasVerticalPreview = computed(() => {
 const { imeKeyboardOverlapPx } = useDeviceKeyboardSettings()
 useKeyboardOverlap({
   settingPx: imeKeyboardOverlapPx,
-  imeOccluding,
   kbVisible,
   textInputFocused: kbTyping,
   isSingleTerminalTab,

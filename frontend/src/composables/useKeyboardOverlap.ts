@@ -1,9 +1,6 @@
 import { computed, onBeforeUnmount, watch, type Ref } from 'vue'
-import { isTouchDevice } from '../utils/terminalInput'
 
 export interface KeyboardOverlapGate {
-  touchDevice: boolean
-  imeOccluding: boolean
   kbVisible: boolean
   textInputFocused: boolean
   isSingleTerminalTab: boolean
@@ -12,7 +9,6 @@ export interface KeyboardOverlapGate {
 
 export interface KeyboardOverlapInputs {
   settingPx: Ref<number>
-  imeOccluding: Ref<boolean>
   kbVisible: Ref<boolean>
   textInputFocused: Ref<boolean>
   isSingleTerminalTab: Ref<boolean>
@@ -21,8 +17,6 @@ export interface KeyboardOverlapInputs {
 
 export function computeOverlapPx(settingPx: number, gate: KeyboardOverlapGate): number {
   const overlapActive =
-    gate.touchDevice &&
-    gate.imeOccluding &&
     gate.kbVisible &&
     gate.textInputFocused &&
     gate.isSingleTerminalTab &&
@@ -32,11 +26,8 @@ export function computeOverlapPx(settingPx: number, gate: KeyboardOverlapGate): 
 }
 
 export function useKeyboardOverlap(inputs: KeyboardOverlapInputs) {
-  const touchDevice = isTouchDevice()
   const overlapActive = computed(
     () =>
-      touchDevice &&
-      inputs.imeOccluding.value &&
       inputs.kbVisible.value &&
       inputs.textInputFocused.value &&
       inputs.isSingleTerminalTab.value &&
@@ -44,8 +35,6 @@ export function useKeyboardOverlap(inputs: KeyboardOverlapInputs) {
   )
   const overlapPx = computed(() =>
     computeOverlapPx(inputs.settingPx.value, {
-      touchDevice,
-      imeOccluding: inputs.imeOccluding.value,
       kbVisible: inputs.kbVisible.value,
       textInputFocused: inputs.textInputFocused.value,
       isSingleTerminalTab: inputs.isSingleTerminalTab.value,

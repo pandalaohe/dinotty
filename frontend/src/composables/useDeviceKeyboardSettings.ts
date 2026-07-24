@@ -1,7 +1,7 @@
 import { computed, reactive, readonly, type WritableComputedRef } from 'vue'
 
 export const IME_KEYBOARD_OVERLAP_MIN = 0
-export const IME_KEYBOARD_OVERLAP_MAX = 160
+export const IME_KEYBOARD_OVERLAP_MAX = 300
 
 const STORAGE_KEY = 'dinotty.device-keyboard.v1'
 const STORAGE_VERSION = 1

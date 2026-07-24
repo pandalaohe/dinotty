@@ -150,19 +150,6 @@
         </div>
       </div>
 
-      <div class="settings-row">
-        <label>{{ t('settings.text.imeKeyboardOverlapPx') }}</label>
-        <input
-          v-model.number="imeKeyboardOverlapPx"
-          type="number"
-          min="0"
-          max="160"
-          step="8"
-          class="shortcut-input"
-          style="flex: 0 0 80px; width: 80px; text-align: center"
-        />
-      </div>
-
       <CollapsibleSection :title="t('settings.advancedText')" level="section">
 
       <div class="settings-row">
@@ -279,7 +266,6 @@ import {
   FONT_SIZE_MIN,
   useDeviceTextSettings,
 } from '../../composables/useDeviceTextSettings'
-import { useDeviceKeyboardSettings } from '../../composables/useDeviceKeyboardSettings'
 
 const { settings, saveSettings } = useSettings()
 const {
@@ -290,7 +276,6 @@ const {
   hasOverride,
   resetOverride,
 } = useDeviceTextSettings()
-const { imeKeyboardOverlapPx } = useDeviceKeyboardSettings()
 const { t } = useI18n()
 
 // ── Text / Font ──

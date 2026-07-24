@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { computeOverlapPx, type KeyboardOverlapGate } from '../composables/useKeyboardOverlap'
 
 const activeGate: KeyboardOverlapGate = {
-  touchDevice: true,
-  imeOccluding: true,
   kbVisible: true,
   textInputFocused: true,
   isSingleTerminalTab: true,
@@ -20,8 +18,6 @@ describe('computeOverlapPx', () => {
   })
 
   it.each([
-    ['touchDevice', false],
-    ['imeOccluding', false],
     ['kbVisible', false],
     ['textInputFocused', false],
     ['isSingleTerminalTab', false],
