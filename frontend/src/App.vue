@@ -87,7 +87,12 @@
       </template>
     </TabBar>
 
-    <div id="tab-content" @touchstart.capture="onTerminalTouchStartCapture" @touchend="onTerminalTouch">
+    <div
+      id="tab-content"
+      @touchstart.capture="onTerminalTouchStartCapture"
+      @touchend="onTerminalTouch"
+      @mousedown.capture="onTerminalMouseDownCapture"
+    >
       <div
         v-for="tab in tabs"
         :key="tabKey(tab)"
@@ -1035,6 +1040,22 @@ function onTerminalRunCode(e: Event) {
 
 function onLinkActivate() {
   linkJustActivated = true
+}
+
+// On iOS a TAP emits a synthesized mousedown AFTER touchend, and that is where
+// xterm steals focus into its own helper textarea (which has inputMode=none),
+// closing the system keyboard. A SCROLL emits no synthesized mouse events, which
+// is why scrolling already kept the keyboard. Suppressing the default action of
+// that mousedown blocks the focus move without touching the touch stream, so
+// terminal scrolling is unaffected. xterm's own listeners still run
+// (preventDefault is not stopPropagation), so selection/links keep working.
+function onTerminalMouseDownCapture(e: MouseEvent) {
+  if (!isTouchDevice()) return
+  if (!kbTyping.value) return
+  if (!hasCollapseGuard(appSettings.keyboard_guard_mode)) return
+  const target = e.target as HTMLElement
+  if (!target.closest('.terminal-pane-container')) return
+  e.preventDefault()
 }
 
 // Capture typing state BEFORE the native focus-steal blurs our input, so
