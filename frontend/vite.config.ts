@@ -27,7 +27,16 @@ export default defineConfig({
     emptyOutDir: true,
     chunkSizeWarningLimit: 4000,
     rollupOptions: {
+      preserveEntrySignatures: 'exports-only',
+      input: {
+        index: new URL('./index.html', import.meta.url).pathname,
+        'preview-bridge': new URL('./src/preview-bridge/index.ts', import.meta.url).pathname,
+      },
       output: {
+        entryFileNames: (chunk) =>
+          chunk.name === 'preview-bridge'
+            ? 'assets/dinotty-preview-bridge.js'
+            : 'assets/[name]-[hash].js',
         manualChunks: {
           xterm: [
             '@xterm/xterm',

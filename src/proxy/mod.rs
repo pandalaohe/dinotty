@@ -22,7 +22,7 @@ use crate::settings::SettingsState;
 
 pub use external::external_proxy_handler;
 
-use inject::INJECT_SCRIPT_INTERNAL;
+use inject::{append_capture_bridge, INJECT_SCRIPT_INTERNAL};
 use response::build_proxied_response;
 use rewrite::RewriteMode;
 use websocket::proxy_websocket;
@@ -317,9 +317,11 @@ p{{color:#888;font-size:14px}}a{{color:#89b4fa;text-decoration:none}}a:hover{{te
     };
 
     let inject_base = make_base_tag(host, port);
-    let inject_script = INJECT_SCRIPT_INTERNAL
-        .replace("document.currentScript.getAttribute('data-port')", &format!("'{port}'"))
-        .replace("document.currentScript.getAttribute('data-host')", &format!("'{host}'"));
+    let inject_script = append_capture_bridge(
+        &INJECT_SCRIPT_INTERNAL
+            .replace("document.currentScript.getAttribute('data-port')", &format!("'{port}'"))
+            .replace("document.currentScript.getAttribute('data-host')", &format!("'{host}'")),
+    );
     build_proxied_response(
         upstream_resp,
         &inject_base,

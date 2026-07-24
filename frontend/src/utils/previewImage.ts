@@ -9,7 +9,194 @@ export interface DrawCommand {
   text?: string
 }
 
+export interface CaptureBasis {
+  documentWidthCss: number
+  documentHeightCss: number
+  capturedScale: number
+}
+
 export type I18nFn = (key: string) => string
+
+export type CaptureRequestErrorCode =
+  | 'bridge-absent'
+  | 'snapdom-load-failed'
+  | 'raster-failed'
+  | 'canvas-tainted'
+  | 'document-too-large'
+  | 'capture-in-progress'
+  | 'timeout'
+  | 'busy'
+
+export class CaptureRequestError extends Error {
+  readonly code: CaptureRequestErrorCode
+
+  constructor(code: CaptureRequestErrorCode) {
+    super(code)
+    this.name = 'CaptureRequestError'
+    this.code = code
+  }
+}
+
+export interface CaptureResult {
+  bitmap: ImageBitmap
+  documentWidthCss: number
+  documentHeightCss: number
+  capturedScale: number
+  background: string
+}
+
+interface CaptureReplySuccess extends CaptureResult {
+  requestId: number
+  generation: number
+  ok: true
+}
+
+interface CaptureReplyFailure {
+  requestId: number
+  generation: number
+  ok: false
+  code: CaptureRequestErrorCode
+}
+
+let nextCaptureRequestId = 0
+const captureInFlight = new WeakSet<HTMLIFrameElement>()
+const captureBridgeReady = new WeakMap<HTMLIFrameElement, { generation: number; origin: string }>()
+
+export function isCaptureBridgeReady(
+  iframe: HTMLIFrameElement,
+  event: MessageEvent,
+  expectedOrigin: string
+): boolean {
+  const message = event.data as { type?: unknown; v?: unknown } | null
+  return (
+    isExpectedPreviewMessage(iframe, event, expectedOrigin) &&
+    message?.type === 'dinotty:capture-ready' &&
+    message.v === 1
+  )
+}
+
+export function isExpectedPreviewMessage(
+  iframe: HTMLIFrameElement,
+  event: MessageEvent,
+  expectedOrigin: string
+): boolean {
+  return event.source === iframe.contentWindow && event.origin === expectedOrigin
+}
+
+export function rememberCaptureBridgeReady(
+  iframe: HTMLIFrameElement,
+  generation: number,
+  expectedOrigin: string
+): void {
+  captureBridgeReady.set(iframe, { generation, origin: expectedOrigin })
+}
+
+export function isCaptureInitOriginAllowed(eventOrigin: string, pageOrigin: string): boolean {
+  if (eventOrigin === pageOrigin) return true
+  try {
+    const origin = new URL(eventOrigin)
+    return (
+      eventOrigin === 'tauri://localhost' ||
+      eventOrigin === 'http://tauri.localhost' ||
+      (origin.origin === eventOrigin &&
+        origin.port !== '' &&
+        (origin.protocol === 'http:' || origin.protocol === 'https:') &&
+        (origin.hostname === 'localhost' || origin.hostname === '127.0.0.1'))
+    )
+  } catch {
+    return false
+  }
+}
+
+export function requestCapture(
+  iframe: HTMLIFrameElement,
+  opts: { pixelCap: number; generation: number; expectedOrigin: string }
+): Promise<CaptureResult> {
+  if (captureInFlight.has(iframe)) {
+    return Promise.reject(new CaptureRequestError('busy'))
+  }
+  captureInFlight.add(iframe)
+
+  const requestId = ++nextCaptureRequestId
+  return new Promise<CaptureResult>((resolve, reject) => {
+    let port: MessagePort | undefined
+    let settled = false
+    let timer = 0
+
+    const cleanup = () => {
+      window.removeEventListener('message', onReady)
+      window.clearTimeout(timer)
+      port?.close()
+      captureInFlight.delete(iframe)
+    }
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+    const fail = (code: CaptureRequestErrorCode) =>
+      settle(() => reject(new CaptureRequestError(code)))
+    const onPortMessage = (event: MessageEvent<CaptureReplySuccess | CaptureReplyFailure>) => {
+      const reply = event.data
+      if (!reply || reply.requestId !== requestId || reply.generation !== opts.generation) {
+        return
+      }
+      if (!reply.ok) {
+        fail(reply.code)
+        return
+      }
+      const { bitmap, documentWidthCss, documentHeightCss, capturedScale, background } = reply
+      settle(() =>
+        resolve({ bitmap, documentWidthCss, documentHeightCss, capturedScale, background })
+      )
+    }
+    const beginCapture = () => {
+      const target = iframe.contentWindow
+      if (!target) {
+        fail('bridge-absent')
+        return
+      }
+
+      window.removeEventListener('message', onReady)
+      const channel = new MessageChannel()
+      port = channel.port1
+      port.onmessage = onPortMessage
+      port.onmessageerror = () => fail('raster-failed')
+      port.start()
+
+      try {
+        target.postMessage({ type: 'dinotty:capture-init' }, opts.expectedOrigin, [channel.port2])
+        port.postMessage({
+          type: 'capture',
+          requestId,
+          generation: opts.generation,
+          pixelCap: opts.pixelCap,
+        })
+      } catch {
+        try {
+          channel.port2.close()
+        } catch {}
+        fail('bridge-absent')
+      }
+    }
+    const onReady = (event: MessageEvent) => {
+      if (!isCaptureBridgeReady(iframe, event, opts.expectedOrigin)) return
+      captureBridgeReady.set(iframe, {
+        generation: opts.generation,
+        origin: opts.expectedOrigin,
+      })
+      beginCapture()
+    }
+    timer = window.setTimeout(() => fail('timeout'), 20_000)
+    const ready = captureBridgeReady.get(iframe)
+    if (ready?.generation === opts.generation && ready.origin === opts.expectedOrigin) {
+      beginCapture()
+    } else {
+      window.addEventListener('message', onReady)
+    }
+  })
+}
 
 async function snapDocument(root: Element, dpr: number, scale: number): Promise<HTMLCanvasElement> {
   const { snapdom } = await import('@zumer/snapdom')
@@ -85,9 +272,13 @@ export async function captureViewport(
 export function renderDrawCommands(
   ctx: CanvasRenderingContext2D,
   commands: DrawCommand[],
-  width: number,
-  height: number
+  basis: CaptureBasis,
+  outputWidth = basis.documentWidthCss,
+  outputHeight = basis.documentHeightCss
 ): void {
+  const scaleX = outputWidth / Math.max(1, basis.documentWidthCss)
+  const scaleY = outputHeight / Math.max(1, basis.documentHeightCss)
+  const visualScale = Math.min(scaleX, scaleY)
   ctx.save()
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
@@ -96,22 +287,24 @@ export function renderDrawCommands(
     const p = command.points
     ctx.strokeStyle = command.color
     ctx.fillStyle = command.color
-    ctx.lineWidth = Math.max(1, (command.width ?? 0.004) * height)
+    ctx.lineWidth = Math.max(1, (command.width ?? 3) * visualScale)
 
     if (command.tool === 'pen' && p.length >= 4) {
       ctx.beginPath()
-      ctx.moveTo(p[0] * width, p[1] * height)
-      for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(p[i] * width, p[i + 1] * height)
+      ctx.moveTo(p[0] * scaleX, p[1] * scaleY)
+      for (let i = 2; i + 1 < p.length; i += 2) {
+        ctx.lineTo(p[i] * scaleX, p[i + 1] * scaleY)
+      }
       ctx.stroke()
     } else if (command.tool === 'rect' && p.length >= 4) {
-      ctx.strokeRect(p[0] * width, p[1] * height, (p[2] - p[0]) * width, (p[3] - p[1]) * height)
+      ctx.strokeRect(p[0] * scaleX, p[1] * scaleY, (p[2] - p[0]) * scaleX, (p[3] - p[1]) * scaleY)
     } else if (command.tool === 'arrow' && p.length >= 4) {
-      const x1 = p[0] * width
-      const y1 = p[1] * height
-      const x2 = p[2] * width
-      const y2 = p[3] * height
+      const x1 = p[0] * scaleX
+      const y1 = p[1] * scaleY
+      const x2 = p[2] * scaleX
+      const y2 = p[3] * scaleY
       const angle = Math.atan2(y2 - y1, x2 - x1)
-      const head = Math.max(ctx.lineWidth * 4, height * 0.018)
+      const head = Math.max(ctx.lineWidth * 4, 14 * visualScale)
       ctx.beginPath()
       ctx.moveTo(x1, y1)
       ctx.lineTo(x2, y2)
@@ -127,16 +320,20 @@ export function renderDrawCommands(
       )
       ctx.stroke()
     } else if (command.tool === 'text' && command.text && p.length >= 2) {
-      ctx.font = `${Math.max(1, (command.fontSize ?? 0.035) * height)}px sans-serif`
+      ctx.font = `${Math.max(1, (command.fontSize ?? 20) * visualScale)}px sans-serif`
       ctx.textBaseline = 'top'
-      ctx.fillText(command.text, p[0] * width, p[1] * height)
+      ctx.fillText(command.text, p[0] * scaleX, p[1] * scaleY)
     }
   }
 
   ctx.restore()
 }
 
-export async function compositePng(base: HTMLCanvasElement, commands: DrawCommand[]): Promise<Blob> {
+export async function compositePng(
+  base: HTMLCanvasElement,
+  commands: DrawCommand[],
+  basis: CaptureBasis
+): Promise<Blob> {
   const output = document.createElement('canvas')
   try {
     output.width = base.width
@@ -146,7 +343,7 @@ export async function compositePng(base: HTMLCanvasElement, commands: DrawComman
       throw new Error('2D canvas is unavailable')
     }
     ctx.drawImage(base, 0, 0)
-    renderDrawCommands(ctx, commands, output.width, output.height)
+    renderDrawCommands(ctx, commands, basis, output.width, output.height)
     return await new Promise<Blob>((resolve, reject) => {
       let settled = false
       let timer = 0

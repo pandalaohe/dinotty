@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use std::net::IpAddr;
 
-use super::inject::INJECT_SCRIPT_EXTERNAL;
+use super::inject::{append_capture_bridge, INJECT_SCRIPT_EXTERNAL};
 use super::response::build_proxied_response;
 use super::rewrite::{rewrite_form_urlencoded_body, RewriteMode};
 use super::{extract_request, HTTP_CLIENT_FOLLOW_REDIRECTS};
@@ -169,11 +169,11 @@ pub async fn external_proxy_handler(
         .replace('"', "&quot;")
         .replace('<', "&lt;")
         .replace('>', "&gt;");
-    let inject_script = INJECT_SCRIPT_EXTERNAL.replacen(
+    let inject_script = append_capture_bridge(&INJECT_SCRIPT_EXTERNAL.replacen(
         "<script>",
         &format!("<script data-base-url=\"{escaped_url}\">"),
         1,
-    );
+    ));
     build_proxied_response(
         upstream_resp,
         inject_base,

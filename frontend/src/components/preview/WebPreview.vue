@@ -88,6 +88,7 @@
           </button>
           <button
             type="button"
+            class="copy-button"
             :title="t('preview.annotation.copy')"
             :aria-label="t('preview.annotation.copy')"
             @click="copyComposite"
@@ -97,6 +98,7 @@
         </div>
         <button
           type="button"
+          class="freeze-button"
           :disabled="previewState === 'capturing' || (previewState === 'live' && !canFreeze)"
           :title="freezeTitle"
           :aria-label="freezeTitle"
@@ -115,37 +117,34 @@
           <X :size="14" />
         </button>
       </div>
-      <div
-        ref="contentRef"
-        class="web-preview-content"
-        :class="{ frozen: previewState === 'frozen' }"
-      >
+      <div class="web-preview-content" :class="{ frozen: previewState === 'frozen' }">
         <iframe
           ref="iframeRef"
           :src="resolvedSrc"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           @load="onIframeLoad"
         ></iframe>
-        <canvas
-          v-show="previewState === 'frozen'"
-          ref="bitmapCanvasRef"
-          class="frozen-bitmap"
-        ></canvas>
-        <WebAnnotationLayer
-          ref="annotationRef"
-          :visible="previewState === 'frozen'"
-          :enabled="previewState === 'frozen'"
-          :width="contentSize.width"
-          :height="contentSize.height"
-          @commands-changed="commands = $event"
-        />
+        <div v-show="previewState === 'frozen'" class="frozen-scroll">
+          <div class="frozen-surface" :style="frozenSurfaceStyle">
+            <canvas ref="bitmapCanvasRef" class="frozen-bitmap"></canvas>
+            <WebAnnotationLayer
+              ref="annotationRef"
+              :visible="previewState === 'frozen'"
+              :enabled="previewState === 'frozen'"
+              :page-width="captureBasis.documentWidthCss"
+              :page-height="captureBasis.documentHeightCss"
+              :basis="captureBasis"
+              @commands-changed="onCommandsChanged"
+            />
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useToast } from 'vue-toastification'
 import {
   ArrowRight,
@@ -168,23 +167,34 @@ import { getApiBase } from '../../composables/apiBase'
 import { useI18n } from '../../composables/useI18n'
 import { urlToPreviewSrc } from '../../utils/previewRouting'
 import {
-  captureViewport,
+  CaptureRequestError,
   compositePng,
   copyPngWithFallback,
   downloadPng,
+  isCaptureBridgeReady,
+  isExpectedPreviewMessage,
+  rememberCaptureBridgeReady,
+  requestCapture,
+  type CaptureBasis,
+  type CaptureRequestErrorCode,
   type DrawCommand,
   type DrawTool,
 } from '../../utils/previewImage'
+import {
+  canonicalPreviewUrl,
+  createAnnotationRetentionStore,
+} from '../../utils/previewAnnotationRetention'
 
 const PIXEL_CAP = 8_294_400
-const CAPTURE_TIMEOUT_MS = 15_000
+const READINESS_TIMEOUT_MS = 3_000
 
 type PreviewState = 'live' | 'capturing' | 'frozen'
 type AnnotationLayerApi = {
   undo: () => void
-  clear: (retain?: boolean) => void
+  clear: () => void
   setTool: (tool: DrawTool) => void
   setColor: (color: string) => void
+  setCommands: (commands: DrawCommand[], storedBasis: CaptureBasis) => boolean
 }
 
 const props = defineProps<{
@@ -200,7 +210,6 @@ const { t } = useI18n()
 const toast = useToast()
 const iframeRef = ref<HTMLIFrameElement>()
 const addressInput = ref<HTMLInputElement>()
-const contentRef = ref<HTMLElement>()
 const bitmapCanvasRef = ref<HTMLCanvasElement>()
 const annotationRef = ref<AnnotationLayerApi>()
 const addressValue = ref('')
@@ -212,7 +221,11 @@ const canFreeze = ref(false)
 const commands = ref<DrawCommand[]>([])
 const selectedTool = ref<DrawTool>('pen')
 const selectedColor = ref('#ff3b30')
-const contentSize = ref({ width: 0, height: 0 })
+const captureBasis = ref<CaptureBasis>({
+  documentWidthCss: 1,
+  documentHeightCss: 1,
+  capturedScale: 1,
+})
 const isLandscape = ref(window.innerWidth > window.innerHeight)
 const palette = [
   { color: '#ff3b30', labelKey: 'preview.annotation.colorRed' },
@@ -229,9 +242,10 @@ const toolEntries = [
   { tool: 'text' as const, icon: Type, labelKey: 'preview.annotation.toolText' },
 ]
 let generation = 0
-let frozenBase: HTMLCanvasElement | undefined
-let contentResizeObserver: ResizeObserver | undefined
 let mounted = false
+let readinessTimer = 0
+let readyGeneration: number | undefined
+const retentionStore = createAnnotationRetentionStore()
 
 const resolvedSrc = computed(() => {
   if (!currentUrl.value) return 'about:blank'
@@ -245,21 +259,20 @@ const resolvedSrc = computed(() => {
 
 const direction = computed(() => (isLandscape.value ? 'horizontal' : 'vertical'))
 
+const frozenSurfaceStyle = computed(() => ({
+  width: `${captureBasis.value.documentWidthCss}px`,
+  height: `${captureBasis.value.documentHeightCss}px`,
+}))
+
 const freezeTitle = computed(() => {
   if (previewState.value === 'capturing') return t('preview.annotation.capturing')
   if (previewState.value === 'frozen') return t('preview.annotation.unfreeze')
-  if (!canFreeze.value) return t('preview.annotation.unavailableCrossOrigin')
+  if (!canFreeze.value) return t('preview.annotation.notFreezable')
   return t('preview.annotation.freeze')
 })
 
-function updateContentSize() {
-  const rect = contentRef.value?.getBoundingClientRect()
-  if (rect) contentSize.value = { width: rect.width, height: rect.height }
-}
-
 function onResize() {
   isLandscape.value = window.innerWidth > window.innerHeight
-  updateContentSize()
 }
 
 function releaseCanvas(canvas: HTMLCanvasElement | undefined) {
@@ -269,43 +282,98 @@ function releaseCanvas(canvas: HTMLCanvasElement | undefined) {
 }
 
 function releaseFrozenBitmap() {
-  releaseCanvas(frozenBase)
-  frozenBase = undefined
   releaseCanvas(bitmapCanvasRef.value)
 }
 
-function invalidateCapture(clearCommands = true) {
+function invalidateCapture() {
   generation++
   previewState.value = 'live'
   releaseFrozenBitmap()
-  if (clearCommands) annotationRef.value?.clear()
-  if (clearCommands) commands.value = []
 }
 
-function checkFreezeAvailability() {
+function clearReadinessTimer() {
+  window.clearTimeout(readinessTimer)
+  readinessTimer = 0
+}
+
+function resetReadiness() {
+  clearReadinessTimer()
+  canFreeze.value = false
+  readyGeneration = undefined
+}
+
+function expectedIframeOrigin(): string | undefined {
   try {
-    const doc = iframeRef.value?.contentDocument
-    canFreeze.value = !!doc?.documentElement
+    return new URL(resolvedSrc.value, location.href).origin
   } catch {
-    canFreeze.value = false
+    return undefined
   }
 }
 
 function onIframeLoad() {
+  clearReadinessTimer()
+  if (readyGeneration === generation) {
+    canFreeze.value = true
+    return
+  }
+  canFreeze.value = false
+  const loadGeneration = generation
+  readinessTimer = window.setTimeout(() => {
+    if (generation === loadGeneration) canFreeze.value = false
+  }, READINESS_TIMEOUT_MS)
+}
+
+function onPreviewMessage(event: MessageEvent) {
+  const iframe = iframeRef.value
+  const expectedOrigin = expectedIframeOrigin()
+  if (!iframe || !expectedOrigin || !isExpectedPreviewMessage(iframe, event, expectedOrigin)) return
+  if (isCaptureBridgeReady(iframe, event, expectedOrigin)) {
+    if (previewState.value !== 'live') return
+    clearReadinessTimer()
+    readyGeneration = generation
+    canFreeze.value = true
+    rememberCaptureBridgeReady(iframe, generation, expectedOrigin)
+    return
+  }
+
+  const message = event.data as { type?: unknown; url?: unknown } | null
+  if (message?.type !== 'proxy-navigate' || typeof message.url !== 'string' || !message.url) return
+  if (canonicalPreviewUrl(message.url) === canonicalPreviewUrl(currentUrl.value)) {
+    addressValue.value = message.url
+    return
+  }
+  applyUrlChange(message.url, false)
+}
+
+function activateRetention(value: string) {
+  const record = retentionStore.activate(value)
+  commands.value = record?.commands ?? []
+  if (record) captureBasis.value = { ...record.basis }
+  void nextTick(() => {
+    if (record) annotationRef.value?.setCommands(record.commands, record.basis)
+    else annotationRef.value?.clear()
+  })
+}
+
+function prepareForNavigation() {
   invalidateCapture()
-  checkFreezeAvailability()
+  resetReadiness()
+}
+
+function applyUrlChange(value: string, reloadIframe: boolean) {
+  currentUrl.value = value
+  addressValue.value = value
+  activateRetention(value)
+  prepareForNavigation()
+  if (reloadIframe) navCounter.value++
 }
 
 watch(
   () => [props.url, props.visible],
   () => {
-    invalidateCapture()
-    canFreeze.value = false
     if (props.visible && props.url) {
-      currentUrl.value = props.url
-      addressValue.value = props.url
-      navCounter.value++
-    }
+      applyUrlChange(props.url, true)
+    } else prepareForNavigation()
   },
   { immediate: true }
 )
@@ -314,34 +382,29 @@ function navigateFromInput() {
   const val = addressValue.value.trim()
   if (!val) return
 
+  let nextUrl: string
   if (val.startsWith('http://') || val.startsWith('https://')) {
-    currentUrl.value = val
+    nextUrl = val
   } else if (val.match(/^:?(\d+)(\/.*)?$/)) {
     const m = val.match(/^:?(\d+)(\/.*)?$/)!
-    currentUrl.value = `http://localhost:${m[1]}${m[2] || '/'}`
-    addressValue.value = currentUrl.value
+    nextUrl = `http://localhost:${m[1]}${m[2] || '/'}`
   } else if (val.startsWith('/')) {
     try {
       const prev = new URL(currentUrl.value)
       prev.pathname = val
-      currentUrl.value = prev.toString()
-      addressValue.value = currentUrl.value
+      nextUrl = prev.toString()
     } catch {
       return
     }
   } else {
-    currentUrl.value = `http://${val}`
-    addressValue.value = currentUrl.value
+    nextUrl = `http://${val}`
   }
-  invalidateCapture()
-  canFreeze.value = false
-  navCounter.value++
+  applyUrlChange(nextUrl, true)
   addressInput.value?.blur()
 }
 
 function refresh() {
-  invalidateCapture()
-  canFreeze.value = false
+  prepareForNavigation()
   navCounter.value++
 }
 
@@ -349,114 +412,84 @@ function close() {
   emit('close')
 }
 
-function nextFrame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()))
-}
-
-async function waitForFonts(doc: Document): Promise<void> {
-  const fonts = doc.fonts
-  if (!fonts) return
-  let timer = 0
-  try {
-    await Promise.race([
-      fonts.ready.then(() => undefined),
-      new Promise<void>((resolve) => {
-        timer = window.setTimeout(resolve, 1000)
-      }),
-    ])
-  } finally {
-    window.clearTimeout(timer)
-  }
-}
-
-function captureWithTimeout(iframe: HTMLIFrameElement): Promise<HTMLCanvasElement> {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const timer = window.setTimeout(() => {
-      settled = true
-      reject(new Error('preview capture timed out'))
-    }, CAPTURE_TIMEOUT_MS)
-
-    void captureViewport(iframe, { pixelCap: PIXEL_CAP }).then(
-      (canvas) => {
-        if (settled) {
-          releaseCanvas(canvas)
-          return
-        }
-        settled = true
-        window.clearTimeout(timer)
-        resolve(canvas)
-      },
-      (error) => {
-        if (settled) return
-        settled = true
-        window.clearTimeout(timer)
-        reject(error)
-      }
-    )
-  })
-}
-
-function drawFrozenBitmap() {
+function drawFrozenBitmap(bitmap: ImageBitmap, basis: CaptureBasis, background: string): void {
   const target = bitmapCanvasRef.value
-  if (!target || !frozenBase) throw new Error('frozen bitmap canvas is unavailable')
-  target.width = frozenBase.width
-  target.height = frozenBase.height
+  if (!target) throw new Error('frozen bitmap canvas is unavailable')
+  target.width = bitmap.width
+  target.height = bitmap.height
+  target.style.width = `${basis.documentWidthCss}px`
+  target.style.height = `${basis.documentHeightCss}px`
   const ctx = target.getContext('2d')
   if (!ctx) throw new Error('2D canvas is unavailable')
-  ctx.drawImage(frozenBase, 0, 0)
+  ctx.fillStyle = background
+  ctx.fillRect(0, 0, target.width, target.height)
+  ctx.drawImage(bitmap, 0, 0, target.width, target.height)
 }
 
 async function freeze() {
   if (previewState.value !== 'live' || !canFreeze.value) return
   const iframe = iframeRef.value
-  let doc: Document | null = null
-  try {
-    doc = iframe?.contentDocument ?? null
-  } catch {}
-  if (!iframe || !doc) {
+  const expectedOrigin = expectedIframeOrigin()
+  if (!iframe || !expectedOrigin) {
     canFreeze.value = false
     return
   }
 
   previewState.value = 'capturing'
-  const captureGeneration = ++generation
-  let captured: HTMLCanvasElement | undefined
+  const captureGeneration = generation
+  const captureUrl = canonicalPreviewUrl(currentUrl.value)
+  let bitmap: ImageBitmap | undefined
   try {
-    await waitForFonts(doc)
-    await nextFrame()
-    await nextFrame()
-    if (captureGeneration !== generation) return
-    captured = await captureWithTimeout(iframe)
-    if (captureGeneration !== generation) {
-      releaseCanvas(captured)
+    const captured = await requestCapture(iframe, {
+      pixelCap: PIXEL_CAP,
+      generation: captureGeneration,
+      expectedOrigin,
+    })
+    bitmap = captured.bitmap
+    if (captureGeneration !== generation || captureUrl !== canonicalPreviewUrl(currentUrl.value)) {
       return
     }
 
-    frozenBase = captured
-    captured = undefined
+    const nextBasis = {
+      documentWidthCss: captured.documentWidthCss,
+      documentHeightCss: captured.documentHeightCss,
+      capturedScale: captured.capturedScale,
+    }
+    captureBasis.value = nextBasis
+    drawFrozenBitmap(bitmap, nextBasis, captured.background)
+    bitmap.close()
+    bitmap = undefined
     previewState.value = 'frozen'
     await nextTick()
     if (captureGeneration !== generation) return
-    drawFrozenBitmap()
+
+    const retained = retentionStore.read(captureUrl)
+    const restoredCommands = retained?.commands ?? []
+    commands.value = restoredCommands
+    const basisMismatch = retained
+      ? annotationRef.value?.setCommands(restoredCommands, retained.basis)
+      : false
+    retentionStore.write(captureUrl, nextBasis, restoredCommands)
+    if (basisMismatch) toast.info(t('preview.annotation.basisMismatch'))
     selectTool(selectedTool.value)
     selectColor(selectedColor.value)
-  } catch {
-    releaseCanvas(captured)
+  } catch (error) {
     if (captureGeneration !== generation) return
     releaseFrozenBitmap()
     previewState.value = 'live'
-    toast.error(t('preview.annotation.captureFailed'))
+    const code: CaptureRequestErrorCode =
+      error instanceof CaptureRequestError ? error.code : 'raster-failed'
+    toast.error(t(`preview.annotation.error.${code}`))
+  } finally {
+    try {
+      bitmap?.close()
+    } catch {}
   }
 }
 
-function unfreeze(retain = false) {
-  generation++
+function unfreeze() {
   previewState.value = 'live'
   releaseFrozenBitmap()
-  annotationRef.value?.clear(retain)
-  if (!retain) commands.value = []
-  checkFreezeAvailability()
 }
 
 function toggleFreeze() {
@@ -480,11 +513,24 @@ function undo() {
 
 function clearAnnotations() {
   annotationRef.value?.clear()
+  retentionStore.clear(currentUrl.value, captureBasis.value)
+  commands.value = []
+}
+
+function onCommandsChanged(nextCommands: DrawCommand[]) {
+  const record = retentionStore.write(currentUrl.value, captureBasis.value, nextCommands)
+  commands.value = record.commands
+  if (record.commands.length !== nextCommands.length) {
+    annotationRef.value?.setCommands(record.commands, captureBasis.value)
+  }
 }
 
 async function makeComposite(): Promise<Blob> {
-  if (!frozenBase) throw new Error('frozen bitmap is unavailable')
-  return compositePng(frozenBase, commands.value)
+  const base = bitmapCanvasRef.value
+  if (!base || base.width <= 0 || base.height <= 0) {
+    throw new Error('frozen bitmap is unavailable')
+  }
+  return compositePng(base, commands.value, captureBasis.value)
 }
 
 async function downloadComposite() {
@@ -561,12 +607,13 @@ function startDragTouch(e: TouchEvent) {
   window.addEventListener('touchend', onEnd)
 }
 
+onBeforeMount(() => {
+  window.addEventListener('message', onPreviewMessage)
+})
+
 onMounted(async () => {
   mounted = true
   window.addEventListener('resize', onResize)
-  contentResizeObserver = new ResizeObserver(updateContentSize)
-  if (contentRef.value) contentResizeObserver.observe(contentRef.value)
-  updateContentSize()
   const base = await getApiBase()
   if (mounted) previewHttpBase.value = base
 })
@@ -574,9 +621,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   mounted = false
   generation++
+  resetReadiness()
   releaseFrozenBitmap()
-  contentResizeObserver?.disconnect()
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('message', onPreviewMessage)
 })
 </script>
 
@@ -664,6 +712,18 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
+.web-preview-toolbar .freeze-button,
+.web-preview-toolbar .freeze-button:disabled {
+  color: var(--info, #89b4fa);
+  opacity: 1;
+}
+
+.web-preview-toolbar .copy-button,
+.web-preview-toolbar .copy-button:disabled {
+  color: var(--success, #34c759);
+  opacity: 1;
+}
+
 .web-preview-address {
   flex: 1;
   min-width: 80px;
@@ -731,8 +791,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-.web-preview-content iframe,
-.frozen-bitmap {
+.web-preview-content iframe {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -745,8 +804,25 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.frozen-bitmap {
+.frozen-scroll {
+  position: absolute;
+  inset: 0;
   z-index: 2;
+  overflow: auto;
+  background: #fff;
+}
+
+.frozen-surface {
+  position: relative;
+  min-width: 1px;
+  min-height: 1px;
+}
+
+.frozen-bitmap {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border: none;
 }
 
 .spin {

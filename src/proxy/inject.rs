@@ -268,3 +268,94 @@ return r;
 };
 window.addEventListener('popstate',function(){notifyNav(realUrl());});
 })();</script>";
+
+pub const CAPTURE_BRIDGE_SNIPPET: &str = r"<script>(function(){
+var WEBGL_COMPAT=document.currentScript.getAttribute('data-webgl-compat');
+if(WEBGL_COMPAT&&!window.__dinotty_capture_webgl_patched){
+window.__dinotty_capture_webgl_patched=true;
+var originalGetContext=HTMLCanvasElement.prototype.getContext;
+HTMLCanvasElement.prototype.getContext=function(type,attributes){
+var contextType=typeof type==='string'?type.toLowerCase():type;
+if(contextType==='webgl'||contextType==='webgl2'||contextType==='experimental-webgl'){
+var compatAttributes={};
+if(attributes&&typeof attributes==='object')Object.assign(compatAttributes,attributes);
+compatAttributes.preserveDrawingBuffer=true;
+return originalGetContext.call(this,type,compatAttributes);
+}
+return originalGetContext.apply(this,arguments);
+};
+}
+if(window.__dinotty_capture_bridge_installed)return;
+window.__dinotty_capture_bridge_installed=true;
+var bridgePort=null;
+var bridgeModule=null;
+var busy=false;
+var announceTimer=null;
+var announceStopTimer=null;
+var bridgeUrl=location.origin+'/assets/dinotty-preview-bridge.js';
+function stopAnnouncing(){
+if(announceTimer!==null){clearInterval(announceTimer);announceTimer=null;}
+if(announceStopTimer!==null){clearTimeout(announceStopTimer);announceStopTimer=null;}
+}
+function announce(){window.parent.postMessage({type:'dinotty:capture-ready',v:1},'*');}
+function replyFailure(port,requestId,generation,code){
+port.postMessage({requestId:requestId,generation:generation,ok:false,code:code,message:code});
+}
+function loadBridge(){
+if(!bridgeModule){
+bridgeModule=import(bridgeUrl).catch(function(){throw{code:'snapdom-load-failed'};});
+}
+return bridgeModule;
+}
+function errorCode(error){
+var code=error&&error.code;
+return code==='snapdom-load-failed'||code==='raster-failed'||code==='canvas-tainted'||code==='document-too-large'||code==='capture-in-progress'?code:'raster-failed';
+}
+function serve(port,event){
+var request=event.data;
+if(!request||request.type!=='capture')return;
+if(busy){replyFailure(port,request.requestId,request.generation,'busy');return;}
+busy=true;
+loadBridge().then(function(module){
+return module.capture({pixelCap:request.pixelCap});
+}).then(function(result){
+try{
+port.postMessage({requestId:request.requestId,generation:request.generation,ok:true,bitmap:result.bitmap,documentWidthCss:result.documentWidthCss,documentHeightCss:result.documentHeightCss,capturedScale:result.capturedScale,background:result.background},[result.bitmap]);
+}catch(error){
+try{result.bitmap.close();}catch(closeError){}
+throw error;
+}
+}).catch(function(error){
+replyFailure(port,request.requestId,request.generation,errorCode(error));
+}).finally(function(){busy=false;});
+}
+function acceptInit(event){
+if(event.source!==window.parent)return;
+var allowed=event.origin===location.origin;
+if(!allowed)try{var origin=new URL(event.origin);allowed=event.origin==='tauri://localhost'||event.origin==='http://tauri.localhost'||(origin.origin===event.origin&&origin.port!==''&&(origin.protocol==='http:'||origin.protocol==='https:')&&(origin.hostname==='localhost'||origin.hostname==='127.0.0.1'));}catch(error){}
+if(!allowed)return;
+var message=event.data;
+if(!message||message.type!=='dinotty:capture-init'||!event.ports||!event.ports[0])return;
+if(bridgePort){try{bridgePort.close();}catch(closeError){}}
+var acceptedPort=event.ports[0];
+bridgePort=acceptedPort;
+stopAnnouncing();
+acceptedPort.onmessage=function(portEvent){serve(acceptedPort,portEvent);};
+acceptedPort.start();
+}
+window.addEventListener('message',acceptInit);
+announce();
+announceTimer=setInterval(announce,250);
+announceStopTimer=setTimeout(stopAnnouncing,5000);
+})();</script>";
+
+const WEBGL_CAPTURE_COMPAT_SUBSTITUTION: &str =
+    "document.currentScript.getAttribute('data-webgl-compat')";
+
+// Single creation-time compatibility setting until a Rust settings source exists.
+const WEBGL_CAPTURE_COMPAT_ENABLED: bool = true;
+
+pub fn append_capture_bridge(script: &str) -> String {
+    let enabled = if WEBGL_CAPTURE_COMPAT_ENABLED { "true" } else { "false" };
+    format!("{script}{CAPTURE_BRIDGE_SNIPPET}").replace(WEBGL_CAPTURE_COMPAT_SUBSTITUTION, enabled)
+}
