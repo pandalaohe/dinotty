@@ -68,6 +68,13 @@ export function setKbTypingLock(active: boolean) {
   })
 }
 
+// True while sticky typing mode holds the iOS keyboard open (touch + collapse
+// guard + our textarea focused). Consumers use it to suppress terminal focus
+// moves that would blur the mobile keyboard input and close the iOS keyboard.
+export function isKbTypingLocked(): boolean {
+  return _kbTypingLock
+}
+
 export class TerminalInstance {
   paneId: string
   xterm: XTerm | null = null
