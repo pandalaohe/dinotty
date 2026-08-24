@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+
+  "branches": {
+    "main": "main",
+    "custom": "custom",
+    "never_gc": ["custom", "main"],
+    "managed_backup_prefixes": ["backup/", "pre-update-"]
+  },
+
+  "verify": {
+    "steps": [
+      { "id": "web-test", "cwd": "frontend", "argv": ["pnpm", "exec", "vitest", "run"], "required": true, "timeout_s": 900, "expect": "exit0" },
+      { "id": "web-build", "cwd": "frontend", "argv": ["pnpm", "build"], "required": true, "timeout_s": 900, "expect": "exit0" },
+      { "id": "native-check", "cwd": ".", "argv": ["cargo", "check", "--workspace"], "required": true, "timeout_s": 900, "expect": "exit0" }
+    ]
+  },
+
+  "survival": {
+    "steps": [
+      { "id": "workflow-tools", "cwd": ".", "argv": ["python3", "scripts/test-upstream-workflows.py"], "required": true, "timeout_s": 60, "expect": "exit0" },
+      { "id": "mobile-input", "cwd": "frontend", "argv": ["pnpm", "exec", "vitest", "run", "src/test/appPaneClose/system-keyboard.test.ts", "src/test/SystemKeyboardToolbar.test.ts", "src/test/useViewportResize.test.ts", "src/test/useViewportPanLock.test.ts", "src/test/useTerminalDeviceText.test.ts", "src/test/systemMobileInput.test.ts", "src/test/tauriImeRescue.test.ts"], "required": true, "timeout_s": 300, "expect": "exit0" },
+      { "id": "session-input", "cwd": ".", "argv": ["cargo", "test", "session::"], "required": true, "timeout_s": 600, "expect": "exit0" }
+    ]
+  },
+
+  "integration": {
+    "residual_owners": [
+      { "mod_id": "mocha-theme", "paths": ["frontend/src/themes.ts", "frontend/src/components/settings/ThemeManager.vue", "frontend/src/components/LoginPage.vue", "frontend/src/components/SetupPage.vue", "frontend/src/components/SettingsPanel.vue", "frontend/src/composables/i18n-messages.ts"] },
+      { "mod_id": "signing-identity", "paths": ["src-tauri/tauri.conf.json"] },
+      { "mod_id": "deploy-scripts", "paths": ["scripts/dinotty", "scripts/dinotty-ops.sh", "scripts/repro-input-channel-replay.mjs", "scripts/test-dinotty-ops-relaunch-env.sh", "scripts/upstream_pr.py", "scripts/upstream_custom.py", "scripts/test-upstream-workflows.py"] },
+      { "mod_id": "fork-meta", "paths": [".gitignore", ".upstream-update.json", "LOCAL_MODS.md"] },
+      { "mod_id": "t260723-015-session-input-dispatcher", "paths": ["src-tauri/src/main.rs", "frontend/src/composables/useTransport.ts", "src/session/manager.rs", "src/session/mod.rs", "src/session/session_stub_tests.rs", "src/session/tests.rs", "src/session/types.rs", "src/ssh/mod.rs", "src/workspace/tests.rs", "src/ws/openapi.rs", "src/ws/sync.rs", "src/ws/terminal.rs"] },
+      { "mod_id": "kb01-kb06-mobile-ime-closure", "paths": ["frontend/src/App.vue", "frontend/src/components/keyboard/KbToggleButton.vue", "frontend/src/components/keyboard/MobileKeyboard.vue", "frontend/src/components/keyboard/SystemKeyboardToolbar.vue", "frontend/src/components/settings/KeyboardTab.vue", "frontend/src/components/terminal/StatusBar.vue", "frontend/src/components/terminal/TerminalPane.vue", "frontend/src/composables/useSwipePanel.ts", "frontend/src/composables/useTerminal.ts", "frontend/src/composables/useViewportPanLock.ts", "frontend/src/composables/useViewportResize.ts", "frontend/src/styles/mobile-keyboard.css", "frontend/src/test/MobileKeyboard.modifiers.test.ts", "frontend/src/test/MobileKeyboard.viewport.test.ts", "frontend/src/test/SystemKeyboardToolbar.test.ts", "frontend/src/test/TerminalPane.keyboardGuard.test.ts", "frontend/src/test/appPaneClose/_setup.ts", "frontend/src/test/appPaneClose/system-keyboard.test.ts", "frontend/src/test/appRootSafeAreaPadding.test.ts", "frontend/src/test/onDataDedup.test.ts", "frontend/src/test/systemMobileInput.test.ts", "frontend/src/test/tauriImeRescue.test.ts", "frontend/src/test/useTerminalDeviceText.test.ts", "frontend/src/test/useViewportPanLock.test.ts", "frontend/src/test/useViewportResize.test.ts", "frontend/src/utils/clientPlatform.ts", "src/settings/normalize.rs", "src/settings/tests/system_keyboard.rs"] },
+      { "mod_id": "touch-web-terminal-selection-guard", "paths": ["frontend/src/App.vue", "frontend/src/test/appPaneClose/system-keyboard.test.ts"] },
+      { "mod_id": "agent-launch-no-color-backstop", "paths": ["src/pty.rs"] }
+    ]
+  },
+
+  "gc": {
+    "enabled": true,
+    "require_verified_merged": true,
+    "require_head_oid_match": true
+  },
+
+  "deployment": {
+    "executor": "human-only",
+    "steps": [
+      { "id": "rebuild-all", "run": "dinotty rebuild all", "cwd": ".", "expected_observations": ["8999 prod rebuilt + relaunched", "8998 test rebuilt + relaunched"] },
+      { "id": "status-check", "run": "dinotty status", "cwd": ".", "expected_observations": ["both surfaces report MATCH"] }
+    ]
+  }
+}

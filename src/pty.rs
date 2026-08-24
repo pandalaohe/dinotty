@@ -286,8 +286,12 @@ pub fn create_session(
         cmd.args(&shell_spec.args);
         (cmd, shell_spec.shell_type.clone(), shell_spec.launch_kind, effective_cwd, host_cwd)
     };
-    for key in claude_session_env_keys_to_strip() {
+    let inherited_env_keys = inherited_env_key_names();
+    for key in pty_session_env_keys_to_strip(&inherited_env_keys) {
         cmd.env_remove(&key);
+    }
+    if should_strip_inherited_no_color(&inherited_env_keys) {
+        cmd.env_remove("NO_COLOR");
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("DINOTTY_PANE_ID", pane_id);
@@ -735,10 +739,11 @@ fn locale_adjustment(
 /// the spawned terminal — otherwise an interactive `claude` inside the terminal
 /// treats itself as a child session and never persists its transcript.
 pub(crate) fn claude_session_env_keys_to_strip() -> Vec<String> {
-    std::env::vars_os()
-        .filter_map(|(k, _)| k.into_string().ok())
-        .filter(|k| is_claude_session_env_key(k))
-        .collect()
+    inherited_env_key_names().into_iter().filter(|k| is_claude_session_env_key(k)).collect()
+}
+
+fn inherited_env_key_names() -> Vec<String> {
+    std::env::vars_os().filter_map(|(key, _)| key.into_string().ok()).collect()
 }
 
 /// True if `key` is a Claude Code SESSION-scoped env var that must be stripped
@@ -747,6 +752,28 @@ pub(crate) fn claude_session_env_keys_to_strip() -> Vec<String> {
 fn is_claude_session_env_key(key: &str) -> bool {
     let ku = key.to_ascii_uppercase();
     ku.starts_with("CLAUDE_CODE_") || ku == "CLAUDECODE" || ku == "CLAUDE_SESSION_ID"
+}
+
+fn is_agent_session_env_key(key: &str) -> bool {
+    if is_claude_session_env_key(key) {
+        return true;
+    }
+    matches!(
+        key.to_ascii_uppercase().as_str(),
+        "CODEX_SESSION_ID" | "CODEX_THREAD_ID" | "CODEX_CI" | "CODEX_INTERNAL_ORIGINATOR_OVERRIDE"
+    )
+}
+
+fn pty_session_env_keys_to_strip<S: AsRef<str>>(keys: &[S]) -> Vec<String> {
+    keys.iter()
+        .filter(|key| is_agent_session_env_key(key.as_ref()))
+        .map(|key| key.as_ref().to_string())
+        .collect()
+}
+
+fn should_strip_inherited_no_color<S: AsRef<str>>(keys: &[S]) -> bool {
+    let has_no_color = keys.iter().any(|key| key.as_ref().eq_ignore_ascii_case("NO_COLOR"));
+    has_no_color && keys.iter().any(|key| is_agent_session_env_key(key.as_ref()))
 }
 
 /// Augment PATH for direct-argv spawns (createTerminalTab) so commands installed
@@ -809,7 +836,7 @@ mod tests {
     use super::simplify_host_cwd;
     use super::{
         append_wsl_cwd_args, is_claude_session_env_key, locale_adjustment, notify_url_for,
-        LocaleAdjustment,
+        pty_session_env_keys_to_strip, should_strip_inherited_no_color, LocaleAdjustment,
     };
 
     #[test]
@@ -858,6 +885,28 @@ mod tests {
         ] {
             assert!(!is_claude_session_env_key(k), "should preserve {k}");
         }
+    }
+
+    #[test]
+    fn strips_no_color_only_when_it_came_through_an_agent_session() {
+        assert!(should_strip_inherited_no_color(&["NO_COLOR", "CODEX_SESSION_ID"]));
+        assert!(should_strip_inherited_no_color(&["NO_COLOR", "CLAUDE_CODE_CHILD_SESSION"]));
+        assert!(!should_strip_inherited_no_color(&["NO_COLOR", "CODEX_HOME"]));
+        assert!(!should_strip_inherited_no_color(&["NO_COLOR", "TERM"]));
+    }
+
+    #[test]
+    fn strips_codex_and_claude_session_keys_at_the_pty_boundary() {
+        assert_eq!(
+            pty_session_env_keys_to_strip(&[
+                "PATH",
+                "CODEX_SESSION_ID",
+                "CODEX_THREAD_ID",
+                "CLAUDE_CODE_CHILD_SESSION",
+                "CLAUDE_CONFIG_DIR"
+            ]),
+            ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_CODE_CHILD_SESSION"]
+        );
     }
 
     #[cfg(windows)]
