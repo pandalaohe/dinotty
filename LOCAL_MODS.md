@@ -171,7 +171,9 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 > the remaining delta collided with upstream's refactor of `App.vue` into six composables and
 > `KeyboardTab.vue` into section components — 52 conflicts that were a re-port, not a merge.
 > Historical narrative below is provenance and may describe files that have since moved or been absorbed.
-- Residual fork layer vs `upstream/dev`: **14 paths, 3591 insertions / 8 deletions** (`git diff --stat
+- Currently aligned to `upstream/dev@13e6b86` (`2026-08-25`) by MERGE on top of that rebuild baseline;
+  `behind=0`, `ahead=3`.
+- Residual fork layer vs `upstream/dev`: **14 paths, 3610 insertions / 8 deletions** (`git diff --stat
   upstream/dev...custom`). Six mods, all `lifecycle=private`:
   - `fork-meta` — `.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`
   - `mocha-theme` — `frontend/src/themes.ts`
@@ -204,6 +206,29 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 - Verification for this snapshot is recorded in the newest re-align log entry and the alignment merge commits.
 - Update trigger: on any upstream re-align OR when a PR flips open<->merged — refresh SHA, date, table.
 - Re-align log (newest first):
+    - `2026-08-25` → base `13e6b86` (was `1255721d`): merged the 2 upstream commits that arrived after the
+      2026-08-24 rebuild — `661895e` (keep terminal viewport pinned to tail during heavy output; adds
+      `useTerminalWheelPin.spec.ts` and `useTerminalWritePumpPin.spec.ts`) and `13e6b86` (PR #269 asset
+      compression: asset-hash invariant, compression layer, service-worker precache, PWA icons, proxy
+      inject path). Merge preview clean, no textual conflicts. `frontend/src/composables/useTerminal.ts`
+      was the only merge-touched file overlapping the residual fork layer, and both new upstream pin specs
+      pass against our copy. Verification: `cargo check --workspace` pass (`dinotty-server` and
+      `dinotty-desktop`); `cargo test --workspace -- --skip terminal_exit_regression` 11 suites pass, 0
+      failed; `vue-tsc --noEmit` clean; `pnpm build` pass; `vitest run` 1301 passed / 15 failed — the 15
+      are the SAME inherited `OverlayDragItem.test.ts` localStorage-fixture failures recorded in the
+      2026-08-24 rebuild verification above (each fails in `beforeEach` on `localStorage.clear()`; the
+      happy-dom env supplies no `localStorage` and every passing sibling test stubs it via
+      `vi.stubGlobal`, while upstream's copy of this file still lacks the fixture our PR #252 supplied).
+      No new failure; the passing count rose 1294 → 1301 with the two new upstream specs. Backup tag:
+      `pre-update-custom-20260825-112500`.
+      Blind spots: no device or browser QA ran on this merge — PR #269 touches the service worker, PWA
+      manifest and proxy inject path, which only a real 8998 load exercises. `dinotty rebuild all` had NOT
+      completed at the time of this entry, so neither 8999 nor 8998 carries this merge yet.
+      Tooling defect found (not fixed here): `align-upstream` runs `cargo check --workspace` BEFORE
+      `pnpm build`, but the `#[derive(RustEmbed)]` folder `frontend/dist/` must exist at compile time. On a
+      tree with no prior build product the run aborts with a proc-macro panic plus 7 spurious
+      `StaticFiles::get` "no associated function" errors whose only real cause is the missing dist. Running
+      `pnpm build` first, then re-running the cargo steps, passes.
     - `2026-08-18` → base `7a99861b` (was `19f04016`): fetched and merged the 12 upstream commits that
       include the keyboard provider/host-bridge refactor and official PR #259/#260 absorption. Eight textual
       conflicts were reconciled onto `KeyboardContext`/`terminalInputCore`; the local 320ms viewport resample,
