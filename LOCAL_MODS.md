@@ -173,10 +173,10 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 > the remaining delta collided with upstream's refactor of `App.vue` into six composables and
 > `KeyboardTab.vue` into section components — 52 conflicts that were a re-port, not a merge.
 > Historical narrative below is provenance and may describe files that have since moved or been absorbed.
-- Currently aligned to `upstream/dev@13e6b86` (`2026-08-25`) by MERGE on top of that rebuild baseline;
-  `behind=0`, `ahead=3`.
-- Residual fork layer vs `upstream/dev`: **14 paths, 3610 insertions / 8 deletions** (`git diff --stat
-  upstream/dev...custom`). Six mods, all `lifecycle=private`:
+- Currently aligned to `upstream/dev@acaf6fb` (`2026-08-25`, custom HEAD `e01c978`) by MERGE on top of
+  that rebuild baseline; `behind=0`, `ahead=8`.
+- Residual fork layer vs `upstream/dev`: **15 paths, 3654 insertions / 8 deletions** (`git diff --stat
+  upstream/dev...custom`). Six mods, all `lifecycle=private`, plus one unclassified test fixture:
   - `fork-meta` — `.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`
   - `mocha-theme` — `frontend/src/themes.ts`
   - `deploy-scripts` — `scripts/dinotty`, `scripts/dinotty-ops.sh`, `scripts/upstream_custom.py`,
@@ -185,6 +185,11 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   - `signing-identity` — `src-tauri/tauri.conf.json`
   - `agent-launch-no-color-backstop` — `src/pty.rs`
   - `default-locale-zh` — `src/settings/types/mod.rs`
+  - unclassified — `frontend/src/test/OverlayDragItem.test.ts`, added by `d52b4f0` (`2026-08-25`) after
+    the previous snapshot. The same path EXISTS in `upstream/dev` (`git cat-file -e
+    upstream/dev:frontend/src/test/OverlayDragItem.test.ts` exits 0), so this is not an unfiled
+    candidate: diff the fork copy against upstream's at the next sync and drop it if they do not differ
+    meaningfully.
 - NOTHING ELSE is local. No keyboard code, no session input dispatcher, no notification implementation,
   no Windows resolver, no plugin-tab persistence, no multiline quick-send, no plugin pane
   identity/visibility, no preview-loopback-auth patch, no touch-web selection guard: all upstream-owned.
@@ -208,6 +213,24 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 - Verification for this snapshot is recorded in the newest re-align log entry and the alignment merge commits.
 - Update trigger: on any upstream re-align OR when a PR flips open<->merged — refresh SHA, date, table.
 - Re-align log (newest first):
+    - `2026-08-25` (second re-align of the day) → base `acaf6fb` (was `13e6b86`), custom HEAD `e01c978`:
+      TWO consecutive aligns, because upstream moved again mid-build. First align took `82bf004`
+      (route OSC notify through the pane-decoupled notif path — `src/notification/broadcast.rs`,
+      `src/session/session_stub_tests.rs`, `frontend/src/test/oscPopupMigration.test.ts`) and `3d0ac56`
+      (star-history chart, docs image only); backup tag `pre-update-custom-20260825-175202`. The second
+      took `acaf6fb` (`chore: bump version to 0.23.1`, `Cargo.toml` + `Cargo.lock`, 3 lines); backup tag
+      `pre-update-custom-20260825-175427`. Conflict surface was EMPTY on both: the 15 residual fork paths
+      and the incoming file sets are disjoint (`comm -12` of the two `git diff --name-only` lists returned
+      nothing), and `git merge-tree --write-tree` previewed clean each time. NO keyboard, IME, or
+      `keyboardSpecialKeys`/`MkbKey`/`terminalInput` file was touched, so the T260825-004 KB reconcile
+      verdicts — pinned to `upstream/dev@13e6b86` — are unaffected. Verification per align:
+      `cargo check --workspace`, `cargo test --workspace -- --skip terminal_exit_regression`,
+      `terminal_exit_regression` (known upstream flake, debug-db `db0807727548`), `vue-tsc --noEmit`,
+      and `pnpm build` all pass. Deployment: `rebuild-test` installed `Dinotty Test.app v0.23.1` and 8998
+      is live under it (PID 43140). Prod 8999 remains the `2026-08-25 12:28` build at app version 0.23.0
+      — deliberately NOT rebuilt; both surfaces serve the SAME frontend entry `index-hQGn659K.js`, so the
+      only end-to-end delta is the app version carrying `82bf004` + `acaf6fb`. Blind spot: no physical
+      device pass was run against this build on either end.
     - `2026-08-25` → base `13e6b86` (was `1255721d`): merged the 2 upstream commits that arrived after the
       2026-08-24 rebuild — `661895e` (keep terminal viewport pinned to tail during heavy output; adds
       `useTerminalWheelPin.spec.ts` and `useTerminalWritePumpPin.spec.ts`) and `13e6b86` (PR #269 asset
