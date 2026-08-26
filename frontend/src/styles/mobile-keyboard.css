@@ -1,3 +1,9 @@
+/* Readback probe for the debug overlay: env() cannot be read from JS, but a custom property
+ * carrying it can. Purely diagnostic — nothing lays out against this. */
+:root {
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 #mobile-kb {
   display: flex;
   flex-direction: column;
@@ -590,8 +596,16 @@
   flex-direction: column;
   box-sizing: border-box;
   gap: 4px;
-  padding: 5px max(5px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
-    max(5px, env(safe-area-inset-left));
+  /* Flat bottom pad, deliberately NOT max(8px, env(safe-area-inset-bottom)). With
+   * viewport-fit=cover the inset resolves to the home-indicator height in an installed
+   * home-screen app and to 0 in mobile Safari, so reserving it cost ~26px of terminal
+   * height on iPhone in BOTH keyboard states while Safari was unaffected. 8px matches the
+   * fork's own pre-rebuild reference and is byte-identical to today's computed value in
+   * Safari, where max(8px, 0) is already 8px. Fork-local divergence from upstream: the
+   * closed-state home-indicator clearance is given up by choice. The IME-open half of this
+   * (reserving the inset while the keyboard covers the indicator) is an upstream defect and
+   * is tracked separately as an upstream candidate. */
+  padding: 5px max(5px, env(safe-area-inset-right)) 8px max(5px, env(safe-area-inset-left));
   border-top: 1px solid color-mix(in srgb, var(--border), white 7%);
   background: color-mix(in srgb, var(--bg-surface), black 4%);
   box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.22);
@@ -612,8 +626,13 @@
    * applied as a negative margin, so it must not drive `bottom` negative. All three custom
    * properties fall back to 0px, so the default is no overhang and useViewportResize's dispose()
    * removeProperty leaves a valid declaration rather than dropping `bottom` to auto. */
-  bottom: max(0px, calc(var(--system-toolbar-bottom, 0px)
-                      - min(var(--kb-capsule-reclaim, 0px), var(--sys-kb-height, 0px))));
+  bottom: max(
+    0px,
+    calc(
+      var(--system-toolbar-bottom, 0px) -
+        min(var(--kb-capsule-reclaim, 0px), var(--sys-kb-height, 0px))
+    )
+  );
 }
 
 .system-kb-action-header {

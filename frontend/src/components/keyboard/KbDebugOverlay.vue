@@ -1,7 +1,7 @@
 <template>
   <!-- TEMPORARY diagnostics for the iPhone builtin-keyboard positioning bug.
-       Enabled via #kbdebug (or ?kbdebug) in the URL; remove once the root cause
-       is identified and fixed. pointer-events:none so it never steals taps. -->
+       Enabled via #kbdebug (or ?kbdebug) in the URL, or seven version-value taps;
+       remove once the root cause is identified and fixed. pointer-events:none so it never steals taps. -->
   <div class="kb-debug-overlay" aria-hidden="true">
     <div v-for="(line, i) in lines" :key="i">{{ line }}</div>
   </div>
@@ -26,14 +26,15 @@ function elementLine(id: string): string {
   const el = document.getElementById(id)
   if (!el) return id + ': not rendered'
   const rect = el.getBoundingClientRect()
-  const display = getComputedStyle(el).display
-  const bottom = getComputedStyle(el).bottom
+  const cs = getComputedStyle(el)
   return (
     id +
     ': disp=' +
-    display +
+    cs.display +
     ' bot=' +
-    bottom +
+    cs.bottom +
+    ' padB=' +
+    cs.paddingBottom +
     ' rect[t=' +
     Math.round(rect.top) +
     ' b=' +
@@ -74,17 +75,18 @@ function appRootLine(): string {
 function sample() {
   const vv = window.visualViewport
   const ds = document.documentElement.style
+  const documentStyle = getComputedStyle(document.documentElement)
+  const rect = document.getElementById('system-mobile-kb')?.getBoundingClientRect()
   const ua = navigator.userAgent
   const isIphone = /iPhone|iPod/i.test(ua)
   const isIpad = /iPad/i.test(ua) || (/Macintosh/i.test(ua) && 'ontouchstart' in window)
-  const standalone =
-    (navigator as Navigator & { standalone?: boolean }).standalone === true ||
-    window.matchMedia('(display-mode: standalone)').matches
   const out: string[] = [
     'client: ' +
       (isIphone ? 'iPhone' : isIpad ? 'iPad' : '?') +
       ' pwa=' +
-      (standalone ? 'yes' : 'no') +
+      ((navigator as Navigator & { standalone?: boolean }).standalone === true ? 'nav' : '-') +
+      (window.matchMedia('(display-mode: standalone)').matches ? '/sa' : '/-') +
+      (window.matchMedia('(display-mode: fullscreen)').matches ? '/fs' : '/-') +
       ' dpr=' +
       window.devicePixelRatio,
     'win: ' +
@@ -116,11 +118,16 @@ function sample() {
       (ds.getPropertyValue('--system-toolbar-bottom') || '(unset)') +
       ' overlap=' +
       (ds.getPropertyValue('--kb-overlap') || '(unset)') +
+      ' capsule=' +
+      (ds.getPropertyValue('--kb-capsule-reclaim') || '(unset)') +
+      ' safeBot=' +
+      (documentStyle.getPropertyValue('--safe-area-bottom') || '(unset)') +
       ' open=' +
       (ds.getPropertyValue('--kb-open') || '(unset)'),
     appRootLine(),
     elementLine('mobile-kb'),
     elementLine('system-mobile-kb'),
+    'outerGap: ' + (rect ? Math.round(window.innerHeight - rect.bottom) : 'n/a'),
     'focus: ' + activeElementDesc(),
   ]
   lines.value = out

@@ -8,7 +8,7 @@
       </div>
       <div class="settings-row">
         <label>{{ t('settings.about.version') }}</label>
-        <span class="about-val">{{ info.version || '—' }}</span>
+        <span class="about-val" @click="activateKbDebug">{{ info.version || '—' }}</span>
       </div>
       <div v-if="update.status.value === 'update_available'" class="update-card" role="status">
         <div class="update-card-copy">
@@ -99,6 +99,8 @@ const update = useUpdateCheck()
 const toast = useToast()
 const opening = ref(false)
 const openError = ref('')
+let kbDebugClickCount = 0
+let lastKbDebugClickAt = 0
 
 const info = ref<{
   version: string
@@ -107,6 +109,16 @@ const info = ref<{
   version: '',
   repo_url: '',
 })
+
+// Diagnostic entry point, no UI.
+function activateKbDebug() {
+  const now = Date.now()
+  kbDebugClickCount = now - lastKbDebugClickAt > 3000 ? 1 : kbDebugClickCount + 1
+  lastKbDebugClickAt = now
+  if (kbDebugClickCount < 7) return
+  location.hash = 'kbdebug'
+  kbDebugClickCount = 0
+}
 
 async function loadInfo() {
   try {

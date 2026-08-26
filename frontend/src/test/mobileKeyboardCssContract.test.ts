@@ -12,7 +12,8 @@ function ruleBody(selector: string): string {
 }
 
 function declaration(body: string, property: string): string | undefined {
-  return body.match(new RegExp(`(?:^|\\n)\\s*${property}\\s*:\\s*([^;]+);`, 'm'))?.[1]
+  return body
+    .match(new RegExp(`(?:^|\\n)\\s*${property}\\s*:\\s*([^;]+);`, 'm'))?.[1]
     .trim()
     .replace(/\s+/g, ' ')
 }
@@ -20,7 +21,7 @@ function declaration(body: string, property: string): string | undefined {
 function resolveImeOpenBottom(customProperties: Record<string, string> = {}): number {
   const value = declaration(ruleBody('#system-mobile-kb.ime-open'), 'bottom')
   const expected =
-    'max(0px, calc(var(--system-toolbar-bottom, 0px) - min(var(--kb-capsule-reclaim, 0px), var(--sys-kb-height, 0px))))'
+    'max( 0px, calc( var(--system-toolbar-bottom, 0px) - min(var(--kb-capsule-reclaim, 0px), var(--sys-kb-height, 0px)) ) )'
   if (value !== expected) throw new Error(`Unexpected IME-open bottom declaration: ${value}`)
 
   const length = (name: string, fallback: string): number =>
@@ -47,9 +48,9 @@ describe('mobile keyboard host CSS contract', () => {
     }).toEqual({
       position: 'fixed',
       bottom: 'var(--system-toolbar-bottom, 0px)',
-      padding:
-        '5px max(5px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left))',
+      padding: '5px max(5px, env(safe-area-inset-right)) 8px max(5px, env(safe-area-inset-left))',
     })
+    expect(declaration(body, 'padding')).not.toContain('env(safe-area-inset-bottom)')
   })
 
   it('does not reclaim beyond a zero measured keyboard occlusion', () => {

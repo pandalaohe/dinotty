@@ -81,11 +81,9 @@ describe('SystemKeyboardToolbar', () => {
     // devices where dvh does not track the keyboard - the bar stays buried
     // under the IME.
     const toolbarRule = css.match(/#system-mobile-kb\s*\{([^}]*)\}/s)?.[1] ?? ''
-    const toolbarPadding = toolbarRule.match(/padding:\s*([^;]+);/s)?.[1] ?? ''
     expect(toolbarRule).toMatch(/position:\s*fixed/)
     expect(toolbarRule).toMatch(/bottom:\s*var\(--system-toolbar-bottom,\s*0px\)/)
-    expect(toolbarPadding).toContain('8px')
-    expect(toolbarPadding).toContain('safe-area-inset-bottom')
+    // Padding is pinned exactly by mobileKeyboardCssContract.test.ts; not duplicated here.
     // The frozen toolbar must not own geometry: the host owns both the height
     // band (--mkb-height via useKeyboardBand 'auto') and passes the terminal
     // IME focus into the viewport composable that writes the bottom offset.
