@@ -178,10 +178,11 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 > the remaining delta collided with upstream's refactor of `App.vue` into six composables and
 > `KeyboardTab.vue` into section components — 52 conflicts that were a re-port, not a merge.
 > Historical narrative below is provenance and may describe files that have since moved or been absorbed.
-- Currently aligned to `upstream/dev@acaf6fb` (`2026-08-25`, custom HEAD `e01c978`) by MERGE on top of
-  that rebuild baseline; `behind=0`, `ahead=8`.
-- Residual fork layer vs `upstream/dev`: **15 paths, 3654 insertions / 8 deletions** (`git diff --stat
-  upstream/dev...custom`). Six mods, all `lifecycle=private`, plus one unclassified test fixture:
+- Currently aligned to `upstream/dev@06208bc` (`2026-08-26`, custom HEAD `c5008b9`) by MERGE on top of
+  that rebuild baseline; `behind=0`, `ahead=21`.
+- Residual fork layer vs `upstream/dev`: **29 paths, 4431 insertions / 44 deletions** (`git diff --stat
+  upstream/dev...custom`, measured `2026-08-26` — re-run the command rather than trusting this figure).
+  Ten mods, plus one unclassified test fixture. The six `lifecycle=private` carries:
   - `fork-meta` — `.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`
   - `mocha-theme` — `frontend/src/themes.ts`
   - `deploy-scripts` — `scripts/dinotty`, `scripts/dinotty-ops.sh`, `scripts/upstream_custom.py`,
@@ -190,14 +191,28 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   - `signing-identity` — `src-tauri/tauri.conf.json`
   - `agent-launch-no-color-backstop` — `src/pty.rs`
   - `default-locale-zh` — `src/settings/types/mod.rs`
+  - `b7ab5da-ios26-capsule-reclaim` — `frontend/src/composables/useViewportResize.ts`,
+    `frontend/src/test/useViewportResize.test.ts`, `frontend/src/styles/mobile-keyboard.css`
+  The three `lifecycle=candidate` rows added `2026-08-26` by the `KB12` batch (`T260825-009`):
+  - `b238998-plugin-store-instance-isolation` — `src/plugin/manager.rs`, `src/settings/mod.rs`,
+    plus the test-instance build path in `scripts/dinotty-ops.sh` (counted under `deploy-scripts`)
+  - `1f0cd07-builtin-kb-seed-scoping` — `frontend/src/keyboard/builtin-keyboard/build-seed.mjs`,
+    `.../plugin.json`, `.../vite.config.ts`, `frontend/src/test/builtinKeyboardSeedCss.test.ts`,
+    `frontend/src/test/mobileKeyboardCssContract.test.ts`
+  - `ff419d4-viewport-pan-lock` — `frontend/src/composables/useViewportPanLock.ts`,
+    `frontend/src/test/useViewportPanLock.test.ts`, `frontend/src/composables/useAppKeyboard.ts`,
+    `frontend/src/App.vue`
   - unclassified — `frontend/src/test/OverlayDragItem.test.ts`, added by `d52b4f0` (`2026-08-25`) after
     the previous snapshot. The same path EXISTS in `upstream/dev` (`git cat-file -e
     upstream/dev:frontend/src/test/OverlayDragItem.test.ts` exits 0), so this is not an unfiled
     candidate: diff the fork copy against upstream's at the next sync and drop it if they do not differ
     meaningfully.
-- NOTHING ELSE is local. No keyboard code, no session input dispatcher, no notification implementation,
-  no Windows resolver, no plugin-tab persistence, no multiline quick-send, no plugin pane
-  identity/visibility, no preview-loopback-auth patch, no touch-web selection guard: all upstream-owned.
+- NOTHING ELSE is local. No session input dispatcher, no notification implementation, no Windows
+  resolver, no plugin-tab persistence, no multiline quick-send, no plugin pane identity/visibility, no
+  preview-loopback-auth patch, no touch-web selection guard: all upstream-owned. **"No keyboard code"
+  no longer holds** — it was true of the 2026-08-24 rebuild baseline and is false since the `KB12`
+  batch, which restored two keyboard-adjacent mobile mods the rebuild had dropped and added the seed
+  scoping. The four `KB12` paths above are the whole of it; nothing else keyboard-side is ours.
 - Rebuild verification (`2026-08-24`): `cargo check --workspace` pass; `src-tauri` checked separately as
   its own crate (it is not in the workspace) pass; both `pty.rs` NO_COLOR tests pass; `cargo fmt --check`
   clean; frontend `npm run build` pass; frontend `npm test` 1294 passed / 15 failed — the same 15
@@ -218,6 +233,25 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 - Verification for this snapshot is recorded in the newest re-align log entry and the alignment merge commits.
 - Update trigger: on any upstream re-align OR when a PR flips open<->merged — refresh SHA, date, table.
 - Re-align log (newest first):
+    - `2026-08-26` → base `06208bc` (was `acaf6fb`), custom HEAD `c5008b9`: five upstream commits, all
+      backend security or CI — `0d4122e` (block ws/watch path traversal and IPv6 SSRF), `4986577`
+      (abort SSH auth monitor on socket close), `02653fd` (reject cross-site browser requests to
+      trusted endpoints), `802a01a` (pin external proxy to validated DNS results), `06208bc` (satisfy
+      rustfmt and clippy). Conflict surface EMPTY: they touch `src/auth/{mod,tests}.rs`,
+      `src/file_watcher.rs`, `src/proxy/{external,mod}.rs`, `src/ws/sync.rs`, and NOT ONE of those
+      appears in `git diff --name-only upstream/dev...custom`, so `custom` carries no local change in
+      any file they modify. Ledger audit before merging found nothing frozen against the old
+      interface: the only Contribution Index row naming any of these paths is
+      `ff9c1049-preview-loopback-auth`, already `merged-upstream`/`absorbed` with zero
+      custom-vs-upstream diff in `src/proxy/mod.rs`. Backup tags:
+      `backup/custom-20260826-pre-align` (ours, at `4ffae93`) and `pre-update-custom-20260826-125814`
+      (the tool's). NO keyboard, plugin-store, settings, or build-script file was touched, so this
+      align does not affect the T260825-009 / KB12 verification that motivated it.
+      Why this align happened: `rebuild-test` preflight refused to build the 8998 test instance while
+      `custom` was five commits behind, and the script carries no skip flag — aligning was the only
+      path to the QA the fix required. Verification: `cargo test` 607 passed / 0 failed, frontend
+      vitest 1355 passed / 0 failed, `vue-tsc -b` clean, then `rebuild-test` green with its own
+      fingerprint check on 8998.
     - `2026-08-25` (second re-align of the day) → base `acaf6fb` (was `13e6b86`), custom HEAD `e01c978`:
       TWO consecutive aligns, because upstream moved again mid-build. First align took `82bf004`
       (route OSC notify through the pane-decoupled notif path — `src/notification/broadcast.rs`,
