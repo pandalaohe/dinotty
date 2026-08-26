@@ -368,6 +368,8 @@ assert_source_unchanged(){
 rebuild_prod(){
   [ "$#" -eq 0 ] || die "rebuild-prod takes no arguments (installed apps left untouched)"
   set_instance prod
+  # Prod build must not inherit test instance settings from the operator's exported shell environment.
+  unset DINOTTY_CONFIG_SUFFIX DINOTTY_DEFAULT_PORT
   assert_not_self_hosted "$DEST"
   precondition
   preflight
