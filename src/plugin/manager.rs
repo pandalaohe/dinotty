@@ -835,6 +835,8 @@ mod tests {
     use std::path::Path;
     use std::sync::Mutex;
 
+    const COMPILE_TIME_SUFFIX: Option<&str> = option_env!("DINOTTY_CONFIG_SUFFIX");
+
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct EnvVarGuard {
@@ -887,24 +889,36 @@ mod tests {
     #[test]
     fn new_resolves_both_directories_through_the_instance_suffix() {
         let _env_lock = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _suffix = EnvVarGuard::set("DINOTTY_CONFIG_SUFFIX", "-test");
+        // This env var is process-global, so its directory must not be used by any live instance.
+        let _suffix = EnvVarGuard::set("DINOTTY_CONFIG_SUFFIX", "-plugin-manager-wiring-test");
 
         let manager = PluginManager::new("http://localhost:8998".into(), "test".into());
+        let suffix = crate::settings::instance_suffix();
 
-        assert!(manager.plugin_dir.ends_with(".dinotty-test/plugins"));
-        assert!(manager.data_dir.ends_with(".dinotty-test/plugin-data"));
+        assert!(manager.plugin_dir.ends_with(format!(".dinotty{suffix}/plugins")));
+        assert!(manager.data_dir.ends_with(format!(".dinotty{suffix}/plugin-data")));
     }
 
     #[test]
     fn instance_suffix_uses_runtime_environment_value() {
-        let _env_lock = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _suffix = EnvVarGuard::set("DINOTTY_CONFIG_SUFFIX", "-test");
+        // The runtime fallback is unreachable when this value was embedded at compile time.
+        if COMPILE_TIME_SUFFIX.is_some() {
+            return;
+        }
 
-        assert_eq!(crate::settings::instance_suffix(), "-test");
+        let _env_lock = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _suffix = EnvVarGuard::set("DINOTTY_CONFIG_SUFFIX", "-plugin-manager-wiring-test");
+
+        assert_eq!(crate::settings::instance_suffix(), "-plugin-manager-wiring-test");
     }
 
     #[test]
     fn instance_suffix_defaults_to_empty_when_runtime_environment_is_absent() {
+        // The runtime fallback is unreachable when this value was embedded at compile time.
+        if COMPILE_TIME_SUFFIX.is_some() {
+            return;
+        }
+
         let _env_lock = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let _suffix = EnvVarGuard::unset("DINOTTY_CONFIG_SUFFIX");
 
