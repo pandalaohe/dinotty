@@ -118,6 +118,19 @@ describe('useViewportResize system keyboard lifecycle', () => {
   }
 
   it.each([
+    ['iPhone client', 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X)', '13px'],
+    ['non-iPhone client', 'Mozilla/5.0 (X11; Linux x86_64)', '0px'],
+  ])('publishes and removes the capsule reclaim for an %s', (_client, userAgent, expected) => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent })
+    mountViewport()
+
+    expect(document.documentElement.style.getPropertyValue('--kb-capsule-reclaim')).toBe(expected)
+
+    state.dispose()
+    expect(document.documentElement.style.getPropertyValue('--kb-capsule-reclaim')).toBe('')
+  })
+
+  it.each([
     ['blur', 'focus'],
     ['pagehide', 'pageshow'],
   ])('preserves an open-keyboard baseline across %s/%s', (hideEvent, showEvent) => {

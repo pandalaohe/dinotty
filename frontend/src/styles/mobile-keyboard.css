@@ -601,6 +601,11 @@
   --mkb-mod-bg: color-mix(in srgb, var(--bg), white 6%);
 }
 
+#system-mobile-kb.ime-open {
+  bottom: max(0px, calc(var(--system-toolbar-bottom, 0px)
+                      - min(var(--kb-capsule-reclaim, 0px), var(--sys-kb-height, 0px))));
+}
+
 .system-kb-action-header {
   display: flex;
   align-items: center;

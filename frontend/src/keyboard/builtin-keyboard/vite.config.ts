@@ -74,10 +74,10 @@ export default defineConfig({
     target: 'es2020',
     rollupOptions: {
       output: {
-        // Scoped SFC styles land in scoped.css; build-seed.mjs concatenates
-        // them with the global mobile-keyboard.css into styles.css (the file
-        // plugin.json ships). The data-v hashes are this build's own, so the
-        // host's compiled copy cannot substitute for them.
+        // Scoped SFC styles land in scoped.css; the seed step renames that
+        // file to styles.css (the file plugin.json ships). The data-v hashes
+        // are this build's own, so the host's compiled copy cannot substitute
+        // for them.
         assetFileNames: 'scoped.css',
       },
     },

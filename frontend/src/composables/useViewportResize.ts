@@ -1,6 +1,7 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount, type Ref } from 'vue'
 import type { Tab } from '../types/pane'
 import { getAllLeaves } from '../types/pane'
+import { isIPhoneClient } from '../utils/clientPlatform'
 
 export interface ViewportResizeOptions {
   kbVisible: Ref<boolean>
@@ -183,6 +184,10 @@ export function useViewportResize(opts: ViewportResizeOptions): ViewportResizeSt
   })
 
   onMounted(() => {
+    document.documentElement.style.setProperty(
+      '--kb-capsule-reclaim',
+      isIPhoneClient() ? '13px' : '0px'
+    )
     window.addEventListener('resize', onOrientationChange)
     window.addEventListener('blur', reset)
     window.addEventListener('focus', revalidate)
@@ -220,6 +225,7 @@ export function useViewportResize(opts: ViewportResizeOptions): ViewportResizeSt
     }
     document.documentElement.style.removeProperty('--sys-kb-height')
     document.documentElement.style.removeProperty('--system-toolbar-bottom')
+    document.documentElement.style.removeProperty('--kb-capsule-reclaim')
     document.documentElement.style.setProperty('--kb-open', '0')
   }
 
