@@ -602,6 +602,16 @@
 }
 
 #system-mobile-kb.ime-open {
+  /* Overhang the keyboard edge WebKit reports, to reclaim the dead space iOS 26 leaves above
+   * its floating form-assistant capsule. The amount is a platform constant published by
+   * useViewportResize (13px on iPhone, 0px elsewhere), and min() caps it at the occlusion that
+   * actually exists: `.ime-open` tracks IME focus, not measured keyboard height, so with an
+   * external keyboard or mid-dismissal --sys-kb-height is 0 and the bar must not overhang the
+   * screen edge. max(0px, ...) restates that same guarantee for this branch's `position: fixed`
+   * toolbar, where the reclaim is subtracted from the toolbar's own bottom offset instead of
+   * applied as a negative margin, so it must not drive `bottom` negative. All three custom
+   * properties fall back to 0px, so the default is no overhang and useViewportResize's dispose()
+   * removeProperty leaves a valid declaration rather than dropping `bottom` to auto. */
   bottom: max(0px, calc(var(--system-toolbar-bottom, 0px)
                       - min(var(--kb-capsule-reclaim, 0px), var(--sys-kb-height, 0px))));
 }
