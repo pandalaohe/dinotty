@@ -4,7 +4,15 @@ import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 // Assemble the seed artifact from the vite lib-build output:
 //   scoped.css (this build's SFC hashes) -> styles.css
 //   plugin.json (source manifest) -> seed/builtin-keyboard/plugin.json
-const groupingAtRules = new Set(['container', 'document', 'layer', 'media', 'scope', 'supports'])
+const declarationAtRules = new Set([
+  'font-face',
+  'page',
+  'property',
+  'counter-style',
+  'keyframes',
+  'font-feature-values',
+  'viewport',
+])
 
 function stripComments(css) {
   let output = ''
@@ -22,6 +30,13 @@ function stripComments(css) {
       } else if (char === quote) {
         quote = null
       }
+      continue
+    }
+
+    if (char === '\\') {
+      output += char
+      output += next ?? ''
+      index += 1
       continue
     }
 
@@ -53,7 +68,8 @@ function findBoundary(css, start, end) {
       continue
     }
 
-    if (char === '"' || char === "'") quote = char
+    if (char === '\\') index += 1
+    else if (char === '"' || char === "'") quote = char
     else if (char === '(') parentheses += 1
     else if (char === ')') parentheses -= 1
     else if (char === '[') brackets += 1
@@ -77,7 +93,8 @@ function findBlockEnd(css, openBrace, end) {
       continue
     }
 
-    if (char === '"' || char === "'") quote = char
+    if (char === '\\') index += 1
+    else if (char === '"' || char === "'") quote = char
     else if (char === '{') depth += 1
     else if (char === '}') {
       depth -= 1
@@ -104,7 +121,8 @@ function splitSelectors(prelude) {
       continue
     }
 
-    if (char === '"' || char === "'") quote = char
+    if (char === '\\') index += 1
+    else if (char === '"' || char === "'") quote = char
     else if (char === '(') parentheses += 1
     else if (char === ')') parentheses -= 1
     else if (char === '[') brackets += 1
@@ -117,6 +135,38 @@ function splitSelectors(prelude) {
 
   selectors.push(prelude.slice(start).trim())
   return selectors.filter(Boolean)
+}
+
+function addGlobalSelectors(prelude, offenders) {
+  for (const selector of splitSelectors(prelude)) {
+    if (!/\[data-v-[\w-]+\]/i.test(selector)) offenders.add(selector)
+  }
+}
+
+function checkScopePrelude(prelude, offenders) {
+  let quote = null
+  let depth = 0
+  let groupStart = 0
+
+  for (let index = 0; index < prelude.length; index += 1) {
+    const char = prelude[index]
+
+    if (quote) {
+      if (char === '\\') index += 1
+      else if (char === quote) quote = null
+      continue
+    }
+
+    if (char === '\\') index += 1
+    else if (char === '"' || char === "'") quote = char
+    else if (char === '(') {
+      if (depth === 0) groupStart = index + 1
+      depth += 1
+    } else if (char === ')') {
+      depth -= 1
+      if (depth === 0) addGlobalSelectors(prelude.slice(groupStart, index), offenders)
+    }
+  }
 }
 
 function collectGlobalSelectors(css, start, end, offenders) {
@@ -138,21 +188,22 @@ function collectGlobalSelectors(css, start, end, offenders) {
     const blockEnd = findBlockEnd(css, boundary, end)
     if (prelude.startsWith('@')) {
       const atRule = prelude.slice(1).match(/^[\w-]+/)?.[0]?.toLowerCase()
-      if (atRule && groupingAtRules.has(atRule)) {
+      const normalizedAtRule = atRule?.replace(/^-[\w]+-/, '')
+      if (atRule === 'scope') checkScopePrelude(prelude, offenders)
+      if (!normalizedAtRule || !declarationAtRules.has(normalizedAtRule)) {
         collectGlobalSelectors(css, boundary + 1, blockEnd, offenders)
       }
     } else {
-      for (const selector of splitSelectors(prelude)) {
-        if (!/\[data-v-[\w-]+\]/i.test(selector)) offenders.add(selector)
-      }
+      addGlobalSelectors(prelude, offenders)
     }
 
     cursor = blockEnd + 1
   }
 }
 
-// Authoring-time guard for this generated seed only. It ignores at-rule
-// preludes and keyframe steps, but checks rules nested in grouping at-rules.
+// Authoring-time guard for this generated seed only. It checks @scope preludes
+// and rules nested in block at-rules, while ignoring declaration bodies and
+// keyframe steps.
 // It is not a runtime contract and cannot detect the host dropping a rule;
 // the host stylesheet contract tests cover that direction.
 export function assertScopedSelectors(css) {

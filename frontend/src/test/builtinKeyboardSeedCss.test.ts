@@ -32,4 +32,25 @@ describe('builtin keyboard seed CSS scoping', () => {
 
     expect(() => assertScopedSelectors(css)).toThrowError(/#system-mobile-kb/)
   })
+
+  it.each([
+    String.raw`.key\,wide[data-v-a1] { color: red; }`,
+    String.raw`.key\{wide[data-v-a1] { color: red; }`,
+    '@scope (.root[data-v-a1]) { .x[data-v-a1] { color: red } }',
+    '@font-face { font-family: x; src: url(y); }',
+    '@keyframes spin { from { opacity: 0 } }',
+    '@-webkit-keyframes spin { from { opacity: 0 } }',
+  ])('accepts valid scoped or declaration-only CSS: %s', (css) => {
+    expect(() => assertScopedSelectors(css)).not.toThrow()
+  })
+
+  it.each([
+    ['starting-style contents', '@starting-style { html { opacity: 0; } }', 'html'],
+    ['scope prelude', '@scope (body) { .x[data-v-a1] { color: red } }', 'body'],
+    ['unknown block at-rule contents', '@future-css { main { color: red } }', 'main'],
+  ])('rejects a global selector in %s', (_description, css, selector) => {
+    expect(() => assertScopedSelectors(css)).toThrowError(
+      `Builtin keyboard seed contains global selectors: ${selector}`,
+    )
+  })
 })
