@@ -108,6 +108,9 @@ function sample() {
       ' scale=' +
       (vv ? vv.scale.toFixed(2) : 'n/a'),
     'kbTop(lv): ' + (vv ? Math.round(vv.offsetTop + vv.height) : 'n/a'),
+    // Split across two lines on purpose: at 10px monospace inside max-width:92vw, a portrait
+    // iPhone fits roughly 57 characters, and one combined line ran past 90 - the two values
+    // this overlay exists to report were rendered off-screen.
     'vars: height=' +
       (ds.getPropertyValue('--sys-kb-height') || '(unset)') +
       ' pan=' +
@@ -115,8 +118,8 @@ function sample() {
       ' mkb=' +
       (ds.getPropertyValue('--mkb-height') || '(unset)') +
       ' tbBot=' +
-      (ds.getPropertyValue('--system-toolbar-bottom') || '(unset)') +
-      ' overlap=' +
+      (ds.getPropertyValue('--system-toolbar-bottom') || '(unset)'),
+    'vars+: overlap=' +
       (ds.getPropertyValue('--kb-overlap') || '(unset)') +
       ' capsule=' +
       (ds.getPropertyValue('--kb-capsule-reclaim') || '(unset)') +
@@ -167,7 +170,11 @@ onBeforeUnmount(() => {
   font-family: monospace;
   font-size: 10px;
   line-height: 1.4;
-  white-space: pre;
+  /* pre-wrap, not pre: this overlay is read off a phone screen, and a clipped line is a
+     measurement that was taken and never delivered. Wrapping keeps every value on screen
+     whatever the device width, and the splitting above keeps the common case unwrapped. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   pointer-events: none;
   opacity: 0.94;
 }
