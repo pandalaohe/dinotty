@@ -178,11 +178,11 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 > the remaining delta collided with upstream's refactor of `App.vue` into six composables and
 > `KeyboardTab.vue` into section components — 52 conflicts that were a re-port, not a merge.
 > Historical narrative below is provenance and may describe files that have since moved or been absorbed.
-- Currently aligned to `upstream/dev@06208bc` (`2026-08-26`, custom HEAD `c5008b9`) by MERGE on top of
-  that rebuild baseline; `behind=0`, `ahead=21`.
-- Residual fork layer vs `upstream/dev`: **29 paths, 4431 insertions / 44 deletions** (`git diff --stat
+- Currently aligned to `upstream/dev@8b644d9` (`2026-08-26`, custom HEAD `71c0de8`) by MERGE on top of
+  that rebuild baseline; `behind=0`, `ahead=25`.
+- Residual fork layer vs `upstream/dev`: **32 paths, 4528 insertions / 63 deletions** (`git diff --stat
   upstream/dev...custom`, measured `2026-08-26` — re-run the command rather than trusting this figure).
-  Ten mods, plus one unclassified test fixture. The six `lifecycle=private` carries:
+  Eleven mods, plus one unclassified test fixture. The seven `lifecycle=private` carries:
   - `fork-meta` — `.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`
   - `mocha-theme` — `frontend/src/themes.ts`
   - `deploy-scripts` — `scripts/dinotty`, `scripts/dinotty-ops.sh`, `scripts/upstream_custom.py`,
@@ -193,6 +193,34 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   - `default-locale-zh` — `src/settings/types/mod.rs`
   - `b7ab5da-ios26-capsule-reclaim` — `frontend/src/composables/useViewportResize.ts`,
     `frontend/src/test/useViewportResize.test.ts`, `frontend/src/styles/mobile-keyboard.css`
+  - `5e7ecb3-toolbar-safe-area-divergence` (`2026-08-26`, `KB12`/`T260825-009`, accepted on device) —
+    `frontend/src/styles/mobile-keyboard.css`, `frontend/src/components/keyboard/KbDebugOverlay.vue`,
+    `frontend/src/components/settings/AboutTab.vue`, `frontend/src/test/SystemKeyboardToolbar.test.ts`,
+    `frontend/src/test/mobileKeyboardCssContract.test.ts` (last two counted under their own rows above).
+    `#system-mobile-kb`'s bottom pad is a flat `8px` where upstream has
+    `max(8px, env(safe-area-inset-bottom))`. With `viewport-fit=cover` that inset resolves to the
+    home-indicator height in an installed home-screen web app and to `0` in mobile Safari, so upstream's
+    form cost ~26px of terminal height on iPhone in BOTH keyboard states while every browser-mode and
+    desktop check stayed correct — which is why it survived the smoke runs. Safari's computed value is
+    unchanged (`max(8px, 0)` was already `8px`), so no display-mode, standalone or UA branch is involved:
+    the earlier attempts at this class (P21-P30) were all built on such detection and P31 tore them out
+    after physical-device QA. **This row is `private` and stays private**: giving up the closed-state
+    home-indicator clearance is the fork owner's choice from a reference screenshot, and the lower key row
+    now sits at the edge of the home-gesture region. The IME-OPEN half is a genuine upstream defect — the
+    keyboard covers the indicator, so reserving its inset is dead space by construction — and is an
+    unfiled upstream candidate in its own right, expressed as an `.ime-open` override
+    (`max(8px, calc(env(safe-area-inset-bottom, 0px) - var(--sys-kb-height, 0px)))`) rather than as this
+    flat value; it is a no-op in this fork's build and therefore deliberately NOT carried here.
+    Also carries the debug-overlay probes that made the defect measurable on device: a `:root`
+    `--safe-area-bottom` readback (env() is unreadable from script), `--kb-capsule-reclaim`, the toolbar's
+    computed `padding-bottom`, `innerHeight` minus the toolbar's own bottom edge (invariant under this
+    padding change, so it discriminates an inside-the-toolbar gap from the still-unfixed outside one), the
+    installed-mode signals split three ways (the manifest declares `fullscreen`, so a standalone-only
+    check reads `no` in an installed app), and a seven-tap-on-the-About-version entry point because an
+    installed app has no address bar to put `#kbdebug` into.
+    `exit-condition`: the overlay half goes when the mobile-keyboard geometry work closes and the
+    diagnostics are no longer wanted; the padding half is a permanent user-required divergence and is
+    never silently retired.
   The three `lifecycle=candidate` rows added `2026-08-26` by the `KB12` batch (`T260825-009`):
   - `b238998-plugin-store-instance-isolation` — `src/plugin/manager.rs`, `src/settings/mod.rs`,
     plus the test-instance build path in `scripts/dinotty-ops.sh` (counted under `deploy-scripts`)
@@ -233,6 +261,29 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 - Verification for this snapshot is recorded in the newest re-align log entry and the alignment merge commits.
 - Update trigger: on any upstream re-align OR when a PR flips open<->merged — refresh SHA, date, table.
 - Re-align log (newest first):
+    - `2026-08-26` (second re-align of the day) → base `8b644d9` (was `06208bc`), custom HEAD `71c0de8`:
+      twelve upstream commits — tab-sync fixes (`3d2782a` suppressSync depth counter, `444f734`
+      broadcast tab reorder, `8b644d9` make that suppression exception-safe), auth throttling
+      (`77923ba` last_used refresh), session snapshot concurrency tests (`7d52a59`), a WS origin-check
+      fix and its own revert (`dba79e6` then `c7a5de6`, netting out), plus their merge commits and two
+      doc files. Conflict surface EMPTY by the same test as the previous entry: they touch
+      `frontend/src/composables/{useSyncWebSocket,useTabLifecycle}.ts`,
+      `frontend/src/types/protocol.ts`, `src/auth/session.rs`, `src/session/*`, `src/ws/{sync,types}.rs`
+      and `docs/`, and NOT ONE appears in `git diff --name-only upstream/dev...custom`. In particular no
+      keyboard, mobile-CSS, plugin-store or build-script file was touched, so the align introduced no
+      second variable into the D4 verification it was blocking. Backup tag (the tool's):
+      `pre-update-custom-20260826-153912`.
+      Why this align happened: same forced path as the entry below — `rebuild-test` preflight refuses to
+      build 8998 while `custom` is behind, and the `DINOTTY_SKIP_PREFLIGHT` escape recorded in older
+      notes NO LONGER EXISTS in `scripts/dinotty-ops.sh` (`grep` returns nothing), so aligning was again
+      the only route to the QA. Treat that flag as retired wherever it is still cited.
+      Verification, all re-run AFTER the merge rather than carried over from before it: frontend vitest
+      `1360 passed / 0 failed / 10 skipped` across 146 files (up from 1355/145 — the delta is upstream's
+      new `useSyncWebSocketSuppressSafety.test.ts`), `vue-tsc --noEmit` clean, `rebuild-test` green with
+      its own fingerprint check on 8998, and the served CSS re-read off the running instance to confirm
+      the fork's own change survived the merge (`#system-mobile-kb` bottom pad is `8px`, with no
+      `env(safe-area-inset-bottom)`). `cargo test` was NOT re-run in this pass; the Rust side is covered
+      only to compile level by `rebuild-test`'s release build.
     - `2026-08-26` → base `06208bc` (was `acaf6fb`), custom HEAD `c5008b9`: five upstream commits, all
       backend security or CI — `0d4122e` (block ws/watch path traversal and IPv6 SSRF), `4986577`
       (abort SSH auth monitor on socket close), `02653fd` (reject cross-site browser requests to
