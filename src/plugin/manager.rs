@@ -102,13 +102,21 @@ pub struct PluginManager {
 
 pub type PluginManagerState = Arc<PluginManager>;
 
+fn instance_root(home: &Path, suffix: &str) -> PathBuf {
+    home.join(format!(".dinotty{suffix}"))
+}
+
 impl PluginManager {
     #[must_use]
     pub fn new(host_origin: String, host_mode: String) -> Self {
         let home = dirs::home_dir().unwrap_or_default();
+        let root = instance_root(&home, &crate::settings::instance_suffix());
+        let plugin_dir = root.join("plugins");
+        let data_dir = root.join("plugin-data");
+        tracing::info!(plugin_dir = %plugin_dir.display(), "Resolved plugin directory");
         Self {
-            plugin_dir: home.join(".dinotty/plugins"),
-            data_dir: home.join(".dinotty/plugin-data"),
+            plugin_dir,
+            data_dir,
             registry: DashMap::new(),
             processes: DashMap::new(),
             operation_locks: DashMap::new(),
@@ -817,5 +825,29 @@ impl PluginManager {
 
         self.registry.remove(id);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::instance_root;
+    use std::path::Path;
+
+    #[test]
+    fn empty_suffix_keeps_default_plugin_directories() {
+        let home = Path::new("/home/example");
+        let root = instance_root(home, "");
+
+        assert_eq!(root.join("plugins"), home.join(".dinotty/plugins"));
+        assert_eq!(root.join("plugin-data"), home.join(".dinotty/plugin-data"));
+    }
+
+    #[test]
+    fn non_empty_suffix_moves_both_plugin_directories() {
+        let home = Path::new("/home/example");
+        let root = instance_root(home, "-test");
+
+        assert_eq!(root.join("plugins"), home.join(".dinotty-test/plugins"));
+        assert_eq!(root.join("plugin-data"), home.join(".dinotty-test/plugin-data"));
     }
 }
