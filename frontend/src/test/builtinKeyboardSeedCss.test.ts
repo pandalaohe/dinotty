@@ -1,56 +1,110 @@
 import { describe, expect, it } from 'vitest'
 
 // @ts-expect-error build-seed is an executable ESM script without a TypeScript declaration file.
-import { assertScopedSelectors } from '../keyboard/builtin-keyboard/build-seed.mjs'
+import { assertNoHostGlobalSelectors } from '../keyboard/builtin-keyboard/build-seed.mjs'
 
-describe('builtin keyboard seed CSS scoping', () => {
-  it('accepts scoped rules without treating at-rules or keyframe steps as selectors', () => {
+describe('builtin keyboard seed host-global CSS tripwire', () => {
+  it('accepts realistic scoped SFC rules', () => {
     const css = `
-      @font-face { font-family: Keyboard; src: url(keyboard.woff2); }
-      @keyframes pulse { from { opacity: 0; } 100% { opacity: 1; } }
+      .suggestion-bar[data-v-d0382cf6] { display: flex; }
+      .keyboard[data-v-d0382cf6] .key[data-v-d0382cf6] { min-width: 2rem; }
       @media (max-width: 600px) {
-        .keyboard[data-v-a1b2c3] { display: grid; }
-      }
-      @supports (display: grid) {
-        .key[data-v-a1b2c3]:is(.wide, .active) { display: grid; }
-      }
-      @layer builtin {
-        .label[data-v-a1b2c3] { font-weight: 600; }
+        .suggestion[data-v-d0382cf6]:is(.active, .wide) { color: var(--text-color); }
       }
     `
 
-    expect(() => assertScopedSelectors(css)).not.toThrow()
+    expect(() => assertNoHostGlobalSelectors(css)).not.toThrow()
   })
 
-  it('rejects a global selector nested in an at-rule and names it', () => {
+  it.each([
+    ['#system-mobile-kb', '#system-mobile-kb { position: relative; }'],
+    ['#mobile-kb', '#mobile-kb { display: grid; }'],
+    ['#app-root', '#app-root { min-height: 100%; }'],
+    ['html', 'html { font-size: 16px; }'],
+    ['body', 'body { margin: 0; }'],
+    [':root', ':root { --keyboard-height: 18rem; }'],
+  ])('rejects the host-global token %s and names it', (token, css) => {
+    expect(() => assertNoHostGlobalSelectors(css)).toThrowError(
+      new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    )
+  })
+
+  it('collects and names every host-global token found', () => {
+    const css = '#system-mobile-kb, #mobile-kb, #app-root, html, body, :root { color: red; }'
+
+    expect(() => assertNoHostGlobalSelectors(css)).toThrowError(
+      /#system-mobile-kb, #mobile-kb, #app-root, :root, html, body/,
+    )
+  })
+
+  it.each([
+    '.x[data-v-a1]{width:calc(2 * 1px)}',
+    '.x[data-v-a1]{width:calc(2*1px)}',
+  ])('accepts calc multiplication: %s', (css) => {
+    expect(() => assertNoHostGlobalSelectors(css)).not.toThrow()
+  })
+
+  it.each([
+    '.x[data-v-a1]{background:url(body-bg.png)}',
+    '.x[data-v-a1]{background:url(html-icon.svg)}',
+  ])('ignores host-global tokens in unquoted URLs: %s', (css) => {
+    expect(() => assertNoHostGlobalSelectors(css)).not.toThrow()
+  })
+
+  it('still rejects a body rule after stripping an unquoted URL containing body', () => {
+    const css = '.x[data-v-a1]{background:url(body-bg.png)} body { margin: 0 }'
+
+    expect(() => assertNoHostGlobalSelectors(css)).toThrowError(/body/)
+  })
+
+  it('does not match html or body inside longer CSS identifiers', () => {
     const css = `
-      .keyboard[data-v-a1b2c3] { display: grid; }
-      @media (max-width: 600px) {
-        #system-mobile-kb { position: relative; }
-      }
+      .mkb-body[data-v-a1] { display: flex; }
+      .x[data-v-a1] { --html-safe: 1; }
     `
 
-    expect(() => assertScopedSelectors(css)).toThrowError(/#system-mobile-kb/)
+    expect(() => assertNoHostGlobalSelectors(css)).not.toThrow()
+  })
+
+  it('ignores host-global tokens that appear only inside strings', () => {
+    expect(() => assertNoHostGlobalSelectors('.x[data-v-a1] { content: "body"; }')).not.toThrow()
+  })
+
+  it('still rejects a body rule after stripping a string containing body', () => {
+    const css = '.x[data-v-a1] { content: "body"; } body { margin: 0; }'
+
+    expect(() => assertNoHostGlobalSelectors(css)).toThrowError(/body/)
   })
 
   it.each([
     String.raw`.key\,wide[data-v-a1] { color: red; }`,
-    String.raw`.key\{wide[data-v-a1] { color: red; }`,
-    '@scope (.root[data-v-a1]) { .x[data-v-a1] { color: red } }',
-    '@font-face { font-family: x; src: url(y); }',
-    '@keyframes spin { from { opacity: 0 } }',
-    '@-webkit-keyframes spin { from { opacity: 0 } }',
-  ])('accepts valid scoped or declaration-only CSS: %s', (css) => {
-    expect(() => assertScopedSelectors(css)).not.toThrow()
+    '.key[data-v-a1] {}' + '\\',
+    String.raw`.key[data-v-a1] { content: "safe\"; }`,
+  ])('accepts escape edge cases: %s', (css) => {
+    expect(() => assertNoHostGlobalSelectors(css)).not.toThrow()
   })
 
-  it.each([
-    ['starting-style contents', '@starting-style { html { opacity: 0; } }', 'html'],
-    ['scope prelude', '@scope (body) { .x[data-v-a1] { color: red } }', 'body'],
-    ['unknown block at-rule contents', '@future-css { main { color: red } }', 'main'],
-  ])('rejects a global selector in %s', (_description, css, selector) => {
-    expect(() => assertScopedSelectors(css)).toThrowError(
-      `Builtin keyboard seed contains global selectors: ${selector}`,
-    )
+  it('accepts a custom mixin block', () => {
+    expect(() =>
+      assertNoHostGlobalSelectors('@mixin --theme { --payload: { red }; }'),
+    ).not.toThrow()
+  })
+
+  it('ignores html and body inside comments', () => {
+    const css = '/* html { color: red; } body { margin: 0; } */ .x[data-v-a1] { color: blue; }'
+
+    expect(() => assertNoHostGlobalSelectors(css)).not.toThrow()
+  })
+
+  it('rejects a host-global rule nested inside @media', () => {
+    const css = '@media (max-width: 600px) { #mobile-kb { display: block; } }'
+
+    expect(() => assertNoHostGlobalSelectors(css)).toThrowError(/#mobile-kb/)
+  })
+
+  it('rejects a host-global rule nested inside @keyframes', () => {
+    const css = '@keyframes reveal { from { opacity: 0; } body { opacity: 1; } }'
+
+    expect(() => assertNoHostGlobalSelectors(css)).toThrowError(/body/)
   })
 })

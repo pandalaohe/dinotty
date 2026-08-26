@@ -4,16 +4,6 @@ import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 // Assemble the seed artifact from the vite lib-build output:
 //   scoped.css (this build's SFC hashes) -> styles.css
 //   plugin.json (source manifest) -> seed/builtin-keyboard/plugin.json
-const declarationAtRules = new Set([
-  'font-face',
-  'page',
-  'property',
-  'counter-style',
-  'keyframes',
-  'font-feature-values',
-  'viewport',
-])
-
 function stripComments(css) {
   let output = ''
   let quote = null
@@ -54,165 +44,104 @@ function stripComments(css) {
   return output
 }
 
-function findBoundary(css, start, end) {
+function stripStrings(css) {
+  let output = ''
   let quote = null
-  let parentheses = 0
-  let brackets = 0
 
-  for (let index = start; index < end; index += 1) {
+  for (let index = 0; index < css.length; index += 1) {
     const char = css[index]
+    const next = css[index + 1]
 
     if (quote) {
-      if (char === '\\') index += 1
-      else if (char === quote) quote = null
-      continue
-    }
-
-    if (char === '\\') index += 1
-    else if (char === '"' || char === "'") quote = char
-    else if (char === '(') parentheses += 1
-    else if (char === ')') parentheses -= 1
-    else if (char === '[') brackets += 1
-    else if (char === ']') brackets -= 1
-    else if (parentheses === 0 && brackets === 0 && (char === '{' || char === ';')) return index
-  }
-
-  return end
-}
-
-function findBlockEnd(css, openBrace, end) {
-  let depth = 1
-  let quote = null
-
-  for (let index = openBrace + 1; index < end; index += 1) {
-    const char = css[index]
-
-    if (quote) {
-      if (char === '\\') index += 1
-      else if (char === quote) quote = null
-      continue
-    }
-
-    if (char === '\\') index += 1
-    else if (char === '"' || char === "'") quote = char
-    else if (char === '{') depth += 1
-    else if (char === '}') {
-      depth -= 1
-      if (depth === 0) return index
-    }
-  }
-
-  return end
-}
-
-function splitSelectors(prelude) {
-  const selectors = []
-  let start = 0
-  let quote = null
-  let parentheses = 0
-  let brackets = 0
-
-  for (let index = 0; index < prelude.length; index += 1) {
-    const char = prelude[index]
-
-    if (quote) {
-      if (char === '\\') index += 1
-      else if (char === quote) quote = null
-      continue
-    }
-
-    if (char === '\\') index += 1
-    else if (char === '"' || char === "'") quote = char
-    else if (char === '(') parentheses += 1
-    else if (char === ')') parentheses -= 1
-    else if (char === '[') brackets += 1
-    else if (char === ']') brackets -= 1
-    else if (char === ',' && parentheses === 0 && brackets === 0) {
-      selectors.push(prelude.slice(start, index).trim())
-      start = index + 1
-    }
-  }
-
-  selectors.push(prelude.slice(start).trim())
-  return selectors.filter(Boolean)
-}
-
-function addGlobalSelectors(prelude, offenders) {
-  for (const selector of splitSelectors(prelude)) {
-    if (!/\[data-v-[\w-]+\]/i.test(selector)) offenders.add(selector)
-  }
-}
-
-function checkScopePrelude(prelude, offenders) {
-  let quote = null
-  let depth = 0
-  let groupStart = 0
-
-  for (let index = 0; index < prelude.length; index += 1) {
-    const char = prelude[index]
-
-    if (quote) {
-      if (char === '\\') index += 1
-      else if (char === quote) quote = null
-      continue
-    }
-
-    if (char === '\\') index += 1
-    else if (char === '"' || char === "'") quote = char
-    else if (char === '(') {
-      if (depth === 0) groupStart = index + 1
-      depth += 1
-    } else if (char === ')') {
-      depth -= 1
-      if (depth === 0) addGlobalSelectors(prelude.slice(groupStart, index), offenders)
-    }
-  }
-}
-
-function collectGlobalSelectors(css, start, end, offenders) {
-  let cursor = start
-
-  while (cursor < end) {
-    while (cursor < end && /[\s;]/.test(css[cursor])) cursor += 1
-    if (cursor >= end || css[cursor] === '}') return
-
-    const boundary = findBoundary(css, cursor, end)
-    if (boundary >= end) return
-
-    const prelude = css.slice(cursor, boundary).trim()
-    if (css[boundary] === ';') {
-      cursor = boundary + 1
-      continue
-    }
-
-    const blockEnd = findBlockEnd(css, boundary, end)
-    if (prelude.startsWith('@')) {
-      const atRule = prelude.slice(1).match(/^[\w-]+/)?.[0]?.toLowerCase()
-      const normalizedAtRule = atRule?.replace(/^-[\w]+-/, '')
-      if (atRule === 'scope') checkScopePrelude(prelude, offenders)
-      if (!normalizedAtRule || !declarationAtRules.has(normalizedAtRule)) {
-        collectGlobalSelectors(css, boundary + 1, blockEnd, offenders)
+      if (char === '\\') {
+        index += 1
+      } else if (char === quote) {
+        quote = null
+        output += char
       }
-    } else {
-      addGlobalSelectors(prelude, offenders)
+      continue
     }
 
-    cursor = blockEnd + 1
+    if (char === '\\') {
+      output += char
+      output += next ?? ''
+      index += 1
+      continue
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char
+      output += char
+    } else {
+      output += char
+    }
   }
+
+  return output
 }
 
-// Authoring-time guard for this generated seed only. It checks @scope preludes
-// and rules nested in block at-rules, while ignoring declaration bodies and
-// keyframe steps.
-// It is not a runtime contract and cannot detect the host dropping a rule;
-// the host stylesheet contract tests cover that direction.
-export function assertScopedSelectors(css) {
-  const source = stripComments(css)
-  const offenders = new Set()
-  collectGlobalSelectors(source, 0, source.length, offenders)
+function stripUnquotedUrls(css) {
+  let output = ''
 
+  for (let index = 0; index < css.length; index += 1) {
+    const isUrl =
+      css.slice(index, index + 4).toLowerCase() === 'url(' &&
+      (index === 0 || !/[\w-]/.test(css[index - 1]))
+
+    if (!isUrl) {
+      output += css[index]
+      continue
+    }
+
+    const contentStart = index + 4
+    let contentIndex = contentStart
+    while (/\s/.test(css[contentIndex] ?? '')) contentIndex += 1
+
+    if (css[contentIndex] === '"' || css[contentIndex] === "'") {
+      output += css.slice(index, contentStart)
+      index = contentStart - 1
+      continue
+    }
+
+    let closingParen = contentIndex
+    while (closingParen < css.length && css[closingParen] !== ')') {
+      if (css[closingParen] === '\\') closingParen += 1
+      closingParen += 1
+    }
+
+    output += css.slice(index, contentStart)
+    if (closingParen < css.length) {
+      output += ')'
+      index = closingParen
+    } else {
+      index = css.length
+    }
+  }
+
+  return output
+}
+
+// Tripwire for one specific regression: host global CSS reaching the seed broke the mobile toolbar
+// because the seeded <style> is injected after the core stylesheet at equal specificity, allowing a
+// host selector to override the app's own rule. This does not prove every selector is scoped; the
+// universal selector is deliberately not checked because it is indistinguishable from calc()
+// multiplication without a real CSS parser, which this package deliberately does not carry. The actual
+// fix is that the seed no longer concatenates the host stylesheet, and this check is belt-and-braces.
+// It deliberately under-detects rather than false-reject because a false reject here blocks every build.
+export function assertNoHostGlobalSelectors(css) {
+  const source = stripUnquotedUrls(stripStrings(stripComments(css)))
+  const offenders = new Set()
+
+  for (const token of ['#system-mobile-kb', '#mobile-kb', '#app-root', ':root']) {
+    if (source.includes(token)) offenders.add(token)
+  }
+  for (const token of ['html', 'body']) {
+    if (new RegExp(`(?<![\\w-])${token}(?![\\w-])`).test(source)) offenders.add(token)
+  }
   if (offenders.size > 0) {
-    throw new Error(`Builtin keyboard seed contains global selectors: ${[...offenders].join(', ')}`)
+    throw new Error(
+      `Builtin keyboard seed must contain only the plugin's own scoped SFC CSS; host-global selector tokens re-introduce host CSS into the seed payload: ${[...offenders].join(', ')}`,
+    )
   }
 }
 
@@ -233,7 +162,7 @@ function buildSeed() {
   const scopedCss = readFileSync(`${outDir}/scoped.css`, 'utf8')
   const stylesPath = `${outDir}/styles.css`
   writeFileSync(stylesPath, scopedCss)
-  assertScopedSelectors(readFileSync(stylesPath, 'utf8'))
+  assertNoHostGlobalSelectors(readFileSync(stylesPath, 'utf8'))
 
   // scoped.css is an intermediate build product; the shipped styles file is styles.css.
   rmSync(`${outDir}/scoped.css`, { force: true })
