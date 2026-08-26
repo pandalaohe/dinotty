@@ -25,7 +25,7 @@ describe('builtin keyboard seed host-global CSS tripwire', () => {
     [':root', ':root { --keyboard-height: 18rem; }'],
   ])('rejects the host-global token %s and names it', (token, css) => {
     expect(() => assertNoHostGlobalSelectors(css)).toThrowError(
-      new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     )
   })
 
@@ -33,16 +33,16 @@ describe('builtin keyboard seed host-global CSS tripwire', () => {
     const css = '#system-mobile-kb, #mobile-kb, #app-root, html, body, :root { color: red; }'
 
     expect(() => assertNoHostGlobalSelectors(css)).toThrowError(
-      /#system-mobile-kb, #mobile-kb, #app-root, :root, html, body/,
+      /#system-mobile-kb, #mobile-kb, #app-root, :root, html, body/
     )
   })
 
-  it.each([
-    '.x[data-v-a1]{width:calc(2 * 1px)}',
-    '.x[data-v-a1]{width:calc(2*1px)}',
-  ])('accepts calc multiplication: %s', (css) => {
-    expect(() => assertNoHostGlobalSelectors(css)).not.toThrow()
-  })
+  it.each(['.x[data-v-a1]{width:calc(2 * 1px)}', '.x[data-v-a1]{width:calc(2*1px)}'])(
+    'accepts calc multiplication: %s',
+    (css) => {
+      expect(() => assertNoHostGlobalSelectors(css)).not.toThrow()
+    }
+  )
 
   it.each([
     '.x[data-v-a1]{background:url(body-bg.png)}',
@@ -86,7 +86,7 @@ describe('builtin keyboard seed host-global CSS tripwire', () => {
 
   it('accepts a custom mixin block', () => {
     expect(() =>
-      assertNoHostGlobalSelectors('@mixin --theme { --payload: { red }; }'),
+      assertNoHostGlobalSelectors('@mixin --theme { --payload: { red }; }')
     ).not.toThrow()
   })
 

@@ -12,7 +12,8 @@ function mountFixture(isActive = true): Fixture {
       const root = ref<HTMLElement | null>(null)
       const { dispose } = useViewportPanLock(root, { isActive: () => isActive })
       expose({ dispose })
-      return () => h('div', { ref: root }, [h('div', { class: 'chrome' }), h('div', { class: 'terminal' })])
+      return () =>
+        h('div', { ref: root }, [h('div', { class: 'chrome' }), h('div', { class: 'terminal' })])
     },
   })
   return mount(component, { attachTo: document.body }) as Fixture
@@ -42,7 +43,8 @@ function makeScrollable(element: HTMLElement, scrollTop: number) {
     scrollTop: { configurable: true, value: scrollTop },
   })
   vi.spyOn(window, 'getComputedStyle').mockImplementation(
-    (candidate) => ({ overflowY: candidate === element ? 'auto' : 'visible' }) as CSSStyleDeclaration
+    (candidate) =>
+      ({ overflowY: candidate === element ? 'auto' : 'visible' }) as CSSStyleDeclaration
   )
 }
 
@@ -56,7 +58,9 @@ describe('useViewportPanLock', () => {
     const wrapper = mountFixture()
     const chrome = wrapper.get('.chrome').element
     start(chrome)
-    expect(dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }])).toHaveBeenCalledOnce()
+    expect(
+      dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }])
+    ).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
 
@@ -64,7 +68,9 @@ describe('useViewportPanLock', () => {
     const wrapper = mountFixture(false)
     const chrome = wrapper.get('.chrome').element
     start(chrome)
-    expect(dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }])).not.toHaveBeenCalled()
+    expect(
+      dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }])
+    ).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -73,7 +79,9 @@ describe('useViewportPanLock', () => {
     const terminal = wrapper.get('.terminal').element as HTMLElement
     makeScrollable(terminal, 50)
     start(terminal)
-    expect(dispatchTouch(terminal, 'touchmove', [{ clientX: 10, clientY: 30 }])).not.toHaveBeenCalled()
+    expect(
+      dispatchTouch(terminal, 'touchmove', [{ clientX: 10, clientY: 30 }])
+    ).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -82,7 +90,9 @@ describe('useViewportPanLock', () => {
     const terminal = wrapper.get('.terminal').element as HTMLElement
     makeScrollable(terminal, 0)
     start(terminal)
-    expect(dispatchTouch(terminal, 'touchmove', [{ clientX: 10, clientY: 30 }])).toHaveBeenCalledOnce()
+    expect(
+      dispatchTouch(terminal, 'touchmove', [{ clientX: 10, clientY: 30 }])
+    ).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
 
@@ -90,15 +100,25 @@ describe('useViewportPanLock', () => {
     const wrapper = mountFixture()
     const chrome = wrapper.get('.chrome').element
     start(chrome)
-    expect(dispatchTouch(chrome, 'touchmove', [{ clientX: 40, clientY: 20 }])).not.toHaveBeenCalled()
+    expect(
+      dispatchTouch(chrome, 'touchmove', [{ clientX: 40, clientY: 20 }])
+    ).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
   it('leaves two-finger gestures alone', () => {
     const wrapper = mountFixture()
     const chrome = wrapper.get('.chrome').element
-    start(chrome, [{ clientX: 10, clientY: 10 }, { clientX: 20, clientY: 20 }])
-    expect(dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }, { clientX: 20, clientY: 40 }])).not.toHaveBeenCalled()
+    start(chrome, [
+      { clientX: 10, clientY: 10 },
+      { clientX: 20, clientY: 20 },
+    ])
+    expect(
+      dispatchTouch(chrome, 'touchmove', [
+        { clientX: 10, clientY: 30 },
+        { clientX: 20, clientY: 40 },
+      ])
+    ).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -106,7 +126,9 @@ describe('useViewportPanLock', () => {
     const wrapper = mountFixture()
     const chrome = wrapper.get('.chrome').element
     start(chrome)
-    expect(dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }], false)).not.toHaveBeenCalled()
+    expect(
+      dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }], false)
+    ).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -115,7 +137,9 @@ describe('useViewportPanLock', () => {
     const chrome = wrapper.get('.chrome').element
     start(chrome)
     wrapper.vm.dispose()
-    expect(dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }])).not.toHaveBeenCalled()
+    expect(
+      dispatchTouch(chrome, 'touchmove', [{ clientX: 10, clientY: 30 }])
+    ).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

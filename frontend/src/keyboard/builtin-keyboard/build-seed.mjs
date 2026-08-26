@@ -140,7 +140,7 @@ export function assertNoHostGlobalSelectors(css) {
   }
   if (offenders.size > 0) {
     throw new Error(
-      `Builtin keyboard seed must contain only the plugin's own scoped SFC CSS; host-global selector tokens re-introduce host CSS into the seed payload: ${[...offenders].join(', ')}`,
+      `Builtin keyboard seed must contain only the plugin's own scoped SFC CSS; host-global selector tokens re-introduce host CSS into the seed payload: ${[...offenders].join(', ')}`
     )
   }
 }

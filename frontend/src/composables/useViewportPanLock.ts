@@ -20,8 +20,7 @@ export function findScrollableAncestor(
     if (isScrollable) {
       const canMove =
         (deltaY > 0 && current.scrollTop > 0) ||
-        (deltaY < 0 &&
-          current.scrollTop + current.clientHeight < current.scrollHeight - 1)
+        (deltaY < 0 && current.scrollTop + current.clientHeight < current.scrollHeight - 1)
       // An exact boundary is intentionally not a match, so rubber-band overscroll is cancelled.
       if (canMove) return current
     }
