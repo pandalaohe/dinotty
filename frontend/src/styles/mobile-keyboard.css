@@ -596,15 +596,14 @@
   flex-direction: column;
   box-sizing: border-box;
   gap: 4px;
-  /* Flat bottom pad, deliberately NOT max(8px, env(safe-area-inset-bottom)). With
-   * viewport-fit=cover the inset resolves to the home-indicator height in an installed
-   * home-screen app and to 0 in mobile Safari, so reserving it cost ~26px of terminal
-   * height on iPhone in BOTH keyboard states while Safari was unaffected. 8px matches the
-   * fork's own pre-rebuild reference and is byte-identical to today's computed value in
-   * Safari, where max(8px, 0) is already 8px. Fork-local divergence from upstream: the
-   * closed-state home-indicator clearance is given up by choice. The IME-open half of this
-   * (reserving the inset while the keyboard covers the indicator) is an upstream defect and
-   * is tracked separately as an upstream candidate. */
+  /* The bottom inset is deliberately not reserved. In persistent toolbar mode with the
+   * keyboard down this bar docks at the screen bottom, and useKeyboardBand publishes its
+   * measured border-box height as --mkb-height, which the app root subtracts from the
+   * terminal viewport - so the inset is charged to terminal height for the whole session,
+   * not just while the bar is in use. An 8px floor keeps the controls off the very edge.
+   * The left/right insets stay: they cost no vertical space.
+   * Fork-local divergence: upstream after #275 still reserves the inset while the keyboard
+   * is down. Proposed upstream as the follow-up to #275; drop this note once that lands. */
   padding: 5px max(5px, env(safe-area-inset-right)) 8px max(5px, env(safe-area-inset-left));
   border-top: 1px solid color-mix(in srgb, var(--border), white 7%);
   background: color-mix(in srgb, var(--bg-surface), black 4%);
