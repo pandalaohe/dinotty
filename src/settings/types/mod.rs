@@ -242,6 +242,10 @@ pub struct Settings {
     pub hidden_builtins: Vec<String>,
     #[serde(default)]
     pub plugin_prefs: PluginPrefsConfig,
+    /// Per-pane-kind open mode for the built-in file/web previews: "split" (default) or "floating".
+    /// Absent key = "split". Plain string values tolerate junk; the frontend normalizes on read.
+    #[serde(default)]
+    pub preview_open_modes: std::collections::HashMap<String, String>,
     #[serde(default = "default_shell_kind")]
     pub shell: String,
     #[serde(default)]
@@ -461,6 +465,7 @@ impl Default for Settings {
             custom_themes: vec![],
             hidden_builtins: vec![],
             plugin_prefs: PluginPrefsConfig::default(),
+            preview_open_modes: std::collections::HashMap::new(),
             shell: default_shell_kind(),
             shell_path: None,
             wsl_distro: None,
