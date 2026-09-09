@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { Component } from 'vue'
 
 // useEventBridge -> useSyncWebSocket -> usePluginLoader -> createKeyboardContext
 // -> useHistory -> useSyncWebSocket forms a circular import; useHistory calls
@@ -53,7 +52,7 @@ describe('PluginFloatWindow built-in preview content', () => {
     expect(style).toContain('width: 780px')
     expect(style).toContain('height: 540px')
 
-    const preview = wrapper.findComponent(FileWorkspacePreview as Component)
+    const preview = wrapper.findComponent(FileWorkspacePreview)
     expect(preview.exists()).toBe(true)
     expect(preview.props('visible')).toBe(true)
     expect(preview.props('paneId')).toBe('float:files:T-1')
@@ -69,7 +68,7 @@ describe('PluginFloatWindow built-in preview content', () => {
     expect(style).toContain('width: 720px')
     expect(style).toContain('height: 520px')
 
-    const preview = wrapper.findComponent(WebPreview as Component)
+    const preview = wrapper.findComponent(WebPreview)
     expect(preview.exists()).toBe(true)
     expect(preview.props('visible')).toBe(true)
     expect(preview.props('url')).toBe('https://example.com')
