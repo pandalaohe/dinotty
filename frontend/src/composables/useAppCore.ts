@@ -37,8 +37,8 @@ import { getIsAppForeground, onAppForegroundGain } from './useAppForeground'
 import { usePluginLoader, handlePluginChanged } from './usePluginLoader'
 import { usePluginLauncher } from './usePluginLauncher'
 import { usePluginFloatWindowsStore } from '../stores/pluginFloatWindows'
-import type { FloatWindowContent } from '../types/floatWindow'
-import { floatWindowId } from '../types/floatWindow'
+import type { FloatWindowContent, PreviewOpenMode } from '../types/floatWindow'
+import { floatWindowId, resolvePreviewOpenMode } from '../types/floatWindow'
 import { settings } from './useSettings'
 import { useTabLifecycle } from './useTabLifecycle'
 import { setMcSender } from './useMissionControlState'
@@ -127,6 +127,10 @@ export function useAppCore(options: AppCoreOptions) {
     return leaf && paneKind(leaf) === 'terminal' ? leaf : null
   })
   const hasActiveTerminalLeaf = computed(() => activeTerminalLeaf.value !== null)
+  /** Terminal leaf the built-in file-browser float window binds to; null when
+   *  the active context is not a terminal pane (split-pane previews, plugin
+   *  tabs). */
+  const activeTerminalSourcePane = computed(() => activeTerminalLeaf.value?.paneId ?? null)
   const activeKeyboardProvider = computed(() => {
     const providerId = resolveActiveKeyboardProvider(appSettings.mobile_input_mode)
     return keyboardProviders.value.get(providerId)
@@ -607,7 +611,12 @@ export function useAppCore(options: AppCoreOptions) {
     window.location.reload()
   }
 
-  function openOrFocusPreview(kind: 'files' | 'web') {
+  interface PreviewOpenPayload {
+    path?: string
+    url?: string
+  }
+
+  function openOrFocusPreview(kind: 'files' | 'web', payload: PreviewOpenPayload = {}) {
     const tabId = activePaneId.value
     if (!tabId) return
     const tab = tabs.value.find((t) => t.paneId === tabId)
@@ -619,8 +628,9 @@ export function useAppCore(options: AppCoreOptions) {
       splitPane.focusPane(existing.paneId)
       return
     }
-    const payload: { path?: string; url?: string } = kind === 'files' ? { path: tab.cwd || '' } : {}
-    void splitPane.insertNonTerminalPane(kind, payload)
+    const insert: PreviewOpenPayload =
+      kind === 'files' ? { path: payload.path ?? (tab.cwd || '') } : { url: payload.url }
+    void splitPane.insertNonTerminalPane(kind, insert)
   }
 
   async function openPluginPane(pluginId: string): Promise<boolean> {
@@ -822,6 +832,41 @@ export function useAppCore(options: AppCoreOptions) {
   function openPreviewFloat(content: FloatWindowContent): void {
     previewFloatContents[floatWindowId(content)] = content
     floatWindows.open(floatWindowId(content))
+  }
+
+  function previewOpenModePref(kind: 'files' | 'web'): PreviewOpenMode {
+    return settings.preview_open_modes?.[kind] ?? 'split'
+  }
+
+  /** Open the built-in file/web preview, honoring the per-kind preference (and
+   *  falling back to a split pane on touch). 'floating' opens a draggable
+   *  window; files floats bind to the active terminal session. */
+  function openPreview(
+    kind: 'files' | 'web',
+    payload: PreviewOpenPayload = {},
+    explicit?: PreviewOpenMode
+  ) {
+    const mode = resolvePreviewOpenMode(explicit, previewOpenModePref(kind), isTouchDevice())
+    if (mode !== 'floating') {
+      openOrFocusPreview(kind, payload)
+      return
+    }
+    if (kind === 'files') {
+      const sourcePaneId = activeTerminalSourcePane.value
+      if (!sourcePaneId) {
+        toast?.warning(t('previewPanel.needActiveTerminal'))
+        return
+      }
+      const tab = activeTab.value
+      const cwd = tab && tab.type === 'terminal' ? tab.cwd ?? '' : ''
+      openPreviewFloat({
+        kind: 'files',
+        sourcePaneId,
+        initialPath: payload.path ?? (cwd || undefined),
+      })
+      return
+    }
+    openPreviewFloat({ kind: 'web', initialUrl: payload.url })
   }
 
   // ─── Save as Template dialog ───────────────────────────────────────
@@ -1027,6 +1072,7 @@ export function useAppCore(options: AppCoreOptions) {
     onPreviewLink,
     reloadApp,
     openOrFocusPreview,
+    openPreview,
     onFileClick,
     onTerminalInsertPath,
     onTerminalInsertText,

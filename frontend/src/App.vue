@@ -86,7 +86,7 @@
                 type="button"
                 class="preview-menu-item"
                 role="menuitem"
-                @click="((previewMenuOpen = false), openOrFocusPreview('files'))"
+                @click="((previewMenuOpen = false), openPreview('files'))"
               >
                 <FolderTree :size="14" />
                 <span>{{ t('previewPanel.switchFiles') }}</span>
@@ -95,7 +95,7 @@
                 type="button"
                 class="preview-menu-item"
                 role="menuitem"
-                @click="((previewMenuOpen = false), openOrFocusPreview('web'))"
+                @click="((previewMenuOpen = false), openPreview('web'))"
               >
                 <Globe :size="14" />
                 <span>{{ t('previewPanel.switchWeb') }}</span>
@@ -608,7 +608,7 @@ const {
   openSaveTemplateDialog,
   templatePickerVisible,
   splitPane,
-  openOrFocusPreview,
+  openPreview,
   reloadApp,
   onTokenChanged,
   onLoginSuccess,

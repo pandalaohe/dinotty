@@ -71,6 +71,38 @@
     </div>
 
     <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('settings.group.previews') }}</h3>
+
+      <section class="settings-section">
+        <div class="settings-row">
+          <label>{{ t('previewPanel.switchFiles') }}</label>
+          <select
+            class="shortcut-input"
+            style="flex: 1"
+            :value="previewOpenModeValue('files')"
+            @change="onPreviewOpenModeChange('files', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="split">{{ t('settings.previewOpenMode.split') }}</option>
+            <option value="floating">{{ t('settings.previewOpenMode.floating') }}</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label>{{ t('previewPanel.switchWeb') }}</label>
+          <select
+            class="shortcut-input"
+            style="flex: 1"
+            :value="previewOpenModeValue('web')"
+            @change="onPreviewOpenModeChange('web', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="split">{{ t('settings.previewOpenMode.split') }}</option>
+            <option value="floating">{{ t('settings.previewOpenMode.floating') }}</option>
+          </select>
+        </div>
+        <p class="settings-hint">{{ t('settings.previewOpenMode.hint') }}</p>
+      </section>
+    </div>
+
+    <div class="settings-group">
       <h3 class="settings-group-title">{{ t('settings.group.security') }}</h3>
 
       <section class="settings-section">
@@ -702,6 +734,15 @@ const wsBadgeModeOptions = computed(() => [
 
 function onWsBadgeModeChange(value: string) {
   settings.workspace_badge_mode = value as WorkspaceBadgeMode
+  saveSettings()
+}
+
+type PreviewPaneKind = 'files' | 'web'
+function previewOpenModeValue(kind: PreviewPaneKind): string {
+  return settings.preview_open_modes?.[kind] ?? 'split'
+}
+function onPreviewOpenModeChange(kind: PreviewPaneKind, mode: string) {
+  settings.preview_open_modes = { ...settings.preview_open_modes, [kind]: mode as 'split' | 'floating' }
   saveSettings()
 }
 

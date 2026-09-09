@@ -7,6 +7,7 @@ import { canonicalizeSystemKeyboard } from '../utils/systemKeyboardLayout'
 import type { KeyboardGuardMode } from '../utils/keyboardGuardMode'
 import type { KeyBinding } from './useKeybindings'
 import type { SavedTheme } from './useDeviceThemeSelection'
+import type { PreviewOpenMode } from '../types/floatWindow'
 export type WorkspaceBadgeMode = 'off' | 'tab' | 'icon' | 'both'
 /** 'builtin' | 'system' 为宿主键盘；其余字符串为键盘插件 id（keyboard-plugin-design.md §3.2C） */
 export type MobileInputMode = 'builtin' | 'system' | (string & {})
@@ -138,6 +139,9 @@ export interface SettingsData {
   preview: {
     allow_external: boolean
   }
+  /** How the built-in file/web preview opens from the toolbar/palette; absent
+   *  key = 'split'. Session-persistent only (server schema has no field). */
+  preview_open_modes?: Partial<Record<'files' | 'web', PreviewOpenMode>>
   keybindings: Record<string, KeyBinding>
   log: LogConfig
   ssh_profiles: SshProfile[]
