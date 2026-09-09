@@ -368,6 +368,7 @@
   <PluginFloatWindowHost
     v-if="authenticated"
     :get-plugin-context="getPluginContext"
+    :get-preview-content="getPreviewFloatContent"
     :workspace-id="activeWorkspaceId ?? undefined"
   />
 </template>
@@ -632,6 +633,7 @@ const {
   revealPane,
   getSendFn,
   getPluginContext,
+  getPreviewFloatContent,
   openPlugin,
   syncWs,
   sshAuthVisible,

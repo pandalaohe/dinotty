@@ -37,6 +37,8 @@ import { getIsAppForeground, onAppForegroundGain } from './useAppForeground'
 import { usePluginLoader, handlePluginChanged } from './usePluginLoader'
 import { usePluginLauncher } from './usePluginLauncher'
 import { usePluginFloatWindowsStore } from '../stores/pluginFloatWindows'
+import type { FloatWindowContent } from '../types/floatWindow'
+import { floatWindowId } from '../types/floatWindow'
 import { settings } from './useSettings'
 import { useTabLifecycle } from './useTabLifecycle'
 import { setMcSender } from './useMissionControlState'
@@ -793,6 +795,35 @@ export function useAppCore(options: AppCoreOptions) {
     openPane: openPluginPane,
   })
 
+  // ── Built-in preview floats (files/web) ─────────────────────────────
+  // Open ids are 'float:files' / 'float:web' (single window per kind). The
+  // rendered content lives here so the host layer can resolve — and drop — it.
+  const previewFloatContents = shallowReactive<Record<string, FloatWindowContent>>({})
+
+  function isLiveTerminalLeaf(paneId: string): boolean {
+    for (const tab of tabs.value) {
+      if (tab.type !== 'terminal') continue
+      for (const leaf of getAllLeaves(tab.layout)) {
+        if (paneKind(leaf) === 'terminal' && leaf.paneId === paneId) return true
+      }
+    }
+    return false
+  }
+
+  function getPreviewFloatContent(id: string): FloatWindowContent | undefined {
+    const content = previewFloatContents[id]
+    if (!content) return undefined
+    // A files window is bound to a concrete terminal session; once that leaf is
+    // gone the window is meaningless — return undefined so the host closes it.
+    if (content.kind === 'files' && !isLiveTerminalLeaf(content.sourcePaneId)) return undefined
+    return content
+  }
+
+  function openPreviewFloat(content: FloatWindowContent): void {
+    previewFloatContents[floatWindowId(content)] = content
+    floatWindows.open(floatWindowId(content))
+  }
+
   // ─── Save as Template dialog ───────────────────────────────────────
   const saveTemplateVisible = ref(false)
   const saveTemplateSourceTabId = ref('')
@@ -1021,6 +1052,8 @@ export function useAppCore(options: AppCoreOptions) {
     pluginList,
     allCommands,
     openPlugin,
+    getPreviewFloatContent,
+    openPreviewFloat,
     isMobile,
     // cursor picker
     cursorPickerVisible: cursorPicker.cursorPickerVisible,
