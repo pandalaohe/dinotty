@@ -1,50 +1,96 @@
 import { isTauri, tauriInvoke } from './useTransport'
+import { activeServerId, LOCAL_SERVER_ID, relayPrefix } from './activeServer'
 
-const STORAGE_KEY = 'dinotty_auth_token'
+/** Legacy single-token key. Read once to migrate, then removed. */
+const LEGACY_STORAGE_KEY = 'dinotty_auth_token'
+/** Per-server token map: `{ [serverId]: token }`. */
+const SERVER_TOKENS_KEY = 'dinotty_server_tokens_v1'
 
 // Browser mode: cookie-based session (no token in localStorage).
 // Tauri mode: Bearer token in localStorage (tauri_fetch has no cookie jar).
-let loggedIn = false
+//
+// Both flags describe "the session at this origin", so they are scoped by
+// server: after switching to a remote server, the previous server's session
+// says nothing about the new one. Keyed by server id, not a single boolean.
+const loggedInServers = new Set<string>()
 // Session-authenticated with no bearer token: Tauri loopback-bypass, or a
 // desktop/web cookie session. setAuthToken() is never called on these paths,
 // so hasAuthToken() must not depend on a stored token alone.
-let sessionAuthed = false
+const sessionAuthedServers = new Set<string>()
 
 let cached = ''
 let inflight: Promise<string> | null = null
 
+function readTokenMap(): Record<string, string> {
+  let map: Record<string, string> = {}
+  try {
+    const raw = localStorage.getItem(SERVER_TOKENS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object') map = parsed as Record<string, string>
+    }
+    // One-time read-migrate: existing desktop users have a working token under
+    // the old flat key. Without this they would all be logged out on upgrade.
+    // Delete the legacy key afterwards — leaving it would resurrect the token
+    // on the next read after the user explicitly clears it.
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY)
+    if (legacy && !map[LOCAL_SERVER_ID]) {
+      map[LOCAL_SERVER_ID] = legacy
+      writeTokenMap(map)
+      localStorage.removeItem(LEGACY_STORAGE_KEY)
+    }
+  } catch {
+    return {}
+  }
+  return map
+}
+
+function writeTokenMap(map: Record<string, string>): void {
+  try {
+    localStorage.setItem(SERVER_TOKENS_KEY, JSON.stringify(map))
+  } catch {
+    /* storage unavailable — the token simply won't persist */
+  }
+}
+
 export function getAuthToken(): string {
-  if (!isTauri()) return loggedIn ? 'cookie' : ''
-  const stored = localStorage.getItem(STORAGE_KEY)
+  if (!isTauri()) return loggedInServers.has(activeServerId()) ? 'cookie' : ''
+  const stored = readTokenMap()[activeServerId()]
   return stored || ''
 }
 
 export function setAuthToken(token: string): void {
   if (!isTauri()) {
-    loggedIn = true
+    loggedInServers.add(activeServerId())
     return
   }
-  localStorage.setItem(STORAGE_KEY, token)
+  const map = readTokenMap()
+  map[activeServerId()] = token
+  writeTokenMap(map)
 }
 
 export function markCookieAuthenticated(): void {
-  sessionAuthed = true
-  if (!isTauri()) loggedIn = true
+  sessionAuthedServers.add(activeServerId())
+  if (!isTauri()) loggedInServers.add(activeServerId())
 }
 
 export function clearAuthToken(): void {
-  sessionAuthed = false
+  const id = activeServerId()
+  sessionAuthedServers.delete(id)
   if (!isTauri()) {
-    loggedIn = false
+    loggedInServers.delete(id)
     return
   }
-  localStorage.removeItem(STORAGE_KEY)
+  const map = readTokenMap()
+  delete map[id]
+  writeTokenMap(map)
 }
 
 export function hasAuthToken(): boolean {
-  if (sessionAuthed) return true
-  if (!isTauri()) return loggedIn
-  return !!localStorage.getItem(STORAGE_KEY)
+  const id = activeServerId()
+  if (sessionAuthedServers.has(id)) return true
+  if (!isTauri()) return loggedInServers.has(id)
+  return !!readTokenMap()[id]
 }
 
 export type ValidateTokenResult =
@@ -150,9 +196,62 @@ export async function getApiBase(): Promise<string> {
   return inflight
 }
 
+/**
+ * URL for a path on the *active* server.
+ *
+ * On the local server this is the bare path (the hub serves it directly); on a
+ * remote server the relay prefix routes it through the hub. All ~120 call
+ * sites go through here, so the prefix is added in exactly one place.
+ *
+ * `cached` is only ever set in Tauri mode (see `getApiBase`); the browser is
+ * same-origin, so a bare path is already correct.
+ */
 export function apiUrl(path: string): string {
   const p = path.startsWith('/') ? path : `/${path}`
+  return cached ? `${cached}${relayPrefix()}${p}` : `${relayPrefix()}${p}`
+}
+
+/**
+ * URL for a path that must always hit the hub itself, never the active
+ * upstream server — auth, the remote-server roster, probing.
+ */
+export function hubApiUrl(path: string): string {
+  const p = path.startsWith('/') ? path : `/${path}`
   return cached ? `${cached}${p}` : p
+}
+
+/** Origin of the hub serving this page, or `''` in the browser (same-origin). */
+export async function getHubBase(): Promise<string> {
+  return getApiBase()
+}
+
+/**
+ * Absolute `ws(s)://` URL for a path on the active server.
+ *
+ * Tauri uses the embedded server's origin; the browser is same-origin. The
+ * relay prefix carries WS through the hub just like HTTP.
+ *
+ * NOTE: this is synchronous, so in Tauri it can only use the origin once
+ * `getApiBase()` has resolved. **Callers in Tauri must `await getApiBase()`
+ * before calling this** (as `connectSyncWS` already does) — otherwise it falls
+ * back to `location.host`, which in Tauri is `tauri.localhost`, not the server.
+ */
+export function wsUrl(path: string): string {
+  const p = path.startsWith('/') ? path : `/${path}`
+  const full = `${relayPrefix()}${p}`
+  if (cached) return `${cached.replace(/^http/, 'ws')}${full}`
+  if (isTauri()) {
+    // `wsUrl` is synchronous (callers construct sockets from sync contexts) but
+    // the Tauri origin is only known after an async IPC call. Kick that off so
+    // the next call is correct; this one falls back to location.host.
+    try {
+      void getApiBase().catch(() => {})
+    } catch {
+      /* ignore */
+    }
+  }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${location.host}${full}`
 }
 
 export function authHeaders(): Record<string, string> {
