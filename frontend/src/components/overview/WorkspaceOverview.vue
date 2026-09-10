@@ -12,7 +12,6 @@
       :transition="{ duration: 0.2 }"
       tabindex="0"
       @click.self="$emit('close')"
-      @keydown="onKeydown"
     >
       <Motion
         key="ws-dual"
@@ -29,7 +28,13 @@
         >
           <X :size="18" />
         </button>
+        <ServerSwitcher
+          ref="serverSwitcherRef"
+          @close="$emit('close')"
+          @manage="onManageServers"
+        />
         <WorkspaceList
+          v-if="syncConnected"
           :workspaces="workspaces"
           :selected-id="selectedWorkspaceId"
           :active-id="activeWorkspaceId"
@@ -40,8 +45,24 @@
           @rename="onRenameWorkspace"
         />
         <div class="mc-right-panel">
-          <div v-if="selectedWorkspacePath" class="mc-right-path">{{ selectedWorkspacePath }}</div>
+          <div v-if="syncConnected && selectedWorkspacePath" class="mc-right-path">
+            {{ selectedWorkspacePath }}
+          </div>
+          <!-- Disconnected: the grid would show stale cards and every op would
+               be dropped, and the selection mirror is broadcast-only (see the
+               `selectedWorkspaceId` comment), so a local switch here would
+               never resolve. Offer the switcher instead. -->
+          <div v-if="!syncConnected" class="mc-offline">
+            <Unplug class="mc-offline-icon" :size="32" />
+            <p class="mc-offline-title">{{ t('server.disconnected') }}</p>
+            <p class="mc-offline-hint">{{ t('server.disconnectedHint') }}</p>
+            <button class="mc-offline-btn" @click="serverSwitcherRef?.openPop()">
+              <Server :size="14" />
+              <span>{{ t('server.switch') }}</span>
+            </button>
+          </div>
           <TabOverview
+            v-else
             ref="tabOverviewRef"
             :visible="true"
             :cards="filteredCards"
@@ -68,18 +89,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Motion, AnimatePresence } from 'motion-v'
-import { X } from 'lucide-vue-next'
+import { Server, Unplug, X } from 'lucide-vue-next'
 import { DEFAULT_WORKSPACE_ID, useWorkspaces } from '../../composables/useWorkspaces'
 import { useI18n } from '../../composables/useI18n'
 import { uiConfirm } from '../../composables/useConfirm'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useUiStore } from '../../stores/uiStore'
 import { useTabPreview, type TabCard } from '../../composables/useTabPreview'
 import { useMissionControlState, sendMcOp } from '../../composables/useMissionControlState'
 import { getAllLeaves } from '../../types/pane'
 import type { Workspace } from '../../types/workspace'
 import WorkspaceList from './WorkspaceList.vue'
+import ServerSwitcher from './ServerSwitcher.vue'
 import TabOverview from './TabOverview.vue'
 import CreateWorkspaceDialog from '../ui/CreateWorkspaceDialog.vue'
 import { shallowReactive } from 'vue'
@@ -106,11 +129,18 @@ const { workspaces, defaultWorkspace, activeWorkspaceId, matchWorkspace, deleteW
   useWorkspaces()
 const { t } = useI18n()
 const session = useSessionStore()
+const ui = useUiStore()
 const tabPreview = useTabPreview()
 const mcState = useMissionControlState()
 
+// The workspace/tab grid is rebuilt from the active server's state; while the
+// sync WS is down there is nothing to render and nothing to drive it, so the
+// grid is replaced by the disconnected panel + switcher escape hatch.
+const syncConnected = computed(() => ui.syncConnected)
+
 const closing = ref(false)
 const backdropRef = ref<any>(null)
+const serverSwitcherRef = ref<InstanceType<typeof ServerSwitcher> | null>(null)
 const tabOverviewRef = ref<InstanceType<typeof TabOverview> | null>(null)
 const showCreateDialog = ref(false)
 const renamingWorkspace = ref<Workspace | null>(null)
@@ -120,6 +150,33 @@ const switchDirection = ref<'left' | 'right'>('right')
 // means the default workspace (`__default__`). Local mutation is intentionally
 // forbidden - all changes come from `selection_changed` broadcasts.
 const selectedWorkspaceId = computed(() => mcState.selectedWorkspaceId ?? DEFAULT_WORKSPACE_ID)
+
+// The overlay is the only keyboard surface while MC is open.
+//
+// This is a document listener rather than a `keydown` binding on the container:
+// the overlay holds `tabindex="0"`, but clicking any child moves focus there,
+// so after mouse use an overlay-level binding never fires and the shortcuts go
+// dead. Scoping by `backdrop.contains(e.target)` also keeps the global
+// touchscreen keyboard (rendered outside this component) out of it.
+onMounted(() => {
+  document.addEventListener('keydown', onDocKeydown)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onDocKeydown)
+})
+
+function onDocKeydown(e: KeyboardEvent) {
+  const backdrop = backdropRef.value?.$el as HTMLElement | undefined
+  if (!props.visible || !backdrop || !backdrop.contains(e.target as Node)) return
+  onKeydown(e)
+}
+
+function onManageServers() {
+  // Close MC first: the overlay sits above the settings panel, and
+  // `switchServer` re-opens MC on the new server via the backend broadcast.
+  emit('close')
+  window.dispatchEvent(new CustomEvent('dinotty:open-settings'))
+}
 
 // Capture all cards when visible — deferred so overlay renders first
 const allCards = ref<TabCard[]>([])
@@ -289,6 +346,18 @@ function onNewTabForSelected() {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  // While the server popover is open the switcher owns the keyboard: it
+  // binds Up/Down/Enter/Esc itself (and stops propagation for them), but `s`
+  // and `n` would otherwise re-trigger here. `Escape` must not fall through
+  // to the Cancel op below either - that would close MC server-side too.
+  if (serverSwitcherRef.value?.open) {
+    if (e.key === 's' || e.key === 'Escape') {
+      e.preventDefault()
+      serverSwitcherRef.value.close()
+    }
+    return
+  }
+
   switch (e.key) {
     case 'ArrowUp':
       // Workspace nav: previous workspace. Backend cycles through
@@ -312,6 +381,16 @@ function onKeydown(e: KeyboardEvent) {
       if (!e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         onNewTabForSelected()
+      }
+      break
+    case 's':
+      // Server switcher. Device-level local view state, deliberately not an
+      // McOp: the roster and the active server belong to this device, not to
+      // the server's own MissionControlState. Also the escape hatch when the
+      // sync WS is down (the grid is replaced by the disconnected panel).
+      if (!e.metaKey && !e.ctrlKey) {
+        e.preventDefault()
+        serverSwitcherRef.value?.openPop()
       }
       break
     case 'Delete':

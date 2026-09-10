@@ -747,6 +747,17 @@ export default {
   'workspace.noUngrouped': 'All terminals are in workspaces',
   'workspace.newTerminal': 'New Terminal',
   'workspace.back': 'Back',
+  // ── Server switcher (Mission Control) ──
+  'server.local': 'This device',
+  'server.unknown': 'Unknown server',
+  'server.switch': 'Switch server',
+  'server.manage': 'Manage servers…',
+  'server.loading': 'Loading servers…',
+  'server.listUnavailable': 'Server list unavailable on this host.',
+  'server.tokenConfigured': 'Token configured',
+  'server.disconnected': 'Not connected',
+  'server.disconnectedHint':
+    'Lost contact with this server. Switch to another one, or wait for it to come back.',
   'settings.tab.about': 'About',
   'settings.tab.security': 'Security',
   'security.sessions': 'Active Sessions',

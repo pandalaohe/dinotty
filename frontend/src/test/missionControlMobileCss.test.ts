@@ -43,4 +43,31 @@ describe('mission control mobile layout', () => {
   it('provides a 44px close-button touch target inside the mobile override', () => {
     expect(mobileCss).toMatch(/\.mc-close-btn\s*{[^}]*width:\s*44px;[^}]*height:\s*44px;/s)
   })
+
+  it('gives the server bar its own row above the chip row', () => {
+    expect(mobileCss).toMatch(/\.mc-srv-bar\s*{[^}]*position:\s*static;/s)
+    expect(mobileCss).toMatch(/\.mc-srv-bar\s*{[^}]*height:\s*36px;/s)
+    // Same reservation the chip row makes: right: 8px + 44px + 4px.
+    expect(mobileCss).toMatch(/\.mc-srv-bar\s*{[^}]*padding-right:\s*56px;/s)
+  })
+
+  it('un-indents the bar row and keeps the chip row reachable on mobile', () => {
+    // Both halves must be scoped by the adjacent sibling selector. `.mc-ws-list`
+    // is also used inside the file-preview float window, which renders no
+    // server bar - an unscoped override here would hit the float window too,
+    // and the bare `.mc-ws-list` rule must keep `padding-right: 56px` (asserted
+    // above) because the float window relies on it.
+    expect(mobileCss).toMatch(/\.mc-srv-bar\s*\+\s*\.mc-ws-list\s*{[^}]*padding-top:\s*0;/s)
+    expect(mobileCss).toMatch(
+      /\.mc-srv-bar\s*\+\s*\.mc-ws-list\s+\.mc-ws-list-scroll\s*{[^}]*padding-top:\s*4px;/s
+    )
+    expect(mobileCss).not.toMatch(/^\s*\.mc-ws-list\s*{[^}]*padding-top:/sm)
+  })
+
+  it('turns the server popover into a bottom sheet with 44px rows', () => {
+    expect(mobileCss).toMatch(/\.mc-srv-pop\s*{[^}]*bottom:\s*0;/s)
+    expect(mobileCss).toMatch(/\.mc-srv-pop\s*{[^}]*border-radius:\s*14px 14px 0 0;/s)
+    expect(mobileCss).toMatch(/\.mc-srv-item\s*{[^}]*height:\s*44px;/s)
+    expect(mobileCss).toMatch(/\.mc-srv-action\s*{[^}]*height:\s*44px;/s)
+  })
 })
