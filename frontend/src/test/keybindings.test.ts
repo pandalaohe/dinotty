@@ -35,6 +35,7 @@ const APP_DEFAULTS = [
   ['addCursorsInFiles', 'l', true, false],
   ['switchTab', '1', false, true],
   ['missionControl', 'm', true, false],
+  ['switchServer', 's', true, false],
   ['superviseTabs', '`', false, false],
   ['sshConnect', 'n', true, false],
   ['fontSizeUp', '=', true, false],
@@ -92,10 +93,10 @@ describe('unified keybindings', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps the 22 app defaults and persisted shape unchanged', () => {
+  it('keeps the 23 app defaults and persisted shape unchanged', () => {
     const appDefs = keyBindingDefs.filter((def) => (def.kind ?? 'app') === 'app')
 
-    expect(appDefs).toHaveLength(22)
+    expect(appDefs).toHaveLength(23)
     expect(
       appDefs.map((def) => [
         def.id,
