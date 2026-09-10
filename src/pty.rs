@@ -826,6 +826,10 @@ mod tests {
         zshrc_contents, LocaleAdjustment,
     };
 
+    // Both callers are `#[cfg(unix)]`, so on other targets this helper is
+    // compiled but never called. Keeping it compiled (rather than gating it
+    // out) also keeps the `zshrc_contents` import above in use.
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn run_zshrc(
         home: &std::path::Path,
         zdotdir: &std::path::Path,
