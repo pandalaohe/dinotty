@@ -9,27 +9,33 @@
 //! either side, no remote-side auth change, and the upstream token never
 //! reaches JavaScript.
 //!
-//! **This module is a stub.** Every handler body returns 501. The gate
-//! predicate, the forwarding, and the header injection land separately.
+//! The relay is transparent: the same application protocol runs on both ends,
+//! so - unlike `/preview/` - it rewrites no URLs, injects no script and touches
+//! no policy headers. The only things it changes are the hop-by-hop headers,
+//! the credentials it substitutes, and the paths it refuses to carry at all.
 
 use axum::{
+    body::Body,
     extract::{ConnectInfo, Path, Request, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
 };
-use std::net::SocketAddr;
+use futures_util::StreamExt;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
-use crate::settings::SettingsState;
+use crate::auth::session::SessionStore;
+use crate::settings::{RemoteServer, SensitiveString, SettingsState};
 
 /// Reserved path prefix for relayed requests: `/__srv/<server id>/<rest>`.
 ///
-/// Must stay in sync with the two auth early-return lists
-/// (`crate::auth::auth_middleware` and the Tauri router's copy of the route
-/// table) - the relay handler owns its own gate, so the global middleware has
-/// to let these paths through untouched.
+/// Must stay in sync with the `/__srv/` early return in
+/// `crate::auth::auth_middleware` - the relay owns its own gate, so the global
+/// middleware has to let these paths through untouched. (Both hosts share that
+/// one middleware: the Tauri router calls into the same core function.)
 pub const RELAY_PREFIX: &str = "/__srv";
 
-/// Anti-CSRF header required on every non-idempotent relayed request.
+/// Anti-CSRF header required on every mutating relayed request.
 ///
 /// The relay holds *another server's credentials*, so it must not be drivable
 /// by a page the user merely happens to have open. A cross-origin `no-cors`
@@ -38,10 +44,6 @@ pub const RELAY_PREFIX: &str = "/__srv";
 /// This is strictly stronger than the `/preview/` rules, which tolerate
 /// header-less requests for `<img>`-style subresources.
 pub const RELAY_CSRF_HEADER: &str = "x-dinotty-relay";
-
-fn not_implemented() -> Response {
-    (StatusCode::NOT_IMPLEMENTED, "relay not implemented yet").into_response()
-}
 
 /// Split `/__srv/<id>/<rest>` into its server id and the remainder.
 ///
@@ -61,39 +63,351 @@ pub fn parse_relay_path(path: &str) -> Option<(&str, &str)> {
     }
 }
 
+/// Headers that describe *this* connection rather than the request's
+/// destination. RFC 7230 §6.1 requires a proxy to strip them in both
+/// directions; `proxy-` covers `Proxy-Authenticate`/`Proxy-Authorization`.
+fn is_hop_by_hop(name: &str) -> bool {
+    matches!(name, "connection" | "keep-alive" | "te" | "trailer" | "transfer-encoding" | "upgrade")
+        || name.starts_with("proxy-")
+}
+
+/// Whether a client header survives the hop to the upstream.
+///
+/// [`super::should_forward_header`] already drops `host` (the upstream URL
+/// decides it), `accept-encoding` (so the relay's own HTTP client, not the
+/// caller, controls compression) and the browser↔dinotty pair `origin` /
+/// `sec-fetch-*` - those describe the caller's relationship to *the hub*, and
+/// forwarding them would make a dinotty upstream judge a request that never
+/// came from a browser. On top of those the relay drops:
+///
+/// - `authorization`: the caller's credential is the hub's own; the upstream
+///   gets the roster token instead (see [`forward_http`]);
+/// - `content-length`: the body is streamed with an unknown size and reqwest
+///   frames it itself. A length header next to a stream is how a body gets
+///   truncated;
+/// - [`RELAY_CSRF_HEADER`]: hub-internal signalling, not the upstream's
+///   business.
+fn should_forward_header(name: &str) -> bool {
+    !is_hop_by_hop(name)
+        && name != RELAY_CSRF_HEADER
+        && !matches!(name, "authorization" | "content-length")
+        && super::should_forward_header(name)
+}
+
+/// Methods that must carry [`RELAY_CSRF_HEADER`].
+///
+/// The exempt set is the read-only one the frontend issues without any custom
+/// header; every other method can have a side effect on the upstream, so the
+/// caller has to prove it is not a cross-site `no-cors` request.
+fn needs_csrf_header(method: &Method) -> bool {
+    !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+}
+
+fn has_csrf_header(headers: &HeaderMap) -> bool {
+    headers
+        .get(RELAY_CSRF_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| !v.trim().is_empty())
+}
+
+/// Paths that must always resolve against the *hub*, never be relayed.
+///
+/// In browser mode `apiUrl('/api/auth')` becomes `/__srv/<id>/api/auth`, and
+/// relaying it would send the credentials to the upstream, which would set its
+/// session cookie for the *upstream's* origin while the page stays on the
+/// hub's - a login that looks like it worked and leaves the next request
+/// unauthenticated anyway. There is nothing to log into remotely regardless:
+/// the hub holds the upstream's token, so authentication always lands here.
+///
+/// `/api/auto-token` (loopback-only) and `/api/token-configured` (public) are
+/// hub endpoints by `auth_middleware`'s own lists, and `/api/token*` /
+/// `/api/tokens*` hand out the hub's credentials.
+fn is_hub_only_path(rest: &str) -> bool {
+    // A trailing slash must not turn an excluded path into a relayable one.
+    let path = rest.trim_end_matches('/');
+    path == "api/auth"
+        || path.starts_with("api/auth/")
+        || path == "api/token"
+        || path.starts_with("api/token/")
+        || path == "api/auto-token"
+        || path == "api/token-configured"
+        // `/api/tokens` and `/api/tokens/:id`. The bare `starts_with` also
+        // covers any future `api/tokens…` sibling, which is the safe side to
+        // err on.
+        || path.starts_with("api/tokens")
+}
+
+fn forbidden(msg: &str) -> Response {
+    (StatusCode::FORBIDDEN, msg.to_string()).into_response()
+}
+
+/// The relay's gate, in one place.
+///
+/// Order matters only for what the caller learns: the roster is consulted
+/// last, so an unauthenticated caller cannot probe which ids exist, and a
+/// *missing* id answers exactly like an id the roster no longer has.
+///
+/// The loopback test uses [`crate::auth::real_client_ip`]'s verdict rather
+/// than the raw peer address: behind a same-host tunnel every caller looks
+/// loopback, which is the vulnerability `real_client_ip` exists to close.
+///
+/// The rejection is boxed to keep the happy path small - `Response` is much
+/// wider than the `RemoteServer` it competes with - matching how
+/// [`super::extract_request`] reports its own failures.
+fn authorized_target(
+    req: &Request,
+    real_ip: IpAddr,
+    sessions: &SessionStore,
+    token: &str,
+    servers: &[RemoteServer],
+    id: &str,
+    rest: &str,
+) -> Result<RemoteServer, Box<Response>> {
+    if !real_ip.is_loopback() && !crate::auth::has_valid_auth(req, sessions, token) {
+        tracing::warn!(
+            "relay: reject {} {} from {real_ip} (no valid session or token)",
+            req.method(),
+            req.uri().path()
+        );
+        return Err(Box::new((StatusCode::UNAUTHORIZED, "relay: unauthorized").into_response()));
+    }
+
+    // Loopback is trusted, but not when the connection was scripted by a
+    // website in the local user's browser - the same rule `/preview/` applies.
+    if crate::auth::is_cross_site_browser_request(req.headers()) {
+        tracing::warn!(
+            "relay: reject cross-site browser request to {} (origin {:?})",
+            req.uri().path(),
+            req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok())
+        );
+        return Err(Box::new(forbidden("Cross-site requests are not allowed")));
+    }
+
+    if is_hub_only_path(rest) {
+        tracing::warn!("relay: refuse hub-only path {} (id {id})", req.uri().path());
+        return Err(Box::new(forbidden("This endpoint is not relayed; use it on the hub")));
+    }
+
+    if needs_csrf_header(req.method()) && !has_csrf_header(req.headers()) {
+        tracing::warn!(
+            "relay: reject {} {} without the {RELAY_CSRF_HEADER} header",
+            req.method(),
+            req.uri().path()
+        );
+        return Err(Box::new(forbidden("Missing X-Dinotty-Relay header")));
+    }
+
+    servers.iter().find(|s| s.id == id).cloned().ok_or_else(|| {
+        // Deliberately terse and identical to a malformed id: the roster is
+        // not the caller's to enumerate.
+        Box::new((StatusCode::NOT_FOUND, "Unknown server").into_response())
+    })
+}
+
+/// A roster `url` reduced to a scheme+authority origin.
+///
+/// The roster is documented as storing a normalized origin, but the relay does
+/// not take that on faith: it parses and rebuilds, so a hand-edited
+/// `settings.json` can neither smuggle a path into the target nor make the
+/// relay carry a `user:pass@` credential the roster never validated.
+fn upstream_origin(raw: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw.trim()).ok()?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return None;
+    }
+    if matches!(url.host_str(), None | Some("")) {
+        return None;
+    }
+    Some(url.origin().ascii_serialization())
+}
+
+/// The WebSocket URL for the same origin and remainder.
+///
+/// `origin` comes from [`upstream_origin`], so the scheme is always http(s)
+/// and the mapping to ws(s) is total.
+fn upstream_ws_url(origin: &str, rest: &str, query: Option<&str>) -> Option<String> {
+    let base = match origin.split_once("://") {
+        Some(("http", host)) => format!("ws://{host}"),
+        Some(("https", host)) => format!("wss://{host}"),
+        _ => return None,
+    };
+    let query = query.map_or(String::new(), |q| format!("?{q}"));
+    Some(format!("{base}/{rest}{query}"))
+}
+
+fn bad_gateway(msg: String) -> Response {
+    tracing::error!("relay: {msg}");
+    (StatusCode::BAD_GATEWAY, msg).into_response()
+}
+
 /// Forward a non-WebSocket relayed request to the roster server named in the
 /// path.
 ///
-/// B1 fills this body. It must:
-/// - reject unless `(loopback || has_valid_auth) && !is_cross_site_browser_request
-///   && target ∈ roster` (the gate lives here and nowhere else);
-/// - require [`RELAY_CSRF_HEADER`] on non-idempotent methods;
-/// - take the upstream origin from the roster, never from the request;
-/// - drop the client's own `Authorization` and inject the roster token;
-/// - refuse to relay `/api/auth*`, `/api/token*`, `/api/auto-token` and
-///   `/api/token-configured` - those must always resolve against the *hub*, or
-///   a login would set its cookie on the wrong origin.
+/// The gate is [`authorized_target`]; everything below it is transport.
 pub async fn relay_http_handler(
-    Path(_id): Path<String>,
-    State(_settings): State<SettingsState>,
-    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
-    _req: Request,
+    Path(id): Path<String>,
+    State(settings): State<SettingsState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(sessions): State<Arc<SessionStore>>,
+    State(auth_token): State<Arc<tokio::sync::RwLock<String>>>,
+    req: Request,
 ) -> Response {
-    not_implemented()
+    // The dispatcher already parsed this out of the same path; re-reading it
+    // here is what keeps one gate for all three `/__srv` route shapes.
+    let path = req.uri().path().to_string();
+    let Some((_, rest)) = parse_relay_path(&path) else {
+        return (StatusCode::BAD_REQUEST, "Malformed relay path").into_response();
+    };
+
+    let hub_token = auth_token.read().await.clone();
+    let (servers, real_ip) = {
+        let s = settings.read().await;
+        let ip = crate::auth::real_client_ip(req.headers(), addr.ip(), &s.auth.trusted_proxies);
+        (s.remote_servers.clone(), ip)
+    };
+
+    let target = match authorized_target(&req, real_ip, &sessions, &hub_token, &servers, &id, rest)
+    {
+        Ok(t) => t,
+        Err(denied) => return *denied,
+    };
+    let Some(origin) = upstream_origin(&target.url) else {
+        return bad_gateway(format!("server '{id}' has no usable http(s) url"));
+    };
+    // Empty upstream token means the upstream runs unauthenticated; injecting
+    // `Bearer ` there would only add a header that authenticates nothing.
+    let upstream_token = target.token.as_ref().map_or("", SensitiveString::expose);
+
+    forward_http(req, &origin, rest, upstream_token).await
+}
+
+/// Copy `req` to `origin/rest` and stream the answer back.
+///
+/// The body is streamed in both directions rather than buffered: the relayed
+/// traffic includes workspace uploads, and the buffered `/preview/` path's
+/// 10 MB ceiling does not exist on the hub's own upload route, so imposing it
+/// here would break exactly the calls the relay exists to carry.
+async fn forward_http(req: Request, origin: &str, rest: &str, upstream_token: &str) -> Response {
+    let query = req.uri().query().map_or(String::new(), |q| format!("?{q}"));
+    let Ok(target_url) = reqwest::Url::parse(&format!("{origin}/{rest}{query}")) else {
+        return (StatusCode::BAD_REQUEST, "Cannot build the upstream url").into_response();
+    };
+
+    let method = req.method().clone();
+    let is_event_stream = req
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/event-stream"));
+    let (parts, body) = req.into_parts();
+    let headers = parts.headers;
+    // `content-length: 0` is the only positive proof that there is nothing to
+    // forward. The inverse rule ("no length, no body") would silently drop the
+    // body of an HTTP/2 request, which may carry one with neither
+    // `content-length` nor `transfer-encoding`; the cost of erring the other
+    // way is one empty `chunked` frame on a bodyless request.
+    let has_body = headers.get(header::CONTENT_LENGTH).is_none_or(|v| v.as_bytes() != b"0");
+
+    // Both clients pin `redirect::Policy::none()`: following a redirect would
+    // let an upstream steer the hub at a host the roster never named. The
+    // streaming one is used for `text/event-stream`, which the 30s timeout on
+    // the regular client would cut off mid-stream.
+    let client =
+        if is_event_stream { &*super::HTTP_CLIENT_STREAMING } else { &*super::HTTP_CLIENT };
+    let mut proxy_req = client
+        .request(reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap(), target_url);
+    for (name, value) in &headers {
+        if !should_forward_header(name.as_str()) {
+            continue;
+        }
+        if let Ok(v) = value.to_str() {
+            proxy_req = proxy_req.header(name.as_str(), v);
+        }
+    }
+    if !upstream_token.is_empty() {
+        proxy_req = proxy_req.header(header::AUTHORIZATION, format!("Bearer {upstream_token}"));
+    }
+    if has_body {
+        proxy_req = proxy_req.body(reqwest::Body::wrap_stream(body.into_data_stream()));
+    }
+
+    let upstream = match proxy_req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return bad_gateway(format!("cannot reach {origin}: {e}"));
+        }
+    };
+    relay_response(upstream)
+}
+
+/// Hand the upstream's answer back, minus the hop-by-hop headers.
+///
+/// Straight copy otherwise: a dinotty upstream's `set-cookie`, `location` and
+/// `content-length` describe the same resources the caller asked for, and
+/// rewriting them would break the very identity the relay is preserving.
+fn relay_response(upstream: reqwest::Response) -> Response {
+    let mut builder = Response::builder().status(upstream.status().as_u16());
+    for (name, value) in upstream.headers() {
+        if is_hop_by_hop(name.as_str()) {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+    let stream = upstream.bytes_stream().map(|r| r.map_err(std::io::Error::other));
+    builder.body(Body::from_stream(stream)).unwrap()
 }
 
 /// Forward a relayed WebSocket upgrade.
 ///
-/// B1 fills this body. Reuse [`crate::proxy::proxy_websocket`], passing the
-/// roster token as its `inject_headers` argument so the upstream sees the
-/// credential the browser cannot set.
+/// Same gate as the HTTP path, run before anything is handed to
+/// [`super::proxy_websocket`]: that function's own `check_ws_origin` is
+/// currently stubbed to always allow (`crate::auth::check_ws_origin`), so it
+/// must not carry any of the relay's security weight.
 pub async fn relay_ws_handler(
-    Path(_id): Path<String>,
-    State(_settings): State<SettingsState>,
-    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
-    _req: Request,
+    Path(id): Path<String>,
+    State(settings): State<SettingsState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(sessions): State<Arc<SessionStore>>,
+    State(auth_token): State<Arc<tokio::sync::RwLock<String>>>,
+    req: Request,
 ) -> Response {
-    not_implemented()
+    let path = req.uri().path().to_string();
+    let Some((_, rest)) = parse_relay_path(&path) else {
+        return (StatusCode::BAD_REQUEST, "Malformed relay path").into_response();
+    };
+
+    let hub_token = auth_token.read().await.clone();
+    let (servers, allowed_origins, trusted_proxies, real_ip) = {
+        let s = settings.read().await;
+        let ip = crate::auth::real_client_ip(req.headers(), addr.ip(), &s.auth.trusted_proxies);
+        (
+            s.remote_servers.clone(),
+            s.auth.allowed_origins.clone(),
+            s.auth.trusted_proxies.clone(),
+            ip,
+        )
+    };
+
+    let target = match authorized_target(&req, real_ip, &sessions, &hub_token, &servers, &id, rest)
+    {
+        Ok(t) => t,
+        Err(denied) => return *denied,
+    };
+    let Some(origin) = upstream_origin(&target.url) else {
+        return bad_gateway(format!("server '{id}' has no usable http(s) url"));
+    };
+    let Some(ws_url) = upstream_ws_url(&origin, rest, req.uri().query()) else {
+        return bad_gateway(format!("cannot build a websocket url for '{id}'"));
+    };
+    // Injected last by `proxy_websocket`, so a `sec-websocket-*` header the
+    // caller happened to send cannot shadow the credential.
+    let inject_headers: Vec<(String, String)> =
+        match target.token.as_ref().map_or("", SensitiveString::expose) {
+            "" => Vec::new(),
+            t => vec![(header::AUTHORIZATION.to_string(), format!("Bearer {t}"))],
+        };
+
+    super::proxy_websocket(req, ws_url, &allowed_origins, &trusted_proxies, &inject_headers).await
 }
 
 /// Single entry point for all three `/__srv` route shapes
@@ -109,6 +423,8 @@ pub async fn relay_ws_handler(
 pub async fn relay_dispatch_handler(
     State(settings): State<SettingsState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(sessions): State<Arc<SessionStore>>,
+    State(auth_token): State<Arc<tokio::sync::RwLock<String>>>,
     req: Request,
 ) -> Response {
     let Some((id, _rest)) = parse_relay_path(req.uri().path()) else {
@@ -120,16 +436,38 @@ pub async fn relay_dispatch_handler(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
 
+    let path = Path(id.to_string());
     if is_websocket {
-        relay_ws_handler(Path(id.to_string()), State(settings), ConnectInfo(addr), req).await
+        relay_ws_handler(
+            path,
+            State(settings),
+            ConnectInfo(addr),
+            State(sessions),
+            State(auth_token),
+            req,
+        )
+        .await
     } else {
-        relay_http_handler(Path(id.to_string()), State(settings), ConnectInfo(addr), req).await
+        relay_http_handler(
+            path,
+            State(settings),
+            ConnectInfo(addr),
+            State(sessions),
+            State(auth_token),
+            req,
+        )
+        .await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::Settings;
+    use axum::extract::FromRef;
+    use axum::routing::any;
+    use axum::Router;
+    use tower::ServiceExt;
 
     #[test]
     fn parses_id_and_remainder() {
@@ -149,44 +487,412 @@ mod tests {
         assert_eq!(parse_relay_path("/__srvx/abc"), None);
     }
 
-    #[test]
-    fn the_stub_answers_501_rather_than_silently_succeeding() {
-        let resp = not_implemented();
-        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    // ── the gate ────────────────────────────────────────────────────────────
+
+    const HUB_TOKEN: &str = "hub-token";
+
+    fn roster() -> Vec<RemoteServer> {
+        vec![RemoteServer {
+            id: "abc".into(),
+            name: "A".into(),
+            url: "http://192.0.2.10:58901".into(),
+            token: Some(SensitiveString::new("upstream-token".into())),
+            ..RemoteServer::default()
+        }]
     }
 
-    /// The dispatcher has to accept all three route shapes, and axum's `Path`
-    /// extractor is the part that would break first: the wildcard route
-    /// declares two params, so a single-param `Path<String>` may or may not
-    /// deserialize. `Router::oneshot` is the only way to find out, since the
-    /// failure mode is a runtime 500 rather than a compile error.
-    #[tokio::test]
-    async fn every_relay_route_shape_dispatches() {
-        use axum::body::Body;
-        use axum::routing::any;
-        use axum::Router;
-        use tower::ServiceExt;
+    fn request(method: &str, path: &str) -> Request {
+        Request::builder().method(method).uri(path).body(Body::empty()).unwrap()
+    }
 
-        let state: crate::settings::SettingsState =
-            std::sync::Arc::new(tokio::sync::RwLock::new(crate::settings::Settings::default()));
-        let app = Router::new()
+    fn loopback() -> IpAddr {
+        "127.0.0.1".parse().unwrap()
+    }
+
+    /// Run the gate as the handlers do, with a fixed roster and token.
+    fn gate(req: &Request, ip: IpAddr, rest: &str) -> Result<RemoteServer, Box<Response>> {
+        let sessions = SessionStore::new(1);
+        authorized_target(req, ip, &sessions, HUB_TOKEN, &roster(), "abc", rest)
+    }
+
+    #[test]
+    fn a_loopback_read_only_request_is_allowed() {
+        let target = gate(&request("GET", "/__srv/abc/api/info"), loopback(), "api/info");
+        assert_eq!(target.unwrap().url, "http://192.0.2.10:58901");
+    }
+
+    #[test]
+    fn an_id_outside_the_roster_is_a_404() {
+        let sessions = SessionStore::new(1);
+        let resp = authorized_target(
+            &request("GET", "/__srv/nope/api/info"),
+            loopback(),
+            &sessions,
+            HUB_TOKEN,
+            &roster(),
+            "nope",
+            "api/info",
+        )
+        .unwrap_err();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The roster must not be enumerable by a caller that has not
+    /// authenticated: a known and an unknown id have to be indistinguishable,
+    /// so the auth failure must land before the lookup.
+    #[test]
+    fn an_unauthenticated_remote_caller_cannot_probe_the_roster() {
+        let remote: IpAddr = "192.0.2.7".parse().unwrap();
+        let sessions = SessionStore::new(1);
+        let mut statuses = Vec::new();
+        for id in ["abc", "nope"] {
+            let req = request("GET", &format!("/__srv/{id}/api/info"));
+            let resp =
+                authorized_target(&req, remote, &sessions, HUB_TOKEN, &roster(), id, "api/info")
+                    .unwrap_err();
+            statuses.push(resp.status());
+        }
+        assert_eq!(statuses, vec![StatusCode::UNAUTHORIZED, StatusCode::UNAUTHORIZED]);
+    }
+
+    #[test]
+    fn a_valid_bearer_token_authenticates_a_remote_caller() {
+        let remote: IpAddr = "192.0.2.7".parse().unwrap();
+        let req = Request::builder()
+            .method("GET")
+            .uri("/__srv/abc/api/info")
+            .header(header::AUTHORIZATION, format!("Bearer {HUB_TOKEN}"))
+            .body(Body::empty())
+            .unwrap();
+        assert!(gate(&req, remote, "api/info").is_ok());
+    }
+
+    #[test]
+    fn a_wrong_bearer_token_does_not_authenticate_a_remote_caller() {
+        let remote: IpAddr = "192.0.2.7".parse().unwrap();
+        let req = Request::builder()
+            .method("GET")
+            .uri("/__srv/abc/api/info")
+            .header(header::AUTHORIZATION, "Bearer not-the-hub-token")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(gate(&req, remote, "api/info").unwrap_err().status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// A page the user merely has open must not be able to drive the relay,
+    /// loopback or not - the request is scriptable and the response readable.
+    #[test]
+    fn a_cross_site_browser_request_is_rejected() {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/__srv/abc/api/info")
+            .header(header::ORIGIN, "https://evil.example")
+            .header("sec-fetch-site", "cross-site")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(gate(&req, loopback(), "api/info").unwrap_err().status(), StatusCode::FORBIDDEN);
+    }
+
+    /// The Tauri webview and localhost dev servers are cross-origin to the
+    /// embedded server by design, and `is_cross_site_browser_request` exempts
+    /// them by origin. If that exemption ever went away the desktop app would
+    /// lose the relay entirely, so pin it here.
+    #[test]
+    fn local_origins_are_not_cross_site() {
+        for origin in ["tauri://localhost", "http://tauri.localhost", "http://localhost:5173"] {
+            let req = Request::builder()
+                .method("GET")
+                .uri("/__srv/abc/api/info")
+                .header(header::ORIGIN, origin)
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::empty())
+                .unwrap();
+            assert!(gate(&req, loopback(), "api/info").is_ok(), "{origin} must be exempt");
+        }
+    }
+
+    #[test]
+    fn a_mutating_request_needs_the_csrf_header() {
+        let bare = request("POST", "/__srv/abc/api/tabs");
+        assert_eq!(
+            gate(&bare, loopback(), "api/tabs").unwrap_err().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            gate(&request("DELETE", "/__srv/abc/api/tabs/1"), loopback(), "api/tabs/1")
+                .unwrap_err()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+
+        let signed = Request::builder()
+            .method("POST")
+            .uri("/__srv/abc/api/tabs")
+            .header(RELAY_CSRF_HEADER, "1")
+            .body(Body::empty())
+            .unwrap();
+        assert!(gate(&signed, loopback(), "api/tabs").is_ok(), "a signed write must proceed");
+    }
+
+    #[test]
+    fn read_only_methods_need_no_csrf_header() {
+        for method in ["GET", "HEAD", "OPTIONS"] {
+            assert!(!needs_csrf_header(&Method::from_bytes(method.as_bytes()).unwrap()));
+        }
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            assert!(needs_csrf_header(&Method::from_bytes(method.as_bytes()).unwrap()));
+        }
+    }
+
+    #[test]
+    fn an_empty_csrf_header_does_not_count() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/__srv/abc/api/tabs")
+            .header(RELAY_CSRF_HEADER, "")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(gate(&req, loopback(), "api/tabs").unwrap_err().status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Relaying a login would set the upstream's cookie on the upstream's
+    /// origin while the page stays on the hub's: it looks like it worked and
+    /// leaves the user unauthenticated.
+    #[test]
+    fn hub_only_paths_are_never_relayed() {
+        for rest in [
+            "api/auth",
+            "api/auth/",
+            "api/auth/request-code",
+            "api/auth/sessions",
+            "api/token",
+            "api/token/",
+            "api/token/abc",
+            "api/tokens",
+            "api/tokens/abc",
+            "api/auto-token",
+            "api/token-configured",
+        ] {
+            let resp = gate(&request("GET", "/__srv/abc/x"), loopback(), rest).unwrap_err();
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{rest} must not be relayed");
+        }
+        // …and the check must not swallow unrelated paths that share a prefix.
+        for rest in ["api/info", "api/authentication", "api/tokenizer"] {
+            assert!(!is_hub_only_path(rest), "{rest} is a normal relayed path");
+        }
+    }
+
+    // ── header handling ─────────────────────────────────────────────────────
+
+    #[test]
+    fn credentials_are_replaced_and_hop_by_hop_headers_dropped() {
+        assert!(
+            !should_forward_header("authorization"),
+            "the caller's token is not the upstream's"
+        );
+        assert!(!should_forward_header("content-length"), "the body is streamed, not measured");
+        assert!(!should_forward_header(RELAY_CSRF_HEADER), "hub-internal signalling");
+        for h in [
+            "host",
+            "connection",
+            "keep-alive",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "origin",
+            "sec-fetch-site",
+        ] {
+            assert!(!should_forward_header(h), "{h} must not reach the upstream");
+        }
+    }
+
+    #[test]
+    fn ordinary_request_headers_still_reach_the_upstream() {
+        for h in ["content-type", "accept", "user-agent", "cookie", "x-requested-with"] {
+            assert!(should_forward_header(h), "{h} must be forwarded");
+        }
+    }
+
+    #[test]
+    fn the_upstream_origin_is_rebuilt_rather_than_trusted() {
+        assert_eq!(
+            upstream_origin("http://192.168.1.5:8999"),
+            Some("http://192.168.1.5:8999".into())
+        );
+        // A stray path or trailing slash must not leak into the target.
+        assert_eq!(upstream_origin("http://h:1/"), Some("http://h:1".into()));
+        assert_eq!(upstream_origin("  http://h:1/base/  "), Some("http://h:1".into()));
+        // Credentials in the url are dropped, not carried.
+        assert_eq!(upstream_origin("http://user:pass@h:1"), Some("http://h:1".into()));
+        for bad in ["ws://h:1", "file:///etc/passwd", "h:1", ""] {
+            assert_eq!(upstream_origin(bad), None, "{bad} is not a usable origin");
+        }
+    }
+
+    #[test]
+    fn websocket_urls_mirror_the_upstream_scheme() {
+        assert_eq!(
+            upstream_ws_url("http://h:8999", "ws/sync", None),
+            Some("ws://h:8999/ws/sync".into())
+        );
+        assert_eq!(
+            upstream_ws_url("https://h", "ws/sync", Some("a=1")),
+            Some("wss://h/ws/sync?a=1".into())
+        );
+    }
+
+    // ── through the router ──────────────────────────────────────────────────
+
+    /// A stand-in for the hosts' `AppState`: the dispatcher only needs these
+    /// three pieces, and building a whole `AppState` in a unit test would tie
+    /// this file to every subsystem it carries.
+    #[derive(Clone)]
+    struct TestState {
+        settings: SettingsState,
+        sessions: Arc<SessionStore>,
+        token: Arc<tokio::sync::RwLock<String>>,
+    }
+
+    impl FromRef<TestState> for SettingsState {
+        fn from_ref(state: &TestState) -> Self {
+            state.settings.clone()
+        }
+    }
+
+    impl FromRef<TestState> for Arc<SessionStore> {
+        fn from_ref(state: &TestState) -> Self {
+            state.sessions.clone()
+        }
+    }
+
+    impl FromRef<TestState> for Arc<tokio::sync::RwLock<String>> {
+        fn from_ref(state: &TestState) -> Self {
+            state.token.clone()
+        }
+    }
+
+    fn app(servers: Vec<RemoteServer>) -> Router {
+        let settings = Settings { remote_servers: servers, ..Settings::default() };
+        let state = TestState {
+            settings: Arc::new(tokio::sync::RwLock::new(settings)),
+            sessions: Arc::new(SessionStore::new(1)),
+            token: Arc::new(tokio::sync::RwLock::new(HUB_TOKEN.to_string())),
+        };
+        Router::new()
             .route("/__srv/:id", any(relay_dispatch_handler))
             .route("/__srv/:id/", any(relay_dispatch_handler))
             .route("/__srv/:id/*rest", any(relay_dispatch_handler))
-            .with_state(state);
+            .with_state(state)
+    }
 
+    /// `ConnectInfo` is normally inserted by `into_make_service_with_connect_info`;
+    /// without it the extractor rejects and every test would see a 500.
+    fn from_loopback(method: &str, path: &str) -> Request {
+        let mut req = request(method, path);
+        req.extensions_mut().insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+        req
+    }
+
+    async fn status_of(app: &Router, req: Request) -> StatusCode {
+        app.clone().oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn every_relay_route_shape_reaches_the_gate() {
         for path in ["/__srv/abc", "/__srv/abc/", "/__srv/abc/api/info", "/__srv/abc/ws/sync"] {
-            let mut req = axum::http::Request::builder().uri(path).body(Body::empty()).unwrap();
-            // `ConnectInfo` is normally inserted by `into_make_service_with_connect_info`;
-            // without it the extractor rejects and we would be testing a 500, not the stub.
-            req.extensions_mut()
-                .insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
-            let resp = app.clone().oneshot(req).await.unwrap();
+            // The roster is empty, so an id can only fail the lookup - which
+            // is exactly the proof that the request was dispatched, parsed
+            // and gated rather than 404ed by axum's router.
             assert_eq!(
-                resp.status(),
-                StatusCode::NOT_IMPLEMENTED,
+                status_of(&app(Vec::new()), from_loopback("GET", path)).await,
+                StatusCode::NOT_FOUND,
                 "{path} did not reach the relay dispatcher"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn the_websocket_branch_runs_the_same_gate() {
+        // The gate must reject before the upgrade is handed to
+        // `proxy_websocket`, whose origin check is currently a stub.
+        let cross_site = Request::builder()
+            .method("GET")
+            .uri("/__srv/abc/ws/sync")
+            .header(header::UPGRADE, "websocket")
+            .header("connection", "Upgrade")
+            .header(header::ORIGIN, "https://evil.example")
+            .header("sec-fetch-site", "cross-site")
+            .body(Body::empty())
+            .unwrap();
+        let mut cross_site = cross_site;
+        cross_site
+            .extensions_mut()
+            .insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+        assert_eq!(status_of(&app(roster()), cross_site).await, StatusCode::FORBIDDEN);
+
+        let unknown = from_loopback("GET", "/__srv/nope/ws/sync");
+        let mut unknown = unknown;
+        unknown.headers_mut().insert(header::UPGRADE, "websocket".parse().unwrap());
+        assert_eq!(status_of(&app(roster()), unknown).await, StatusCode::NOT_FOUND);
+    }
+
+    /// The end-to-end case: `rest` becomes the upstream's path, the body
+    /// round-trips, and the upstream sees the roster's credential - not the
+    /// one the caller sent.
+    #[tokio::test]
+    async fn relays_to_the_roster_url_with_the_roster_token() {
+        async fn echo(uri: axum::http::Uri, headers: HeaderMap) -> String {
+            let auth = headers
+                .get(header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("<none>");
+            let csrf = headers.contains_key(RELAY_CSRF_HEADER);
+            format!("{}|{auth}|csrf={csrf}", uri)
+        }
+
+        // An ephemeral port, so this never collides with the user's running
+        // server (8999) or with a sibling test agent.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let upstream = Router::new().route("/*rest", any(echo));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, upstream).await;
+        });
+
+        let servers = vec![RemoteServer {
+            id: "abc".into(),
+            name: "A".into(),
+            url: format!("http://{addr}"),
+            token: Some(SensitiveString::new("upstream-token".into())),
+            ..RemoteServer::default()
+        }];
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/__srv/abc/api/echo?x=1")
+            .header(header::AUTHORIZATION, "Bearer hub-session-token")
+            .body(Body::empty())
+            .unwrap();
+        let mut req = req;
+        req.extensions_mut().insert(ConnectInfo("127.0.0.1:5000".parse::<SocketAddr>().unwrap()));
+
+        let resp = app(servers.clone()).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&body),
+            "/api/echo?x=1|Bearer upstream-token|csrf=false",
+            "the upstream must see the roster credential and the relayed path"
+        );
+
+        // An unauthenticated upstream gets no Authorization header at all.
+        let anonymous = vec![RemoteServer { token: None, ..servers[0].clone() }];
+        let req = from_loopback("GET", "/__srv/abc/api/echo");
+        let resp = app(anonymous).oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "/api/echo|<none>|csrf=false");
     }
 }
