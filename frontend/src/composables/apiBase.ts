@@ -1,5 +1,19 @@
 import { isTauri, tauriInvoke } from './useTransport'
-import { activeServerId, LOCAL_SERVER_ID, relayPrefix } from './activeServer'
+import { activeServerId, isLocalActive, LOCAL_SERVER_ID, relayPrefix } from './activeServer'
+
+/**
+ * Header the hub's relay demands on every mutating relayed request, mirroring
+ * `RELAY_CSRF_HEADER` in `src/proxy/relay.rs`.
+ *
+ * The relay carries *another server's* credentials, so it must not be drivable
+ * by any page the user happens to have open. `is_cross_site_browser_request`
+ * deliberately lets header-less requests through (that is what `<img>`-style
+ * `no-cors` subresources look like), which means a cross-origin
+ * `POST …/api/…` with `Content-Type: text/plain` — a simple request, so no
+ * preflight — could otherwise cause a side effect. A custom header cannot be
+ * set by such a request, so requiring one closes that path.
+ */
+const RELAY_CSRF_HEADER = 'X-Dinotty-Relay'
 
 /** Legacy single-token key. Read once to migrate, then removed. */
 const LEGACY_STORAGE_KEY = 'dinotty_auth_token'
@@ -108,6 +122,11 @@ export async function validateToken(token: string): Promise<ValidateTokenResult>
     if (!isTauri()) {
       ;(init as RequestInit).credentials = 'include'
     }
+    // Deliberately *not* `authFetch`: `/api/auth` is in the relay's
+    // `is_hub_only_path` list, so `apiUrl`'s prefix is never carried upstream
+    // and this always resolves against the hub. No `X-Dinotty-Relay` header —
+    // nothing on that path checks it. Same for every other `fetch` in this
+    // file (`/api/token-configured`, `/api/auto-token`, `/api/auth/request-code`).
     const res = await fetch(apiUrl('/api/auth'), init)
     if (res.ok) {
       setAuthToken(token)
@@ -260,20 +279,48 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+/**
+ * The CSRF header for a request going through the relay, or `{}` when none is
+ * needed.
+ *
+ * Two conditions, both load-bearing:
+ *
+ * - **The active server must not be local.** Only relayed requests reach
+ *   `relay.rs`'s check. On the local server the header would be meaningless
+ *   (nothing reads it) and adding it unconditionally would change the bytes on
+ *   the wire for the common case — and for every existing test.
+ * - **The method must be able to have a side effect.** The relay exempts
+ *   GET/HEAD/OPTIONS, which is the same read-only set: those are never gated,
+ *   so the header would only add noise (and, on a cross-origin GET, would turn
+ *   a simple request into a preflighted one for no benefit).
+ *
+ * `authFetch` calls this for every request it issues, including the ones that
+ * never reach the relay (see the hub-only paths in `relay.rs`): sending an
+ * unread header on those is harmless, and gating on the path here would
+ * duplicate the relay's exclusion list in a second place that could drift.
+ */
+export function relayCsrfHeaders(method: string | undefined): Record<string, string> {
+  if (isLocalActive()) return {}
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return {}
+  return { [RELAY_CSRF_HEADER]: '1' }
+}
+
 export async function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  const method = init?.method || 'GET'
+  const csrf = relayCsrfHeaders(method)
   if (isTauri()) {
     if (init?.body != null && typeof init.body !== 'string') {
       return new Response('desktop bridge does not support binary/multipart body', { status: 400 })
     }
-    const headers = Object.entries(authHeaders())
+    const entries: [string, string][] = [...Object.entries(authHeaders()), ...Object.entries(csrf)]
     if (init?.headers) {
       const h = new Headers(init.headers)
-      h.forEach((v, k) => headers.push([k, v]))
+      h.forEach((v, k) => entries.push([k, v]))
     }
     const resp = (await tauriInvoke('tauri_fetch', {
       url,
-      method: init?.method || 'GET',
-      headers,
+      method,
+      headers: entries,
       body: typeof init?.body === 'string' ? init.body : null,
     })) as { status: number; headers: [string, string][]; body: string }
     const bodyless =
@@ -283,7 +330,16 @@ export async function authFetch(url: string, init?: RequestInit): Promise<Respon
       headers: resp.headers,
     })
   }
-  return fetch(url, { ...init, credentials: 'include' })
+  // No header to add: pass `init` through exactly as before, so the local
+  // server's requests are byte-for-byte what they have always been.
+  if (csrf[RELAY_CSRF_HEADER] === undefined) {
+    return fetch(url, { ...init, credentials: 'include' })
+  }
+  // `Headers` normalizes names, so an explicitly-set `X-Dinotty-Relay` from the
+  // caller is detected however it was spelled and left alone.
+  const headers = new Headers(init?.headers)
+  if (!headers.has(RELAY_CSRF_HEADER)) headers.set(RELAY_CSRF_HEADER, '1')
+  return fetch(url, { ...init, credentials: 'include', headers })
 }
 
 export function wsUrlWithToken(url: string): string {
