@@ -37,6 +37,23 @@ function mountContent(content: FloatWindowContent) {
   })
 }
 
+class MemoryStorage {
+  private values = new Map<string, string>()
+  getItem(key: string) {
+    return this.values.get(key) ?? null
+  }
+  setItem(key: string, value: string) {
+    this.values.set(key, value)
+  }
+  removeItem(key: string) {
+    this.values.delete(key)
+  }
+  clear() {
+    this.values.clear()
+  }
+}
+vi.stubGlobal('localStorage', new MemoryStorage())
+
 describe('PluginFloatWindow built-in preview content', () => {
   beforeEach(() => {
     localStorage.clear()
