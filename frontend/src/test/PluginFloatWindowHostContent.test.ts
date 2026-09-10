@@ -23,6 +23,23 @@ import type { FloatWindowContent } from '../types/floatWindow'
 const fakeApi = { open: () => {} }
 const filesContent: FloatWindowContent = { kind: 'files', sourcePaneId: 'T-1', initialPath: '/work' }
 
+class MemoryStorage {
+  private values = new Map<string, string>()
+  getItem(key: string) {
+    return this.values.get(key) ?? null
+  }
+  setItem(key: string, value: string) {
+    this.values.set(key, value)
+  }
+  removeItem(key: string) {
+    this.values.delete(key)
+  }
+  clear() {
+    this.values.clear()
+  }
+}
+vi.stubGlobal('localStorage', new MemoryStorage())
+
 describe('PluginFloatWindowHost built-in preview content', () => {
   beforeEach(() => {
     localStorage.clear()
