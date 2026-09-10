@@ -179,9 +179,13 @@ export function useTabLifecycle(opts: TabLifecycleOptions): TabLifecycleState {
         await onSshConnectRef.value(result)
         return result.pane_id
       }
-      const effectiveCwd = useActiveFallback
-        ? (cwd ?? inheritedCwd ?? activeWorkspacePath.value)
-        : cwd
+      // When the server resolves the CWD from a source pane, do not also send a
+      // workspace path - the server prefers an explicit cwd and would ignore it.
+      const effectiveCwd = inheritedLocalPaneId
+        ? cwd
+        : useActiveFallback
+          ? (cwd ?? inheritedCwd ?? activeWorkspacePath.value)
+          : cwd
       const result = await apiCreateTab(effectiveCwd, argv, title, inheritedLocalPaneId)
       const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
       if (existing) {
