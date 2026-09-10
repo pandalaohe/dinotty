@@ -1105,7 +1105,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   `docs/notifications{,.en}.md`) + `9ed83361` (design). codex + Claude reviewer 2-round CLEAN; `cargo`/`pty::`
   green. Design: `docs/task-files/2607/260714_notify-url-injection_design.md`.
 - Theme export (readable ghostty-compatible file) — PR #149 merged (frontend-only, mocha-free; sits on the now-merged DT19); detail below.
-- Configurable quick-key toolbar (DT13) — never PR'd; work preserved in tag `recovery/dt13-quick-key` (detail: Pending recovery below).
+- Configurable quick-key toolbar (DT13) — **absorbed upstream**; no longer a local mod. Authoritative row: Contribution Index `system-keyboard-toolbar-customization`. Detail under Merged (were in-flight; kept as history).
 - Standalone "Uploads" settings group — SUPERSEDED by upstream filesFolders; decision pending; snapshot in branch `backup/dt6-pre-squash` (Pending recovery).
 - Catppuccin Mocha built-in theme (`26890fa6`) — fork-only, never upstreamed (excluded from #148/#149).
 - `.gitignore` local-only ignores — never upstreamed by design.
@@ -1392,15 +1392,26 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   `window.confirm()` no-ops on Tauri v2 macOS WKWebView; replaced 5 destructive confirm() sites with a
   Promise-based `composables/useConfirm.ts` helper driving `ConfirmModal`.
 - #135 DT17 font-preset — merged (maintainer hardened `7e3745c`).
+- DT13 configurable quick-key toolbar — `lifecycle=merged-upstream`, `absorption=absorbed`,
+  **equivalent** (same field and class names, later implementation). Authoritative row: Contribution
+  Index `system-keyboard-toolbar-customization`. Intent evidence, re-verified `2026-09-10`
+  (T260910-006): `990e1bc7` (`feat(mobile): customize system keyboard toolbar`, ours, `2026-08-13`,
+  PR #254 — CLOSED on GitHub, landed by direct push) is an ancestor of BOTH `custom` and
+  `upstream/dev`; `upstream/dev` carries `Settings.toolbar_quick_keys` (`src/settings/types/mod.rs`,
+  cap 5) plus the v9-migration field `system_toolbar_quick_keys`, `.mkb-toolbar-quick-strip`
+  (`frontend/src/components/keyboard/MobileKeyboard.vue`), the editing UI in
+  `frontend/src/components/settings/ActionKeyboardEditor.vue`, EN+ZH `settings.toolbarQuickKeys*`
+  copy, and its own tests. The original `861a5528` (`2026-07-07`) introduced those same two
+  identifiers; it is reachable only from tag `recovery/dt13-quick-key` and is NOT an ancestor of
+  `custom` or `upstream/dev` — superseded, nothing to replay. Exit condition met: no PR is owed and
+  the tag is droppable.
+  **Correction (`2026-09-10`)**: this entry sat under `## Pending recovery` reading "never PR'd,
+  verified absent in `upstream/dev`, must PR" for ~4 weeks after `990e1bc7` landed, while Contribution
+  Index row `system-keyboard-toolbar-customization` already recorded `merged-upstream`/`absorbed` as
+  of `2026-08-14`. The Index row was right; two prose sections were not updated with it. Lesson: an
+  absorption flip must sweep every prose restatement in the same edit, not just the Index row.
 
 ## Pending recovery (real local work NOT in upstream — must PR, do NOT lose)
-- Configurable quick-key toolbar (DT13 follow-up) — persisted `toolbar_quick_keys` (up to 5),
-  single-row `mkb-toolbar-quick-strip` + KeyboardTab editing UI. Commit `861a5528`, now preserved in
-  tag `recovery/dt13-quick-key` (its old branch `feature/dt6-input-autogrow` was pruned in the
-  2026-07-13 hygiene sweep — the tag holds the full branch tip `c3529279` incl 861a5528 + follow-ups).
-  Upstream #118 shipped only the FIXED toolbar; the CONFIGURABLE version was never PR'd (verified
-  absent in `upstream/dev`). Action: cut clean branch off `upstream/dev`, cherry-pick 861a5528
-  (+ follow-ups) from the tag, verify, open PR.
 - Upload standalone "Uploads" settings group (`7141fe9f`, only in `backup/dt6-pre-squash`) —
   SUPERSEDED: upstream reorganized uploads into its own "Files & Folders" (filesFolders) group.
   Decision pending: accept upstream org (drop) OR re-apply the standalone-Uploads preference via PR.
