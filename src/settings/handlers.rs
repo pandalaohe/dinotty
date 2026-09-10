@@ -56,6 +56,7 @@ pub async fn put_settings(
             &existing,
         );
         new_settings.active_workspace_id = existing.active_workspace_id.clone();
+        merge_remote_server_tokens(&mut new_settings, &existing);
     }
     match save_settings(&new_settings) {
         Ok(()) => {
@@ -66,6 +67,29 @@ pub async fn put_settings(
             error!("save settings: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         }
+    }
+}
+
+/// Merge the incoming remote-server roster with the stored one.
+///
+/// The list itself is a full replace - dropping an entry deletes it. Only the
+/// tokens are inherited, and only per matching `id`: `None` means the client
+/// never sent a `token` key (see [`RemoteServer::token`]), which is the normal
+/// case because GET uses `skip_serializing` and so never hands the secret back.
+/// `Some("")` is the explicit "clear this token" instruction and is left alone.
+///
+/// `has_token` is derived, never trusted: the client's value is overwritten
+/// here so it cannot drift from the merged token.
+pub(crate) fn merge_remote_server_tokens(incoming: &mut Settings, existing: &Settings) {
+    for srv in &mut incoming.remote_servers {
+        if srv.token.is_none() {
+            srv.token = existing
+                .remote_servers
+                .iter()
+                .find(|e| e.id == srv.id)
+                .and_then(|e| e.token.clone());
+        }
+        srv.refresh_has_token();
     }
 }
 

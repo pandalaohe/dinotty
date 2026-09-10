@@ -603,6 +603,18 @@ async fn main() {
             .route("/preview/:port", any(proxy::proxy_handler_root))
             .route("/preview/:port/", any(proxy::proxy_handler_root))
             .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))
+            // Hub relay to a roster server. One dispatcher serves all three
+            // shapes and splits HTTP from WebSocket on the Upgrade header; the
+            // gate lives inside the relay, not in auth_middleware (see the
+            // `/__srv/` early return there).
+            .route("/__srv/:id", any(proxy::relay_dispatch_handler))
+            .route("/__srv/:id/", any(proxy::relay_dispatch_handler))
+            .route("/__srv/:id/*rest", any(proxy::relay_dispatch_handler))
+            .route(
+                "/api/remote-servers",
+                get(settings::get_remote_servers).put(settings::put_remote_servers),
+            )
+            .route("/api/remote-servers/probe", post(settings::probe_remote_server))
             .route("/assets/*path", get(static_handler))
             .route("/icons/*path", get(icon_handler))
             .route("/manifest.json", get(manifest_handler))
