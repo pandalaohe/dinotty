@@ -7,6 +7,7 @@ import { canonicalizeSystemKeyboard } from '../utils/systemKeyboardLayout'
 import type { KeyboardGuardMode } from '../utils/keyboardGuardMode'
 import type { KeyBinding } from './useKeybindings'
 import type { SavedTheme } from './useDeviceThemeSelection'
+import type { PreviewOpenMode } from '../types/floatWindow'
 export type WorkspaceBadgeMode = 'off' | 'tab' | 'icon' | 'both'
 /** 'builtin' | 'system' 为宿主键盘；其余字符串为键盘插件 id（keyboard-plugin-design.md §3.2C） */
 export type MobileInputMode = 'builtin' | 'system' | (string & {})
@@ -138,6 +139,9 @@ export interface SettingsData {
   preview: {
     allow_external: boolean
   }
+  /** How the built-in file/web preview opens from the toolbar/palette; absent
+   *  key = 'split'. Session-persistent only (server schema has no field). */
+  preview_open_modes?: Partial<Record<'files' | 'web', PreviewOpenMode>>
   keybindings: Record<string, KeyBinding>
   log: LogConfig
   ssh_profiles: SshProfile[]
@@ -256,6 +260,10 @@ export interface PluginPrefsConfig {
   /** Overlay ids the user has turned off in the plugin tab (persistent). */
   hidden_overlays: string[]
   show_incompatible: boolean
+  /** Per-plugin open mode for component plugins; absent key = 'tab'. */
+  open_modes?: Record<string, 'tab' | 'floating' | 'pane'>
+  /** Per-plugin floating-window opacity (0.3–1); absent key = fully opaque. */
+  float_opacity?: Record<string, number>
 }
 
 export interface ActionKey {
@@ -507,7 +515,13 @@ export const settings = reactive<SettingsData>({
   theme: { preset: 'dark', custom: null },
   custom_themes: [],
   hidden_builtins: [],
-  plugin_prefs: { hidden_toolbar: [], hidden_overlays: [], show_incompatible: false },
+  plugin_prefs: {
+    hidden_toolbar: [],
+    hidden_overlays: [],
+    show_incompatible: false,
+    open_modes: {},
+    float_opacity: {},
+  },
   background: { mode: 'solid', color: null, opacity: 1.0, has_image: false },
   text: {
     font_size: 14,

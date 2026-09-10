@@ -16,170 +16,184 @@
     @click.capture="onAppMouseReplayCapture"
     @touchstart.capture="onAppTouchStartCapture"
   >
-    <TabBar
-      ref="tabBarRef"
-      :tabs="visibleTabList"
-      :active-pane-id="activePaneId"
-      :indicators="tabIndicators"
-      :plugins="pluginList"
-      :can-broadcast="canBroadcast"
-      :broadcast-active="isBroadcastActive"
-      :is-mobile="isMobile"
-      :current-tab-title="currentTabTitle"
-      :current-tab-index="currentTabIndex"
-      :active-workspace-abbr="activeWorkspaceAbbr"
-      :active-workspace-color="activeWorkspaceColor"
-      @activate="activateTab"
-      @close="requestCloseTab"
-      @close-tabs="onCloseTabsBulk"
-      @action="onNewMenuAction"
-      @reorder="reorderTab"
-      @merge-tab-into-pane="onMergeTabIntoPane"
-      @open-plugin="openPlugin"
-      @rename="onRenameTab"
-      @open-overview="openOverview"
-      @save-as-template="openSaveTemplateDialog"
-      @apply-template="templatePickerVisible = true"
-    >
-      <template #left>
-        <button
-          v-if="isBroadcastActive"
-          type="button"
-          class="tab-bar-icon-btn broadcast-btn"
-          :title="t('split.toggleBroadcast')"
-          @click="splitPane.toggleBroadcast()"
-          @touchend.prevent="splitPane.toggleBroadcast()"
-        >
-          <Radar :size="16" />
-        </button>
-      </template>
-      <template #right>
-        <div v-if="activeTabType === 'terminal'" class="preview-menu-wrap">
+    <div class="workbench" :class="workbenchClass" :style="workbenchStyle">
+      <TabBar
+        ref="tabBarRef"
+        :tabs="visibleTabList"
+        :active-pane-id="activePaneId"
+        :indicators="tabIndicators"
+        :plugins="pluginList"
+        :can-broadcast="canBroadcast"
+        :broadcast-active="isBroadcastActive"
+        :is-mobile="isMobile"
+        :current-tab-title="currentTabTitle"
+        :current-tab-index="currentTabIndex"
+        :active-workspace-abbr="activeWorkspaceAbbr"
+        :active-workspace-color="activeWorkspaceColor"
+        @activate="activateTab"
+        @close="requestCloseTab"
+        @close-tabs="onCloseTabsBulk"
+        @action="onNewMenuAction"
+        @reorder="reorderTab"
+        @merge-tab-into-pane="onMergeTabIntoPane"
+        @open-plugin="openPlugin"
+        @rename="onRenameTab"
+        @open-overview="openOverview"
+        @save-as-template="openSaveTemplateDialog"
+        @apply-template="templatePickerVisible = true"
+      >
+        <template #left>
+          <button
+            v-if="isBroadcastActive"
+            type="button"
+            class="tab-bar-icon-btn broadcast-btn"
+            :title="t('split.toggleBroadcast')"
+            @click="splitPane.toggleBroadcast()"
+            @touchend.prevent="splitPane.toggleBroadcast()"
+          >
+            <Radar :size="16" />
+          </button>
+        </template>
+        <template #right>
+          <div
+            v-if="activeTabType === 'terminal'"
+            ref="previewMenuWrapRef"
+            class="preview-menu-wrap"
+          >
+            <button
+              type="button"
+              class="tab-bar-icon-btn"
+              :class="{ 'is-active': previewMenuOpen }"
+              :title="t('app.preview')"
+              @click="previewMenuOpen = !previewMenuOpen"
+              @touchend.prevent="previewMenuOpen = !previewMenuOpen"
+            >
+              <Monitor :size="16" />
+            </button>
+            <div
+              v-if="previewMenuOpen"
+              class="preview-menu-backdrop"
+              @click="previewMenuOpen = false"
+              @contextmenu.prevent="previewMenuOpen = false"
+            ></div>
+            <div
+              v-if="previewMenuOpen"
+              class="preview-menu-dropdown"
+              :class="{ 'overflow-flip': previewMenuOverflowFlip }"
+              role="menu"
+            >
+              <button
+                type="button"
+                class="preview-menu-item"
+                role="menuitem"
+                @click="((previewMenuOpen = false), openPreview('files'))"
+              >
+                <FolderTree :size="14" />
+                <span>{{ t('previewPanel.switchFiles') }}</span>
+              </button>
+              <button
+                type="button"
+                class="preview-menu-item"
+                role="menuitem"
+                @click="((previewMenuOpen = false), openPreview('web'))"
+              >
+                <Globe :size="14" />
+                <span>{{ t('previewPanel.switchWeb') }}</span>
+              </button>
+            </div>
+          </div>
           <button
             type="button"
             class="tab-bar-icon-btn"
-            :class="{ 'is-active': previewMenuOpen }"
-            :title="t('app.preview')"
-            @click="previewMenuOpen = !previewMenuOpen"
-            @touchend.prevent="previewMenuOpen = !previewMenuOpen"
+            :title="t('app.reload')"
+            @click="reloadApp"
+            @touchend.prevent="reloadApp"
           >
-            <Monitor :size="16" />
+            <RefreshCw :size="16" />
           </button>
-          <div
-            v-if="previewMenuOpen"
-            class="preview-menu-backdrop"
-            @click="previewMenuOpen = false"
-            @contextmenu.prevent="previewMenuOpen = false"
-          ></div>
-          <div v-if="previewMenuOpen" class="preview-menu-dropdown" role="menu">
-            <button
-              type="button"
-              class="preview-menu-item"
-              role="menuitem"
-              @click="((previewMenuOpen = false), openOrFocusPreview('files'))"
-            >
-              <FolderTree :size="14" />
-              <span>{{ t('previewPanel.switchFiles') }}</span>
-            </button>
-            <button
-              type="button"
-              class="preview-menu-item"
-              role="menuitem"
-              @click="((previewMenuOpen = false), openOrFocusPreview('web'))"
-            >
-              <Globe :size="14" />
-              <span>{{ t('previewPanel.switchWeb') }}</span>
-            </button>
-          </div>
-        </div>
-        <button
-          type="button"
-          class="tab-bar-icon-btn"
-          :title="t('app.reload')"
-          @click="reloadApp"
-          @touchend.prevent="reloadApp"
-        >
-          <RefreshCw :size="16" />
-        </button>
-        <button
-          type="button"
-          class="tab-bar-icon-btn"
-          :title="t('app.settings')"
-          @click="settingsOpen = true"
-          @touchend.prevent="settingsOpen = true"
-        >
-          <Settings :size="16" />
-        </button>
-        <button
-          v-if="notif.notifications.value.length > 0 || notif.unreadAttentionCount.value > 0"
-          type="button"
-          class="tab-bar-icon-btn notif-btn"
-          :title="t('notification.title')"
-          @click="notif.togglePanel()"
-          @touchend.prevent="notif.togglePanel()"
-        >
-          <Bell :size="16" />
-          <span v-if="notif.unreadAttentionCount.value > 0" class="notif-badge">{{
-            notif.unreadAttentionCount.value > 9 ? '9+' : notif.unreadAttentionCount.value
-          }}</span>
-        </button>
-      </template>
-    </TabBar>
-
-    <div
-      id="tab-content"
-      @mousedown.capture="onTabContentMouseDownCapture"
-      @pointerdown.capture="onTabContentPointerDownCapture"
-      @touchstart.capture="onTabContentTouchStartCapture"
-      @touchend="onTerminalTouch"
-      @touchcancel.capture="onTabContentTouchCancelCapture"
-    >
-      <div
-        v-for="tab in tabs"
-        :key="tabKey(tab)"
-        class="tab-page"
-        :class="{
-          active: tab.paneId === activePaneId,
-        }"
-      >
-        <template v-if="tab.type === 'terminal'">
-          <SplitContainer
-            :layout="tab.layout"
-            :active-pane-id="tab.activePaneId"
-            :broadcast-mode="tab.broadcastMode"
-            :broadcast-activity="tab.broadcastActivity"
-            :allow-close="getAllLeaves(tab.layout).length > 1"
-            :tab-id="tab.paneId"
-            :is-visible="tab.paneId === activePaneId"
-            @register="registerTermRef"
-            @title-change="onTitleChange"
-            @shell-info="onShellInfo"
-            @focus="(id: string) => splitPane.focusPane(id)"
-            @close="(id: string) => onClosePane(tab.paneId, id)"
-            @input="(id: string, data: string) => splitPane.onTerminalInput(id, data)"
-            @file-click="onFileClick"
-            @preview-link="onPreviewLink"
-            @link-activate="onLinkActivate"
-            @split-horizontal="splitPane.splitPane('horizontal')"
-            @split-vertical="splitPane.splitPane('vertical')"
-            @toggle-broadcast="splitPane.toggleBroadcast()"
-            @new-local-terminal="
-              splitPane.splitPane('horizontal', true, activeWorkspacePath ?? undefined)
-            "
-            @reorder="
-              (src: string, tgt: string, pos: DropPosition) => splitPane.reorderPane(src, tgt, pos)
-            "
-            @drop-on-tab="
-              (srcTab: string, srcPane: string, dstTab: string, pos: DropPosition) =>
-                onDropOnTab(srcTab, srcPane, dstTab, pos)
-            "
-            @drop-extract="
-              (srcTab: string, srcPane: string, idx: number) => onDropExtract(srcTab, srcPane, idx)
-            "
-            @divider-drag-end="onDividerDragEnd(tab)"
-            @reconnect="onSshReconnect"
-          />
+          <button
+            type="button"
+            class="tab-bar-icon-btn"
+            :title="t('app.settings')"
+            @click="settingsOpen = true"
+            @touchend.prevent="settingsOpen = true"
+          >
+            <Settings :size="16" />
+          </button>
+          <button
+            v-if="notif.notifications.value.length > 0 || notif.unreadAttentionCount.value > 0"
+            type="button"
+            class="tab-bar-icon-btn notif-btn"
+            :title="t('notification.title')"
+            @click="notif.togglePanel()"
+            @touchend.prevent="notif.togglePanel()"
+          >
+            <Bell :size="16" />
+            <span v-if="notif.unreadAttentionCount.value > 0" class="notif-badge">{{
+              notif.unreadAttentionCount.value > 9 ? '9+' : notif.unreadAttentionCount.value
+            }}</span>
+          </button>
         </template>
+      </TabBar>
+
+      <div
+        id="tab-content"
+        @mousedown.capture="onTabContentMouseDownCapture"
+        @pointerdown.capture="onTabContentPointerDownCapture"
+        @touchstart.capture="onTabContentTouchStartCapture"
+        @touchend="onTerminalTouch"
+        @touchcancel.capture="onTabContentTouchCancelCapture"
+      >
+        <div
+          v-for="tab in tabs"
+          :key="tabKey(tab)"
+          class="tab-page"
+          :class="{
+            active: tab.paneId === activePaneId,
+          }"
+        >
+          <template v-if="tab.type === 'terminal'">
+            <SplitContainer
+              :layout="tab.layout"
+              :active-pane-id="tab.activePaneId"
+              :broadcast-mode="tab.broadcastMode"
+              :broadcast-activity="tab.broadcastActivity"
+              :allow-close="getAllLeaves(tab.layout).length > 1"
+              :tab-id="tab.paneId"
+              :workspace-id="tab.workspaceId"
+              :is-visible="tab.paneId === activePaneId"
+              @register="registerTermRef"
+              @title-change="onTitleChange"
+              @shell-info="onShellInfo"
+              @focus="(id: string) => splitPane.focusPane(id)"
+              @close="(id: string) => onClosePane(tab.paneId, id)"
+              @input="(id: string, data: string) => splitPane.onTerminalInput(id, data)"
+              @file-click="onFileClick"
+              @preview-link="onPreviewLink"
+              @link-activate="onLinkActivate"
+              @split-horizontal="splitPane.splitPane('horizontal')"
+              @split-vertical="splitPane.splitPane('vertical')"
+              @toggle-broadcast="splitPane.toggleBroadcast()"
+              @new-local-terminal="
+                splitPane.splitPane('horizontal', true, activeWorkspacePath ?? undefined)
+              "
+              @reorder="
+                (src: string, tgt: string, pos: DropPosition) =>
+                  splitPane.reorderPane(src, tgt, pos)
+              "
+              @drop-on-tab="
+                (srcTab: string, srcPane: string, dstTab: string, pos: DropPosition) =>
+                  onDropOnTab(srcTab, srcPane, dstTab, pos)
+              "
+              @drop-extract="
+                (srcTab: string, srcPane: string, idx: number) =>
+                  onDropExtract(srcTab, srcPane, idx)
+              "
+              @divider-drag-end="onDividerDragEnd(tab)"
+              @reconnect="onSshReconnect"
+            />
+          </template>
+        </div>
       </div>
     </div>
 
@@ -192,6 +206,7 @@
     <CommandPalette ref="paletteRef" :commands="paletteCommands" />
 
     <SettingsPanel
+      v-if="settingsMounted"
       :open="settingsOpen"
       @close="settingsOpen = false"
       @token-changed="onTokenChanged"
@@ -312,6 +327,7 @@
     />
 
     <WorkspaceOverview
+      v-if="overviewMounted"
       :visible="overviewOpen"
       :active-pane-id="activePaneId"
       :term-refs="termRefs"
@@ -349,10 +365,24 @@
     />
   </div>
   <PluginOverlayHost v-if="authenticated" :get-plugin-context="getPluginContext" />
+  <PluginFloatWindowHost
+    v-if="authenticated"
+    :get-plugin-context="getPluginContext"
+    :get-preview-content="getPreviewFloatContent"
+    :workspace-id="activeWorkspaceId ?? undefined"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import {
+  ref,
+  computed,
+  watch,
+  defineAsyncComponent,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+} from 'vue'
 import TabBar from './components/terminal/TabBar.vue'
 import CommandPalette from './components/command/CommandPalette.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
@@ -363,7 +393,7 @@ import NotificationPanel from './components/notification/NotificationPanel.vue'
 import DropPreview from './components/split/DropPreview.vue'
 import SplitContainer from './components/split/SplitContainer.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
-import SettingsPanel from './components/SettingsPanel.vue'
+const SettingsPanel = defineAsyncComponent(() => import('./components/SettingsPanel.vue'))
 import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
 import ConfirmModal from './components/ui/ConfirmModal.vue'
 import AlertModal from './components/ui/AlertModal.vue'
@@ -374,7 +404,10 @@ import MultiSelectPicker from './components/ui/MultiSelectPicker.vue'
 import SaveTemplateDialog from './components/ui/SaveTemplateDialog.vue'
 import TemplatePicker from './components/ui/TemplatePicker.vue'
 import PluginOverlayHost from './components/plugin/PluginOverlayHost.vue'
-import WorkspaceOverview from './components/overview/WorkspaceOverview.vue'
+import PluginFloatWindowHost from './components/plugin/PluginFloatWindowHost.vue'
+const WorkspaceOverview = defineAsyncComponent(
+  () => import('./components/overview/WorkspaceOverview.vue')
+)
 import MobileKeyboard from './components/keyboard/MobileKeyboard.vue'
 import SystemKeyboardToolbar from './components/keyboard/SystemKeyboardToolbar.vue'
 import MobileInputGuide from './components/keyboard/MobileInputGuide.vue'
@@ -382,6 +415,7 @@ import KbDebugOverlay from './components/keyboard/KbDebugOverlay.vue'
 import KbToggleButton from './components/keyboard/KbToggleButton.vue'
 import LoginPage from './components/LoginPage.vue'
 import SetupPage from './components/SetupPage.vue'
+import { useTabPlacement } from './composables/useTabPlacement'
 import { confirmState, confirmResolve, confirmCancel } from './composables/useConfirm'
 import { alertState, alertResolve } from './composables/useAlert'
 import { promptState, promptResolve, promptCancel } from './composables/usePrompt'
@@ -415,6 +449,7 @@ import { useSettingsStore } from './stores/settingsStore'
 import { useTabPersistence } from './composables/useTabPersistence'
 import { useDesktopLifecycle } from './composables/useDesktopLifecycle'
 import { useAppCore } from './composables/useAppCore'
+import { useSettingsSync } from './composables/useSettingsSync'
 import { useAppActions } from './composables/useAppActions'
 import { useAppKeyboard } from './composables/useAppKeyboard'
 import { useAppConnectivity } from './composables/useAppConnectivity'
@@ -437,11 +472,60 @@ const desktopLifecycle = useDesktopLifecycle({
 const toast = useToast()
 const notif = useNotification()
 
+// Owns the always-on settings side effects (theme/text/autosave/refetch-on-open)
+// so they survive SettingsPanel being lazy-mounted.
+useSettingsSync()
+
+// Lazy-mount the settings panel on first open; it stays mounted afterwards
+// (close is CSS-driven) so subsequent opens are instant.
+const settingsMounted = ref(false)
+watch(
+  () => ui.settingsOpen,
+  (v) => {
+    if (v) settingsMounted.value = true
+  }
+)
+
 // ── App-layer template refs & local dialog state ────────────────
 const windowCloseConfirmVisible = ref(false)
 const trayVisibilityDialogVisible = ref(false)
 const previewMenuOpen = ref(false)
 const lastTabCloseShortcutAt = ref(0)
+
+// ── Tab bar placement (device-scoped; never written to the server settings) ──
+const tabPlacement = useTabPlacement()
+const workbenchClass = computed(() => [
+  `placement-${tabPlacement.mode.value}`,
+  { 'is-vertical': tabPlacement.isVertical.value },
+])
+const workbenchStyle = computed(() => ({
+  '--tab-sidebar-width': `${tabPlacement.sidebarWidth.value}px`,
+}))
+
+// Vertical only: the preview menu opens sideways out of the sidebar. When the
+// window is too narrow for that, overlap the sidebar instead of overflowing.
+const PREVIEW_MENU_WIDTH = 180
+const previewMenuWrapRef = ref<HTMLElement | null>(null)
+const previewMenuOverflowFlip = ref(false)
+
+watch(previewMenuOpen, (open) => {
+  if (!open) return
+  void nextTick(() => {
+    const wrap = previewMenuWrapRef.value
+    if (!wrap || !tabPlacement.isVertical.value) {
+      previewMenuOverflowFlip.value = false
+      return
+    }
+    // The menu is anchored to the bar, not to its 30px button, so the bar's
+    // inner edge is what decides whether it fits outside the sidebar.
+    const rect = (wrap.closest('#tab-bar') ?? wrap).getBoundingClientRect()
+    previewMenuOverflowFlip.value =
+      tabPlacement.mode.value === 'right'
+        ? rect.left - PREVIEW_MENU_WIDTH < 0
+        : rect.right + PREVIEW_MENU_WIDTH > window.innerWidth
+  })
+})
+
 const appRootRef = ref<HTMLElement | null>(null)
 const tabBarRef = ref<InstanceType<typeof TabBar> | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
@@ -524,7 +608,7 @@ const {
   openSaveTemplateDialog,
   templatePickerVisible,
   splitPane,
-  openOrFocusPreview,
+  openPreview,
   reloadApp,
   onTokenChanged,
   onLoginSuccess,
@@ -549,6 +633,7 @@ const {
   revealPane,
   getSendFn,
   getPluginContext,
+  getPreviewFloatContent,
   openPlugin,
   syncWs,
   sshAuthVisible,
@@ -576,6 +661,13 @@ const {
   clearActiveReadContext,
   stopForegroundGainSubscription,
 } = core
+
+// Lazy-mount the Mission Control overview on first open; stays mounted
+// afterwards so re-opens are instant.
+const overviewMounted = ref(false)
+watch(overviewOpen, (v) => {
+  if (v) overviewMounted.value = true
+})
 
 const { paletteCommands, onGlobalKeydown, hostClipboardPaste } = actions
 
@@ -843,6 +935,12 @@ onBeforeUnmount(() => {
   align-items: center;
   height: 100%;
 }
+/* Vertically the wrapper is a 30px square in the control grid, so anchoring the
+ * menu to it would open it mid-sidebar. Going static hands the containing block
+ * to #tab-bar (already position: relative), i.e. the sidebar's own edges. */
+.is-vertical .preview-menu-wrap {
+  position: static;
+}
 .preview-menu-wrap .tab-bar-icon-btn.is-active {
   color: var(--fg-bright);
   background: var(--tab-hover-bg);
@@ -866,6 +964,43 @@ onBeforeUnmount(() => {
   padding: 4px 0;
   display: flex;
   flex-direction: column;
+}
+/* The menu opens downward by default; in the other three placements that would
+ * push it past the viewport edge, so flip it against the bar it hangs off. */
+.placement-bottom .preview-menu-dropdown {
+  top: auto;
+  bottom: 100%;
+}
+/* The vertical controls sit at the bottom of the sidebar, so growing downward
+ * from the button leaves the viewport. Anchor to the bar's bottom edge and grow
+ * upward, capped at the viewport on both axes. */
+.is-vertical .preview-menu-dropdown {
+  top: auto;
+  bottom: 0;
+  /* The containing block is the sidebar, so 100% is exactly the room above the
+   * anchored bottom edge — the menu can never exceed the bar's own height. */
+  max-height: 100%;
+  overflow-y: auto;
+  /* min-width would win over max-width and reintroduce the overflow. */
+  min-width: 0;
+  max-width: min(180px, calc(100vw - var(--tab-sidebar-width, 180px) - 16px));
+}
+.placement-left .preview-menu-dropdown {
+  left: 100%;
+  right: auto;
+}
+.placement-right .preview-menu-dropdown {
+  right: 100%;
+  left: auto;
+}
+/* No room outside the sidebar: overlap it rather than hang off the screen. */
+.placement-left .preview-menu-dropdown.overflow-flip {
+  left: auto;
+  right: 0;
+}
+.placement-right .preview-menu-dropdown.overflow-flip {
+  right: auto;
+  left: 0;
 }
 .preview-menu-item {
   display: flex;

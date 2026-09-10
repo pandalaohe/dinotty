@@ -601,9 +601,7 @@
    * measured border-box height as --mkb-height, which the app root subtracts from the
    * terminal viewport - so the inset is charged to terminal height for the whole session,
    * not just while the bar is in use. An 8px floor keeps the controls off the very edge.
-   * The left/right insets stay: they cost no vertical space.
-   * Fork-local divergence: upstream after #275 still reserves the inset while the keyboard
-   * is down. Proposed upstream as the follow-up to #275; drop this note once that lands. */
+   * The left/right insets stay: they cost no vertical space. */
   padding: 5px max(5px, env(safe-area-inset-right)) 8px max(5px, env(safe-area-inset-left));
   border-top: 1px solid color-mix(in srgb, var(--border), white 7%);
   background: color-mix(in srgb, var(--bg-surface), black 4%);

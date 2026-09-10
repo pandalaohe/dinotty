@@ -36,6 +36,10 @@ import {
 import { getIsAppForeground, onAppForegroundGain } from './useAppForeground'
 import { usePluginLoader, handlePluginChanged } from './usePluginLoader'
 import { usePluginLauncher } from './usePluginLauncher'
+import { usePluginFloatWindowsStore } from '../stores/pluginFloatWindows'
+import type { FloatWindowContent, PreviewOpenMode } from '../types/floatWindow'
+import { floatWindowId, resolvePreviewOpenMode } from '../types/floatWindow'
+import { settings } from './useSettings'
 import { useTabLifecycle } from './useTabLifecycle'
 import { setMcSender } from './useMissionControlState'
 import { useSplitPane } from './useSplitPane'
@@ -123,6 +127,10 @@ export function useAppCore(options: AppCoreOptions) {
     return leaf && paneKind(leaf) === 'terminal' ? leaf : null
   })
   const hasActiveTerminalLeaf = computed(() => activeTerminalLeaf.value !== null)
+  /** Terminal leaf the built-in file-browser float window binds to; null when
+   *  the active context is not a terminal pane (split-pane previews, plugin
+   *  tabs). */
+  const activeTerminalSourcePane = computed(() => activeTerminalLeaf.value?.paneId ?? null)
   const activeKeyboardProvider = computed(() => {
     const providerId = resolveActiveKeyboardProvider(appSettings.mobile_input_mode)
     return keyboardProviders.value.get(providerId)
@@ -603,7 +611,12 @@ export function useAppCore(options: AppCoreOptions) {
     window.location.reload()
   }
 
-  function openOrFocusPreview(kind: 'files' | 'web') {
+  interface PreviewOpenPayload {
+    path?: string
+    url?: string
+  }
+
+  function openOrFocusPreview(kind: 'files' | 'web', payload: PreviewOpenPayload = {}) {
     const tabId = activePaneId.value
     if (!tabId) return
     const tab = tabs.value.find((t) => t.paneId === tabId)
@@ -615,8 +628,25 @@ export function useAppCore(options: AppCoreOptions) {
       splitPane.focusPane(existing.paneId)
       return
     }
-    const payload: { path?: string; url?: string } = kind === 'files' ? { path: tab.cwd || '' } : {}
-    void splitPane.insertNonTerminalPane(kind, payload)
+    const insert: PreviewOpenPayload =
+      kind === 'files' ? { path: payload.path ?? (tab.cwd || '') } : { url: payload.url }
+    void splitPane.insertNonTerminalPane(kind, insert)
+  }
+
+  async function openPluginPane(pluginId: string): Promise<boolean> {
+    const tabId = activePaneId.value
+    if (!tabId) return false
+    const tab = tabs.value.find((t) => t.paneId === tabId)
+    if (!tab || tab.type !== 'terminal') return false
+
+    const existing = getAllLeaves(tab.layout).find(
+      (l) => paneKind(l) === 'plugin' && l.pluginId === pluginId
+    )
+    if (existing) {
+      splitPane.focusPane(existing.paneId)
+      return true
+    }
+    return splitPane.insertNonTerminalPane('plugin', { pluginId })
   }
 
   function onFileClick(path: string) {
@@ -759,6 +789,7 @@ export function useAppCore(options: AppCoreOptions) {
   }
 
   // ── Plugin launcher (openPlugin is needed by palette/actions) ─────
+  const floatWindows = usePluginFloatWindowsStore()
   const { openPlugin } = usePluginLauncher({
     tabs,
     activeWorkspaceId,
@@ -769,7 +800,74 @@ export function useAppCore(options: AppCoreOptions) {
     commitLocalActivePane,
     persist,
     focusActive,
+    floatWindows,
+    openModePref: (id) => settings.plugin_prefs?.open_modes?.[id] ?? 'tab',
+    openPane: openPluginPane,
   })
+
+  // ── Built-in preview floats (files/web) ─────────────────────────────
+  // Open ids are 'float:files' / 'float:web' (single window per kind). The
+  // rendered content lives here so the host layer can resolve — and drop — it.
+  const previewFloatContents = shallowReactive<Record<string, FloatWindowContent>>({})
+
+  function isLiveTerminalLeaf(paneId: string): boolean {
+    for (const tab of tabs.value) {
+      if (tab.type !== 'terminal') continue
+      for (const leaf of getAllLeaves(tab.layout)) {
+        if (paneKind(leaf) === 'terminal' && leaf.paneId === paneId) return true
+      }
+    }
+    return false
+  }
+
+  function getPreviewFloatContent(id: string): FloatWindowContent | undefined {
+    const content = previewFloatContents[id]
+    if (!content) return undefined
+    // A files window is bound to a concrete terminal session; once that leaf is
+    // gone the window is meaningless — return undefined so the host closes it.
+    if (content.kind === 'files' && !isLiveTerminalLeaf(content.sourcePaneId)) return undefined
+    return content
+  }
+
+  function openPreviewFloat(content: FloatWindowContent): void {
+    previewFloatContents[floatWindowId(content)] = content
+    floatWindows.open(floatWindowId(content))
+  }
+
+  function previewOpenModePref(kind: 'files' | 'web'): PreviewOpenMode {
+    return settings.preview_open_modes?.[kind] ?? 'split'
+  }
+
+  /** Open the built-in file/web preview, honoring the per-kind preference (and
+   *  falling back to a split pane on touch). 'floating' opens a draggable
+   *  window; files floats bind to the active terminal session. */
+  function openPreview(
+    kind: 'files' | 'web',
+    payload: PreviewOpenPayload = {},
+    explicit?: PreviewOpenMode
+  ) {
+    const mode = resolvePreviewOpenMode(explicit, previewOpenModePref(kind), isTouchDevice())
+    if (mode !== 'floating') {
+      openOrFocusPreview(kind, payload)
+      return
+    }
+    if (kind === 'files') {
+      const sourcePaneId = activeTerminalSourcePane.value
+      if (!sourcePaneId) {
+        toast?.warning(t('previewPanel.needActiveTerminal'))
+        return
+      }
+      const tab = activeTab.value
+      const cwd = tab && tab.type === 'terminal' ? tab.cwd ?? '' : ''
+      openPreviewFloat({
+        kind: 'files',
+        sourcePaneId,
+        initialPath: payload.path ?? (cwd || undefined),
+      })
+      return
+    }
+    openPreviewFloat({ kind: 'web', initialUrl: payload.url })
+  }
 
   // ─── Save as Template dialog ───────────────────────────────────────
   const saveTemplateVisible = ref(false)
@@ -820,6 +918,16 @@ export function useAppCore(options: AppCoreOptions) {
     if (!tab) return
 
     if (tab.type !== 'terminal') {
+      const closed = await splitPane.closePane(paneId)
+      if (!closed) await closeTab(tabId)
+      return
+    }
+
+    // Files, web previews, and plugins are view-only panes: closing one does
+    // not terminate a PTY. Do not show the terminal-session confirmation for
+    // these panes, even when the tab-close confirmation preference is enabled.
+    const leaf = findLeaf(tab.layout, paneId)
+    if (leaf && paneKind(leaf) !== 'terminal') {
       const closed = await splitPane.closePane(paneId)
       if (!closed) await closeTab(tabId)
       return
@@ -964,6 +1072,7 @@ export function useAppCore(options: AppCoreOptions) {
     onPreviewLink,
     reloadApp,
     openOrFocusPreview,
+    openPreview,
     onFileClick,
     onTerminalInsertPath,
     onTerminalInsertText,
@@ -989,6 +1098,8 @@ export function useAppCore(options: AppCoreOptions) {
     pluginList,
     allCommands,
     openPlugin,
+    getPreviewFloatContent,
+    openPreviewFloat,
     isMobile,
     // cursor picker
     cursorPickerVisible: cursorPicker.cursorPickerVisible,
