@@ -18,7 +18,7 @@ use super::normalize::{
     clamp_theme_on_put, normalize_action_keyboards,
 };
 use super::types::CURRENT_SETTINGS_VERSION;
-use super::{log_file_path, Settings, SettingsState};
+use super::{log_file_path, RemoteServer, Settings, SettingsState};
 
 pub async fn get_settings(
     State(state): State<(Arc<SessionManager>, SettingsState)>,
@@ -81,13 +81,23 @@ pub async fn put_settings(
 /// `has_token` is derived, never trusted: the client's value is overwritten
 /// here so it cannot drift from the merged token.
 pub(crate) fn merge_remote_server_tokens(incoming: &mut Settings, existing: &Settings) {
-    for srv in &mut incoming.remote_servers {
+    inherit_remote_server_tokens(&mut incoming.remote_servers, &existing.remote_servers);
+}
+
+/// The roster half of [`merge_remote_server_tokens`], for callers that hold
+/// the list rather than a whole `Settings` (the dedicated
+/// `PUT /api/remote-servers` endpoint takes a bare `Vec<RemoteServer>`).
+///
+/// Same contract: the incoming list wins entry-for-entry, only a *missing*
+/// `token` key inherits from the entry with the same `id`, and `has_token` is
+/// recomputed from the merged token.
+pub(crate) fn inherit_remote_server_tokens(
+    incoming: &mut [RemoteServer],
+    existing: &[RemoteServer],
+) {
+    for srv in incoming {
         if srv.token.is_none() {
-            srv.token = existing
-                .remote_servers
-                .iter()
-                .find(|e| e.id == srv.id)
-                .and_then(|e| e.token.clone());
+            srv.token = existing.iter().find(|e| e.id == srv.id).and_then(|e| e.token.clone());
         }
         srv.refresh_has_token();
     }

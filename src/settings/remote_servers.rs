@@ -7,7 +7,10 @@
 //! token itself; `PUT` is an atomic full replace with per-`id` token
 //! inheritance (see [`crate::settings::merge_remote_server_tokens`]).
 //!
-//! **This module is a stub.** Every handler body returns 501.
+//! `probe` runs hub-side, not from the browser: the hub has no `Origin` header
+//! to trip the cross-site check and the browser would fail CORS against a
+//! server that has not allowlisted this page, so a server-side probe is the
+//! only form that behaves the same in Tauri and in a browser tab.
 
 use axum::{
     extract::State,
@@ -16,12 +19,21 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::time::Duration;
+use tracing::error;
 
+use super::handlers::inherit_remote_server_tokens;
+use super::io::save_settings;
+use super::types::CURRENT_SETTINGS_VERSION;
 use crate::settings::{types::RemoteServer, SettingsState};
 
-fn not_implemented() -> Response {
-    (StatusCode::NOT_IMPLEMENTED, "not implemented yet").into_response()
-}
+/// Budget for a single probe request.
+///
+/// The probe backs a "Test connection" button, so it has to fail visibly
+/// rather than hang the dialog. Both probe steps get their own budget, so the
+/// worst case for a black-holing target is twice this.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Request body for [`probe_remote_server`].
 ///
@@ -55,31 +67,237 @@ pub struct ProbeRemoteServerResponse {
     pub error: Option<String>,
 }
 
+/// Normalize a roster URL to a bare `http(s)` origin.
+///
+/// Returns the origin on success. The relay builds every upstream request from
+/// the roster's `url`, so anything that could aim it somewhere other than the
+/// server the user named is rejected rather than silently trimmed: embedded
+/// credentials (`user:pass@`), a path that would swallow the relayed one, a
+/// query/fragment, and every non-HTTP scheme (notably `ws://`, which is not a
+/// page origin at all).
+///
+/// A trailing slash is *not* a path - `Url` yields `"/"` for every origin - so
+/// `http://host:8999/` normalizes to `http://host:8999` instead of being
+/// rejected.
+///
+/// # Errors
+/// Returns a human-readable reason the string cannot serve as a roster origin.
+pub(crate) fn normalize_origin(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("url is empty".into());
+    }
+    let parsed = reqwest::Url::parse(trimmed).map_err(|e| format!("invalid url: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(format!("unsupported scheme `{other}`, use http:// or https://"));
+        }
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("url must not embed credentials".into());
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("url must not carry a query string or fragment".into());
+    }
+    if !matches!(parsed.path(), "" | "/") {
+        return Err("url must be an origin with no path".into());
+    }
+    let origin = parsed.origin().ascii_serialization();
+    if origin == "null" {
+        return Err("url must name a host".into());
+    }
+    Ok(origin)
+}
+
 /// `GET /api/remote-servers` - return the roster.
 ///
-/// B2 fills this body. Recompute `has_token` for every entry before returning;
-/// the stored flag can be stale relative to the token.
-pub async fn get_remote_servers(State(_settings): State<SettingsState>) -> Response {
-    not_implemented()
+/// `has_token` is recomputed from the stored token rather than echoed back:
+/// the persisted flag is only a cache and can lag behind a PUT that changed
+/// the token. The token itself is `skip_serializing`, so it cannot appear here
+/// even by accident.
+pub async fn get_remote_servers(State(settings): State<SettingsState>) -> Response {
+    let mut roster = settings.read().await.remote_servers.clone();
+    for server in &mut roster {
+        server.refresh_has_token();
+    }
+    Json(roster).into_response()
 }
 
 /// `PUT /api/remote-servers` - atomically replace the roster.
 ///
-/// B2 fills this body: merge the incoming list with the stored one via
-/// [`crate::settings::merge_remote_server_tokens`], then persist with
-/// `save_settings` and swap in the new state, mirroring `put_settings`.
+/// The submitted list is authoritative: an entry left out of it is gone, and
+/// reordering is preserved. Only tokens are carried over, per `id`, by
+/// [`inherit_remote_server_tokens`] - and only for entries that did not send a
+/// `token` key at all, which is the normal case because `GET` uses
+/// `skip_serializing` and so never hands the secret back.
+///
+/// Everything else in `Settings` is preserved by cloning the stored object
+/// rather than deserializing a fresh one, so this endpoint cannot clobber
+/// server-owned fields such as `active_workspace_id`.
 pub async fn put_remote_servers(
-    State(_settings): State<SettingsState>,
-    Json(_servers): Json<Vec<RemoteServer>>,
+    State(settings): State<SettingsState>,
+    Json(mut roster): Json<Vec<RemoteServer>>,
 ) -> Response {
-    not_implemented()
+    for server in &mut roster {
+        match normalize_origin(&server.url) {
+            Ok(origin) => server.url = origin,
+            Err(reason) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": format!("remote server `{}`: {reason}", server.id) })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    let mut new_settings = settings.read().await.clone();
+    inherit_remote_server_tokens(&mut roster, &new_settings.remote_servers);
+    new_settings.remote_servers = roster;
+    new_settings.settings_version = CURRENT_SETTINGS_VERSION;
+
+    match save_settings(&new_settings) {
+        Ok(()) => {
+            *settings.write().await = new_settings;
+            StatusCode::OK.into_response()
+        }
+        Err(e) => {
+            error!("save remote servers: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("could not save settings: {e}") })),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// `POST /api/remote-servers/probe` - reachability and version check.
 ///
-/// B2 fills this body. The request must carry a candidate `url` (and token)
-/// rather than a roster id, so the "Test connection" button can validate an
-/// entry the user has not saved yet.
-pub async fn probe_remote_server(Json(_req): Json<ProbeRemoteServerRequest>) -> Response {
-    not_implemented()
+/// Two steps, because they answer different questions:
+///
+/// 1. `GET /api/token-configured` is public (see the early-return list in
+///    `crate::auth::auth_middleware`), so it decides *reachability* and whether
+///    the target demands a token - two states a single "connected" bit would
+///    blur into one.
+/// 2. `GET /api/info` is authenticated, so it is only attempted with a
+///    candidate token and only ever refines the answer.
+pub async fn probe_remote_server(Json(req): Json<ProbeRemoteServerRequest>) -> Response {
+    let origin = match normalize_origin(&req.url) {
+        Ok(origin) => origin,
+        Err(reason) => return Json(unreachable(reason)).into_response(),
+    };
+
+    let client = match reqwest::Client::builder()
+        .timeout(PROBE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            return Json(unreachable(format!("could not build probe client: {e}"))).into_response()
+        }
+    };
+
+    let response = match client.get(format!("{origin}/api/token-configured")).send().await {
+        Ok(response) => response,
+        Err(e) => return Json(unreachable(classify_transport_error(&e, &origin))).into_response(),
+    };
+    if !response.status().is_success() {
+        return Json(unreachable(format!(
+            "{origin} answered HTTP {} for /api/token-configured, which is not a dinotty server",
+            response.status().as_u16()
+        )))
+        .into_response();
+    }
+    // Something is listening and answering, but the roster drives the relay
+    // with this origin, so an unrelated service on the same port must not be
+    // reported as a usable server.
+    let Ok(body) = response.json::<serde_json::Value>().await else {
+        return Json(unreachable(format!(
+            "{origin} did not return a dinotty /api/token-configured payload"
+        )))
+        .into_response();
+    };
+    let Some(configured) = body.get("configured").and_then(serde_json::Value::as_bool) else {
+        return Json(unreachable(format!(
+            "{origin} did not return a dinotty /api/token-configured payload"
+        )))
+        .into_response();
+    };
+
+    let mut probe = ProbeRemoteServerResponse {
+        reachable: true,
+        token_configured: configured,
+        server_mode: Some(
+            if body.get("server_mode").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+                "server".to_string()
+            } else {
+                "embedded".to_string()
+            },
+        ),
+        ..ProbeRemoteServerResponse::default()
+    };
+
+    // Without a candidate credential the authenticated step cannot succeed, so
+    // it is skipped rather than burned on a guaranteed 401.
+    let Some(token) = req.token.filter(|t| !t.is_empty()) else {
+        return Json(probe).into_response();
+    };
+
+    let Ok(response) = client.get(format!("{origin}/api/info")).bearer_auth(&token).send().await
+    else {
+        // Reachability was already established by step 1; a failed version
+        // probe does not make the server unreachable.
+        return Json(probe).into_response();
+    };
+    if response.status().is_success() {
+        if let Ok(body) = response.json::<serde_json::Value>().await {
+            probe.settings_version = body
+                .get("settings_version")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok());
+        }
+    }
+    Json(probe).into_response()
+}
+
+fn unreachable(reason: impl Into<String>) -> ProbeRemoteServerResponse {
+    ProbeRemoteServerResponse { reachable: false, error: Some(reason.into()), ..Default::default() }
+}
+
+/// Turn a transport failure into something the user can act on.
+///
+/// "Timed out", "refused" and "cannot resolve" each point at a different fix
+/// (firewall, wrong port, typo in the host), so they must not collapse into
+/// one generic message.
+fn classify_transport_error(e: &reqwest::Error, origin: &str) -> String {
+    if e.is_timeout() {
+        return format!("{origin} did not respond within {}s", PROBE_TIMEOUT.as_secs());
+    }
+    let mut chain = String::new();
+    let mut source = Some(e as &(dyn std::error::Error + 'static));
+    while let Some(current) = source {
+        if let Some(io) = current.downcast_ref::<std::io::Error>() {
+            match io.kind() {
+                std::io::ErrorKind::ConnectionRefused => {
+                    return format!("connection refused by {origin}");
+                }
+                std::io::ErrorKind::NotFound => return format!("DNS lookup failed for {origin}"),
+                _ => {}
+            }
+        }
+        chain.push_str(&current.to_string());
+        chain.push(' ');
+        source = current.source();
+    }
+    let chain = chain.to_lowercase();
+    if chain.contains("dns") || chain.contains("lookup") || chain.contains("resolve") {
+        return format!("DNS lookup failed for {origin}");
+    }
+    if chain.contains("refused") {
+        return format!("connection refused by {origin}");
+    }
+    format!("could not reach {origin}: {e}")
 }
