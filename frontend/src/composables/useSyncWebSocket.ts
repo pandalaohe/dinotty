@@ -17,10 +17,9 @@ import {
 } from '../types/paneMru'
 import { useSessionStore } from '../stores/sessionStore'
 import { useUiStore } from '../stores/uiStore'
-import { getApiBase, wsUrlWithToken, hasAuthToken } from './apiBase'
+import { getApiBase, wsUrl } from './apiBase'
 import { isLocalActive } from './activeServer'
 import { scopedKey } from './serverScope'
-import { isTauri } from './useTransport'
 import { toActiveWorkspaceId, useWorkspaces } from './useWorkspaces'
 import { apiCreatePluginTab } from './useTabApi'
 import { clearFileWorkspaceState } from './useFileWorkspaceState'
@@ -147,6 +146,10 @@ export function useSyncWebSocket(opts: {
   // work, and an exception on any exit path must not leave the flag stuck.
   let suppressDepth = 0
   let syncReconnectDelay = 1000
+  // `onclose` auto-reconnects. An intentional `closeWs()` (server switch, logout)
+  // would otherwise race that timer back to the server we just left, so the
+  // close is flagged and `onclose` honours it by staying down.
+  let intentionalClose = false
 
   // Grace period: tabs created within the last 5s are protected from tab_list pruning.
   // This prevents a race where tab_list arrives before the REST-driven tab_created.
@@ -243,19 +246,13 @@ export function useSyncWebSocket(opts: {
   }
 
   async function connectSyncWS() {
-    let url: string
-    if (isTauri()) {
-      const origin = await getApiBase()
-      url = `${origin.replace(/^http/, 'ws')}/ws/sync`
-    } else {
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      url = `${proto}//${location.host}/ws/sync`
-    }
-    const wsUrl = wsUrlWithToken(url)
-    if (wsUrl === url && hasAuthToken()) {
-      console.warn('[sync] token available but not appended to WS URL')
-    }
-    syncWs = new WebSocket(wsUrl)
+    // Tauri's origin is async; `wsUrl()` is synchronous. Priming `getApiBase()`
+    // here (it is a no-op in the browser) is what makes that call correct —
+    // see the contract on `wsUrl` in `apiBase.ts`.
+    await getApiBase()
+    const url = wsUrl('/ws/sync')
+    intentionalClose = false
+    syncWs = new WebSocket(url)
 
     syncWs.onopen = () => {
       console.log('[sync] connected')
@@ -745,6 +742,7 @@ export function useSyncWebSocket(opts: {
       resetHandshakeState()
       syncWs = null
       syncConnected.value = false
+      if (intentionalClose) return
       setTimeout(connectSyncWS, syncReconnectDelay)
       syncReconnectDelay = Math.min(syncReconnectDelay * 2, 30000)
     }
@@ -755,6 +753,7 @@ export function useSyncWebSocket(opts: {
   }
 
   function closeWs() {
+    intentionalClose = true
     if (syncWs) {
       syncWs.close()
       syncWs = null

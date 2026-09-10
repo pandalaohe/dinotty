@@ -440,6 +440,7 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
+  authFetch,
 } from './composables/apiBase'
 import { useToast } from 'vue-toastification'
 import {
@@ -854,7 +855,7 @@ onMounted(async () => {
         // when the cookie is absent/invalid.
         let cookieOk = false
         try {
-          const res = await fetch(apiUrl('/api/settings'), { credentials: 'include' })
+          const res = await authFetch(apiUrl('/api/settings'))
           cookieOk = res.ok
         } catch {
           // network error - fall through to auto-token
@@ -873,7 +874,7 @@ onMounted(async () => {
       } else {
         // Server mode: check if session cookie is still valid
         try {
-          const res = await fetch(apiUrl('/api/settings'), { credentials: 'include' })
+          const res = await authFetch(apiUrl('/api/settings'))
           if (res.ok) {
             await onLoginSuccess()
           }
