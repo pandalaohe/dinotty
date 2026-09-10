@@ -825,6 +825,7 @@ mod tests {
         append_wsl_cwd_args, is_claude_session_env_key, locale_adjustment, notify_url_for,
         zshrc_contents, LocaleAdjustment,
     };
+    use crate::platform::process::CommandNoWindowExt;
 
     // Both callers are `#[cfg(unix)]`, so on other targets this helper is
     // compiled but never called. Keeping it compiled (rather than gating it
@@ -849,7 +850,12 @@ fi
         )
         .unwrap();
 
-        let output = std::process::Command::new("/bin/zsh")
+        // `no_window` is a no-op off Windows; it is called here because the
+        // Windows smoke test scans every `Command::new(` in `src/` and cannot
+        // tell that this helper is only reachable from `#[cfg(unix)]` callers.
+        let mut command = std::process::Command::new("/bin/zsh");
+        command.no_window();
+        let output = command
             .args([
                 "-f",
                 "-c",
