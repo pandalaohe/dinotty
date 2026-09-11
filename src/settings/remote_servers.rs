@@ -112,14 +112,14 @@ pub(crate) fn normalize_origin(raw: &str) -> Result<String, String> {
 
 /// `GET /api/remote-servers` - return the roster.
 ///
-/// `has_token` is recomputed from the stored token rather than echoed back:
-/// the persisted flag is only a cache and can lag behind a PUT that changed
-/// the token. The token itself is `skip_serializing`, so it cannot appear here
-/// even by accident.
+/// `scrub_secrets` both recomputes `has_token` from the stored token - the
+/// persisted flag is only a cache and can lag behind a PUT that changed the
+/// token - and drops the token itself, which otherwise serializes because
+/// `settings.json` needs it. The flag is the only thing a client may learn.
 pub async fn get_remote_servers(State(settings): State<SettingsState>) -> Response {
     let mut roster = settings.read().await.remote_servers.clone();
     for server in &mut roster {
-        server.refresh_has_token();
+        server.scrub_secrets();
     }
     Json(roster).into_response()
 }
@@ -129,8 +129,8 @@ pub async fn get_remote_servers(State(settings): State<SettingsState>) -> Respon
 /// The submitted list is authoritative: an entry left out of it is gone, and
 /// reordering is preserved. Only tokens are carried over, per `id`, by
 /// [`inherit_remote_server_tokens`] - and only for entries that did not send a
-/// `token` key at all, which is the normal case because `GET` uses
-/// `skip_serializing` and so never hands the secret back.
+/// `token` key at all, which is the normal case because `GET` scrubs the secret
+/// out of its response and so never hands it back.
 ///
 /// Everything else in `Settings` is preserved by cloning the stored object
 /// rather than deserializing a fresh one, so this endpoint cannot clobber

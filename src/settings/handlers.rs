@@ -27,6 +27,10 @@ pub async fn get_settings(
     if settings.log.path.is_empty() {
         settings.log.path = log_file_path().to_string_lossy().to_string();
     }
+    // The token has to be in `settings.json` (see `RemoteServer::token`), which
+    // means the same `Serialize` impl that writes the file would happily write
+    // it into this response. Scrubbing here is what separates the two.
+    settings.scrub_secrets();
     Json(settings)
 }
 
@@ -75,8 +79,9 @@ pub async fn put_settings(
 /// The list itself is a full replace - dropping an entry deletes it. Only the
 /// tokens are inherited, and only per matching `id`: `None` means the client
 /// never sent a `token` key (see [`RemoteServer::token`]), which is the normal
-/// case because GET uses `skip_serializing` and so never hands the secret back.
-/// `Some("")` is the explicit "clear this token" instruction and is left alone.
+/// case because the GET handlers scrub the secret out of their responses and so
+/// never hand it back. `Some("")` is the explicit "clear this token"
+/// instruction and is left alone.
 ///
 /// `has_token` is derived, never trusted: the client's value is overwritten
 /// here so it cannot drift from the merged token.

@@ -13,7 +13,7 @@ pub struct RemoteServer {
     pub id: String,
     pub name: String,
     pub url: String,
-    /// Write-only. Three states, which is why this is not a bare
+    /// Three states on the way in, which is why this is not a bare
     /// `SensitiveString`:
     ///
     /// | PUT payload   | deserialized  | meaning                       |
@@ -25,16 +25,34 @@ pub struct RemoteServer {
     /// `SensitiveString`'s own `Deserialize` is an unconditional
     /// `String::deserialize`, so `""` would round-trip as an empty string
     /// rather than as "absent" - and a full-object PUT from the frontend would
-    /// then silently wipe every configured token. `skip_serializing` keeps GET
-    /// from ever echoing the secret; clients read [`Self::has_token`] instead.
+    /// then silently wipe every configured token.
+    ///
+    /// On the way out this field serializes like any other, deliberately: the
+    /// hub has no credential store besides `settings.json`, so a token that is
+    /// not written there is a token the user has to re-paste on every restart.
+    /// `skip_serializing` looks like it would keep GET from echoing the secret,
+    /// but it cannot tell "writing to disk" apart from "writing to a response" -
+    /// both go through this one `Serialize` impl - so it silently disabled
+    /// persistence too.
+    ///
+    /// Keeping it out of *responses* is therefore a separate step, done by
+    /// [`Self::scrub_secrets`] on every handler that returns settings or a
+    /// roster. Anything that serializes a `Settings` into a response must go
+    /// through that; `settings.json` must not.
+    ///
+    /// `skip_serializing_if` is what makes a scrubbed token read as *absent*
+    /// rather than as `null`. A client that got `"token": null` back and echoed
+    /// it would be sending the "keep" state either way, so this is not a
+    /// correctness fix - it just keeps the response byte-identical to what
+    /// `skip_serializing` used to produce, and stops a secret-shaped key from
+    /// appearing at all.
     ///
     /// Note on `"token": null`: serde's `Option` consumes an explicit `null` as
     /// `None`, so it means **keep**, not clear. Only `""` clears. That is the
     /// safe direction - a client that hand-writes `null` preserves a working
     /// credential instead of destroying it - and it is pinned by
-    /// `explicit_null_means_keep_not_clear` below. Clients that serialize this
-    /// struct never send `null` anyway: `skip_serializing` omits the key.
-    #[serde(default, skip_serializing)]
+    /// `explicit_null_means_keep_not_clear` below.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<SensitiveString>,
     #[serde(default)]
     pub group: Option<String>,
@@ -50,6 +68,21 @@ impl RemoteServer {
     /// Recompute the derived `has_token` flag from the token itself.
     pub fn refresh_has_token(&mut self) {
         self.has_token = self.token.as_ref().is_some_and(|t| !t.is_empty());
+    }
+
+    /// Remove the token, leaving `has_token` as the only trace of it.
+    ///
+    /// The counterpart to `token` serializing normally: this is what keeps the
+    /// secret out of an HTTP response without also keeping it off disk. The
+    /// flag is recomputed first, because after the drop there is nothing left
+    /// to derive it from.
+    ///
+    /// Every response that carries a `RemoteServer` has to run this. It is
+    /// idempotent, so a caller may apply it to a value that already went
+    /// through it.
+    pub fn scrub_secrets(&mut self) {
+        self.refresh_has_token();
+        self.token = None;
     }
 }
 
@@ -85,8 +118,28 @@ mod tests {
         assert!(srv.token.is_none());
     }
 
+    /// The token must survive a plain serialization, because that is the exact
+    /// call `save_settings` makes. `skip_serializing` used to hide the secret
+    /// from responses by hiding it from the settings file too, so a restart
+    /// forgot every token the user had pasted.
     #[test]
-    fn token_is_never_serialized() {
+    fn token_is_serialized_so_it_can_be_persisted() {
+        let srv = RemoteServer {
+            id: "a".into(),
+            name: "A".into(),
+            url: "http://h:1".into(),
+            token: Some(SensitiveString::new("secret".into())),
+            ..RemoteServer::default()
+        };
+        let json = serde_json::to_string(&srv).unwrap();
+        assert!(json.contains(r#""token":"secret""#), "the token must be written: {json}");
+    }
+
+    /// Scrubbing is what keeps the secret out of a response. Dropping the token
+    /// must not drop `has_token` with it - the flag is the only thing a client
+    /// is allowed to learn, so it has to be derived before the token goes away.
+    #[test]
+    fn scrub_secrets_removes_the_token_but_keeps_has_token() {
         let mut srv = RemoteServer {
             id: "a".into(),
             name: "A".into(),
@@ -94,11 +147,24 @@ mod tests {
             token: Some(SensitiveString::new("secret".into())),
             ..RemoteServer::default()
         };
-        srv.refresh_has_token();
+        srv.scrub_secrets();
+
         let json = serde_json::to_string(&srv).unwrap();
         assert!(!json.contains("secret"), "token leaked into {json}");
-        assert!(!json.contains(r#""token""#), "the key itself must be omitted, not just the value");
-        assert!(json.contains(r#""has_token":true"#));
+        assert!(!json.contains(r#""token""#), "the key itself must be omitted: {json}");
+        assert!(json.contains(r#""has_token":true"#), "scrubbing must not erase has_token: {json}");
+        assert!(srv.token.is_none());
+    }
+
+    #[test]
+    fn scrub_secrets_reports_a_server_without_a_token_as_having_none() {
+        let mut srv = RemoteServer {
+            has_token: true, // a stale client-supplied value
+            ..RemoteServer::default()
+        };
+        srv.scrub_secrets();
+        let json = serde_json::to_string(&srv).unwrap();
+        assert!(json.contains(r#""has_token":false"#), "{json}");
     }
 
     #[test]

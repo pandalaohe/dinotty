@@ -227,16 +227,22 @@ fn a_v15_roster_round_trips_through_save_and_load() {
     settings.remote_servers[0].refresh_has_token();
 
     let saved = serde_json::to_string(&settings).unwrap();
-    assert!(!saved.contains("s3cret"), "token must never be written to disk: {saved}");
+    // The token *must* be written: `settings.json` is the only place a hub
+    // keeps it, so a token that is not persisted is one the user has to paste
+    // again after every restart. Keeping it out of HTTP responses is a separate
+    // step, `Settings::scrub_secrets`, done by the handlers.
+    assert!(saved.contains("s3cret"), "the token must be persisted: {saved}");
 
     let reloaded: Settings = serde_json::from_str(&saved).unwrap();
     assert_eq!(reloaded.remote_servers.len(), 1);
     assert_eq!(reloaded.remote_servers[0].id, "lab");
     assert_eq!(reloaded.remote_servers[0].group.as_deref(), Some("lab"));
     assert!(reloaded.remote_servers[0].has_token);
-    // The secret itself is gone - it lives only in the in-memory settings that
-    // were PUT, which is why `put_settings` has to re-merge it explicitly.
-    assert!(reloaded.remote_servers[0].token.is_none());
+    assert_eq!(
+        reloaded.remote_servers[0].token.as_ref().map(SensitiveString::expose),
+        Some("s3cret"),
+        "a token that survives the write but not the read is still lost on restart"
+    );
 }
 
 /// The three-state token contract, which is the whole reason `token` is an

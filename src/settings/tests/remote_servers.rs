@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::de::DeserializeOwned;
@@ -15,9 +16,12 @@ use serde_json::json;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
+use crate::session::SessionManager;
+use crate::settings::io::save_settings;
 use crate::settings::{
-    get_remote_servers, probe_remote_server, put_remote_servers, ProbeRemoteServerRequest,
-    ProbeRemoteServerResponse, RemoteServer, SensitiveString, Settings, SettingsState,
+    get_remote_servers, get_settings, probe_remote_server, put_remote_servers,
+    ProbeRemoteServerRequest, ProbeRemoteServerResponse, RemoteServer, SensitiveString, Settings,
+    SettingsState,
 };
 
 /// Isolates any test that reaches `save_settings` from the user's real config
@@ -81,14 +85,26 @@ async fn get_recomputes_has_token_instead_of_echoing_the_stored_flag() {
     assert_eq!(body[2]["has_token"], false);
 }
 
+/// The regression this pair of tests guards, on the read side.
+///
+/// `RemoteServer::token` has to serialize normally or `save_settings` cannot
+/// persist it, so *nothing* about the type keeps it out of a response any more.
+/// `get_remote_servers` is what does, and the assertion is on the serialized
+/// bytes rather than on the shape of a deserialized `Value`, so a future
+/// `skip_serializing_if` or a nested wrapper cannot quietly reintroduce it.
 #[tokio::test]
 async fn get_never_returns_the_token_itself() {
     let state = settings_state(vec![stored_server("lab", Some("s3cret"), true)]);
 
-    let body: serde_json::Value = read_json(get_remote_servers(State(state)).await).await;
+    let response = get_remote_servers(State(state)).await;
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let raw = String::from_utf8(bytes.to_vec()).unwrap();
 
-    assert!(body[0].get("token").is_none(), "the key must be omitted, not just nulled: {body}");
-    assert!(!body.to_string().contains("s3cret"), "the secret leaked: {body}");
+    assert!(!raw.contains("s3cret"), "the token leaked into {raw}");
+    assert!(!raw.contains(r#""token""#), "the key must be omitted, not just nulled: {raw}");
+    assert!(raw.contains(r#""has_token":true"#), "the scrub must not erase the flag: {raw}");
+    // The rest of the entry still has to come through.
+    assert!(raw.contains(r#""id":"lab""#), "{raw}");
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +119,8 @@ async fn put_keeps_clears_and_overwrites_tokens_per_id() {
     let state = settings_state(vec![stored_server("lab", Some("stored"), true)]);
 
     // (a) The `token` key is absent - which is what a GET -> edit -> PUT round
-    // trip produces, because GET uses `skip_serializing`. Keep the stored one.
+    // trip produces, because GET scrubs the secret before answering. Keep the
+    // stored one.
     let response = put_remote_servers(
         State(Arc::clone(&state)),
         Json(roster_from_json(r#"[{"id":"lab","name":"Lab","url":"http://192.168.1.5:58901"}]"#)),
@@ -418,4 +435,78 @@ async fn probe_refuses_to_call_a_stranger_a_dinotty_server() {
     let error = result.error.unwrap_or_default();
     assert!(error.contains("not a dinotty server"), "got {error}");
     assert_eq!(upstream.info_hits.load(Ordering::SeqCst), 0);
+}
+
+// ---------------------------------------------------------------------------
+// persistence and the /api/settings response
+// ---------------------------------------------------------------------------
+
+/// The secret both of the tests below plant, named once so an assertion that
+/// accidentally stops matching the fixture is obvious rather than passing.
+const PERSISTED: &str = "a-real-looking-persisted-token";
+
+/// The raw body of a response, so the assertions below run against the bytes a
+/// client actually receives rather than a re-deserialized `Value`.
+async fn read_raw(response: axum::response::Response) -> String {
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+fn state_with_persisted_token() -> SettingsState {
+    settings_state(vec![stored_server("lab", Some(PERSISTED), true)])
+}
+
+/// The bug this change exists for: a token that never reaches `settings.json`
+/// makes the user re-paste it after every restart.
+///
+/// Asserted through `load_settings` and not merely by inspecting the file, so
+/// the whole round trip is covered. Making the token survive
+/// `to_string_pretty` without making it survive `from_str` would still lose it.
+#[tokio::test]
+async fn save_settings_writes_the_token_and_load_settings_reads_it_back() {
+    // The config dir is process-global state, so this test has to own the
+    // suffix for as long as it reads it - `EnvGuard` also serializes it against
+    // every other test that touches the same variable.
+    let _env = crate::test_support::EnvGuard::new(&["DINOTTY_CONFIG_SUFFIX"]);
+    std::env::set_var("DINOTTY_CONFIG_SUFFIX", "-rsrv-fix-secrets-save");
+
+    let stored = state_with_persisted_token().read().await.clone();
+    save_settings(&stored).unwrap();
+
+    let on_disk =
+        std::fs::read_to_string(crate::settings::config_dir().join("settings.json")).unwrap();
+    assert!(
+        on_disk.contains(PERSISTED),
+        "the token must be written to settings.json, got: {on_disk}"
+    );
+
+    let reloaded = crate::settings::load_settings();
+    assert_eq!(token_of(&reloaded, "lab").as_deref(), Some(PERSISTED));
+    assert!(reloaded.remote_servers[0].has_token);
+}
+
+/// The other half of the same fix: the token is on disk *and* nowhere in the
+/// settings response. `get_settings` is the only handler that returns a whole
+/// `Settings`, and it is the one that has to scrub.
+#[tokio::test]
+async fn get_settings_response_never_contains_the_token() {
+    let _env = crate::test_support::EnvGuard::new(&["DINOTTY_CONFIG_SUFFIX"]);
+    std::env::set_var("DINOTTY_CONFIG_SUFFIX", "-rsrv-fix-secrets-get");
+
+    // `get_settings` extracts the manager alongside the settings state.
+    let manager = Arc::new(SessionManager::new());
+    let response = get_settings(State((manager, state_with_persisted_token()))).await;
+
+    let raw = read_raw(response.into_response()).await;
+    assert!(!raw.contains(PERSISTED), "the token leaked into {raw}");
+
+    // The key check has to be scoped to the roster entry: the rest of this body
+    // legitimately contains the *word* token (`"login_method":"token"`), so a
+    // whole-body substring test would fail for reasons that have nothing to do
+    // with the secret.
+    let body: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let entry = &body["remote_servers"][0];
+    assert_eq!(entry["id"], "lab");
+    assert!(entry.get("token").is_none(), "the key must be omitted, not just nulled: {entry}");
+    assert_eq!(entry["has_token"], true, "the flag must survive the scrub: {entry}");
 }
