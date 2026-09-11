@@ -128,7 +128,7 @@ describe('status bar server chip', () => {
 
     expect(wrapper.find('.status-bar').exists()).toBe(true)
     expect(wrapper.find('.status-bar-server').exists()).toBe(true)
-    expect(wrapper.find('.server-name').text()).toBe('This device')
+    expect(wrapper.find('.server-name').text()).toBe('LOC')
   })
 
   // The bar used to disappear when the monitor was switched off. It cannot any

@@ -100,7 +100,7 @@ describe('ServerManagerDialog', () => {
 
     const rows = wrapper.findAll(ROW)
     expect(rows).toHaveLength(3)
-    expect(rows[0].text()).toContain('This device')
+    expect(rows[0].text()).toContain('LOC')
     expect(rows[1].text()).toContain('Lab board')
     expect(rows[2].text()).toContain('Attic')
   })

@@ -520,7 +520,7 @@ watch(serverPickerOpen, (open) => {
   font-family: inherit;
   font-size: 12px;
   line-height: 1;
-  /* Capped rather than fixed: the local entry ("This device" / "本机") is what
+  /* Capped rather than fixed: the local entry ("LOC", in both locales) is what
      most sessions show, and a fixed 140px left a wide empty gap on every one of
      them. Past the cap a long remote name ellipsises, so the monitor items
      still stop moving; only a short name shifts them. */

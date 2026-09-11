@@ -750,7 +750,7 @@ export default {
   'workspace.newTerminal': 'New Terminal',
   'workspace.back': 'Back',
   // ── Server switcher (Mission Control) ──
-  'server.local': 'This device',
+  'server.local': 'LOC',
   'server.unknown': 'Unknown server',
   'server.switch': 'Switch server',
   'server.manage': 'Manage servers…',

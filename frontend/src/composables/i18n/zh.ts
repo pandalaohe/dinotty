@@ -747,7 +747,7 @@ export default {
   'workspace.newTerminal': '新建终端',
   'workspace.back': '返回',
   // ── 服务端切换器（Mission Control）──
-  'server.local': '本机',
+  'server.local': 'LOC',
   'server.unknown': '未知服务端',
   'server.switch': '切换服务端',
   'server.manage': '管理服务端…',
