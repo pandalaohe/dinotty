@@ -80,14 +80,30 @@ export async function runSwitchTeardown(): Promise<void> {
 /**
  * A switch target as the hub's probe endpoint needs it.
  *
- * `url` is the target's origin; `token` is the candidate credential, present
- * only when one is known client-side. The hub owns the roster and runs the
- * probe, so the token it already stores for a saved entry is the hub's to
- * supply — see `registerServerTargetResolver`.
+ * `id` is a roster id, and it is the *only* field that goes on the wire. The
+ * hub owns both the url and the credential: `GET /api/remote-servers` scrubs
+ * the token out of its response by design, so a switch that identified its
+ * target by url could only ever probe anonymously and every token-protected
+ * server would answer 401 — the switch was aborting for the whole main path.
+ * Probing by id lets the hub supply the stored credential itself, which is
+ * also why a caller cannot aim an id at a different host (see
+ * `ProbeRemoteServerRequest` in `src/settings/remote_servers.rs`).
+ *
+ * `name`/`url` are for logs and error messages only, and are never sent. Prefer
+ * `name`: the roster is shared between the frontend's two shapes (see
+ * `RemoteServerEntry`) and only one of them carries a url at all.
  */
 export interface ServerSwitchTarget {
-  url: string
-  token?: string
+  id: string
+  /** Display name for probe-failure messages. */
+  name?: string
+  /** Origin, for probe-failure messages when no name is known. */
+  url?: string
+}
+
+/** Human-readable label for a probe failure — never the wire format. */
+function describeTarget(target: ServerSwitchTarget): string {
+  return target.name || target.url || target.id
 }
 
 let targetResolver: ((id: string) => ServerSwitchTarget | null) | null = null
@@ -98,6 +114,11 @@ let targetResolver: ((id: string) => ServerSwitchTarget | null) | null = null
  * Kept as a hook rather than an import so this module stays free of the
  * settings singleton (`useSettings` → `apiBase` → here is a cycle). Resolving
  * `null` means "not a server we know about", which aborts the switch.
+ *
+ * The resolver is what proves the id is a real roster entry. That matters for
+ * more than a nice error: `relayPrefix()` builds `/__srv/${id}` from a
+ * localStorage value, so switching to an id the roster does not have would
+ * leave the app scoped to a prefix no server answers to.
  */
 export function registerServerTargetResolver(fn: (id: string) => ServerSwitchTarget | null): void {
   targetResolver = fn
@@ -136,6 +157,13 @@ const PROBE_PATH = '/api/remote-servers/probe'
  * and it is the only one that can reach the upstream without CORS or origin
  * games — so this deliberately does **not** go through `relayPrefix()`.
  *
+ * The body is the target's `id` and nothing else. Sending a `url` (let alone a
+ * `token`) would be worse than useless: the hub ignores both when `id` is set,
+ * and a client that could substitute them could point a stored id's probe at
+ * another host. `GET /api/remote-servers` never hands out a token, so there is
+ * no credential here to send in the first place — that is the whole reason the
+ * by-id form exists.
+ *
  * `getHubBase()` rather than `getApiBase()`: same origin today, but the named
  * accessor is the contract for "the hub, not the active server", and it is what
  * keeps this correct if the two ever diverge.
@@ -144,6 +172,7 @@ const PROBE_PATH = '/api/remote-servers/probe'
  * collapses to `false` so the caller aborts with the old server untouched.
  */
 async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
+  const label = describeTarget(target)
   try {
     // Dynamic import: a static one would close the `apiBase` ⇄ `activeServer`
     // cycle at module-init time. Same reason `useMonitor` imports the plugin
@@ -153,12 +182,10 @@ async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
     const res = await authFetch(`${base}${PROBE_PATH}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(
-        target.token ? { url: target.url, token: target.token } : { url: target.url }
-      ),
+      body: JSON.stringify({ id: target.id }),
     })
     if (!res.ok) {
-      console.warn(`[activeServer] probe of ${target.url} failed: HTTP ${res.status}`)
+      console.warn(`[activeServer] probe of ${label} failed: HTTP ${res.status}`)
       return false
     }
     const data = (await res.json().catch(() => null)) as {
@@ -166,18 +193,16 @@ async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
       error?: string
     } | null
     if (!data) {
-      console.warn(`[activeServer] probe of ${target.url} returned no result`)
+      console.warn(`[activeServer] probe of ${label} returned no result`)
       return false
     }
     if (data.reachable === false) {
-      console.warn(
-        `[activeServer] probe of ${target.url} reported unreachable: ${data.error ?? ''}`
-      )
+      console.warn(`[activeServer] probe of ${label} reported unreachable: ${data.error ?? ''}`)
       return false
     }
     return true
   } catch (e) {
-    console.warn(`[activeServer] probe of ${target.url} failed:`, e)
+    console.warn(`[activeServer] probe of ${label} failed:`, e)
     return false
   }
 }
@@ -204,7 +229,11 @@ export async function switchServer(id: string): Promise<void> {
 
   // 1. Probe before touching anything. The local server *is* the hub, so it
   // needs no reachability check (and must stay reachable even if the roster
-  // is unreadable — it is the way back).
+  // is unreadable — it is the way back). Both the resolver and the probe are
+  // inside this branch: `__local__` is synthesized by `useRemoteServers` and
+  // is deliberately *not* a roster entry, so resolving it there would return
+  // `null` and abort the switch back to local — the one switch that must
+  // always succeed.
   if (next !== LOCAL_SERVER_ID) {
     const target = targetResolver?.(next) ?? null
     if (!target) {

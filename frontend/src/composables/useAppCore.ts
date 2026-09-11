@@ -94,13 +94,20 @@ import { storeToRefs } from 'pinia'
 
 /** Roster entry as the hub persists it. `SettingsData` does not declare
  *  `remote_servers` yet, so read it structurally rather than through the
- *  settings shape; entries arrive with the settings payload. */
+ *  settings shape; entries arrive with the settings payload.
+ *
+ *  Both ways an entry can arrive are scrubbed on the way out - `GET
+ *  /api/settings` runs `Settings::scrub_secrets` and `GET /api/remote-servers`
+ *  runs it per entry - so the stored token never reaches the browser and
+ *  nothing here may depend on one. "Has a token" is `has_token`; there is no
+ *  field to send it in. Everything outside the id is for display and log
+ *  messages, not decisions. */
 export interface RemoteServerEntry {
   id: string
   name: string
-  url: string
-  /** Only present when the roster is held client-side together with its token;
-   *  the hub's `GET /api/remote-servers` deliberately never echoes it. */
+  url?: string
+  /** Never populated by either endpoint; kept only because the settings file's
+   *  own shape declares it. Do not read it to decide anything. */
   token?: string
   has_token?: boolean
 }
@@ -966,11 +973,12 @@ export function useAppCore(options: AppCoreOptions) {
    *  reset in step 6, so step 9 needs it captured beforehand. */
   let mcOpenBeforeSwitch = false
 
-  /** Resolves a roster id for the pre-switch probe. The hub owns the roster and
-   *  the credentials; see the token note in `registerServerTargetResolver`. */
+  /** Resolves a roster id for the pre-switch probe. It returns the id alone:
+   *  the hub looks the entry up itself, because the token never reaches the
+   *  client. Only `name`/`url` ride along, and only for error messages. */
   registerServerTargetResolver((id) => {
     const srv = remoteServerEntries().find((s) => s.id === id)
-    return srv ? { url: srv.url, token: srv.token } : null
+    return srv ? { id: srv.id, name: srv.name, url: srv.url } : null
   })
 
   // ── Steps 2-6: teardown, all of it still under the *old* server id ──
