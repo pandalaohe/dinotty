@@ -129,6 +129,11 @@ fn has_csrf_header(headers: &HeaderMap) -> bool {
 /// `/api/auto-token` (loopback-only) and `/api/token-configured` (public) are
 /// hub endpoints by `auth_middleware`'s own lists, and `/api/token*` /
 /// `/api/tokens*` hand out the hub's credentials.
+///
+/// `rest` must already be the *resolved* path - see [`normalized_relay_path`].
+/// Handing this the raw remainder is what let `api/plugins/../../../api/token`
+/// through: no prefix here matches that string, but the upstream receives
+/// `/api/token`.
 fn is_hub_only_path(rest: &str) -> bool {
     // A trailing slash must not turn an excluded path into a relayable one.
     let path = rest.trim_end_matches('/');
@@ -142,6 +147,25 @@ fn is_hub_only_path(rest: &str) -> bool {
         // covers any future `api/tokens…` sibling, which is the safe side to
         // err on.
         || path.starts_with("api/tokens")
+}
+
+/// The path a relayed request will *actually* resolve to on the upstream.
+///
+/// The gate has to run on this rather than on the raw remainder, because
+/// `Url::parse` - the very call [`forward_http`] builds the upstream URL with -
+/// normalizes the path on the way: `.` and `..` segments, including their
+/// `%2e` spellings, are collapsed before the request leaves the hub. So
+/// `api/plugins/../../../api/token` arrives upstream as `/api/token`, while a
+/// check against the raw string sees no `api/token` prefix anywhere and waves
+/// it through - handing the caller the upstream's own credential.
+///
+/// Resolving here with that same parser is the point: the verdict and the
+/// request cannot disagree about where the request goes. The origin is
+/// irrelevant (only the path is normalized) and `.invalid` is reserved by
+/// RFC 2606, so this never names a host that could be reached.
+fn normalized_relay_path(rest: &str) -> Option<String> {
+    let url = reqwest::Url::parse(&format!("http://relay.invalid/{rest}")).ok()?;
+    Some(url.path().trim_start_matches('/').to_string())
 }
 
 fn forbidden(msg: &str) -> Response {
@@ -190,8 +214,18 @@ fn authorized_target(
         return Err(Box::new(forbidden("Cross-site requests are not allowed")));
     }
 
-    if is_hub_only_path(rest) {
-        tracing::warn!("relay: refuse hub-only path {} (id {id})", req.uri().path());
+    // Resolve before judging: `is_hub_only_path` must see the path the upstream
+    // will see, not the one the caller spelled.
+    let Some(resolved) = normalized_relay_path(rest) else {
+        return Err(Box::new(
+            (StatusCode::BAD_REQUEST, "malformed relay path").into_response(),
+        ));
+    };
+    if is_hub_only_path(&resolved) {
+        tracing::warn!(
+            "relay: refuse hub-only path {} (resolves to {resolved}, id {id})",
+            req.uri().path()
+        );
         return Err(Box::new(forbidden("This endpoint is not relayed; use it on the hub")));
     }
 
@@ -697,6 +731,39 @@ mod tests {
         for rest in ["api/info", "api/authentication", "api/tokenizer"] {
             assert!(!is_hub_only_path(rest), "{rest} is a normal relayed path");
         }
+    }
+
+    /// `Url::parse` collapses dot segments when it builds the upstream URL, so
+    /// judging the *raw* remainder let a caller spell its way around the
+    /// hub-only list and read the upstream's stored credential back out of
+    /// `/api/token`.
+    #[test]
+    fn a_dot_segment_cannot_smuggle_a_hub_only_path() {
+        for rest in [
+            "api/plugins/../../../api/token",
+            "api/plugins/../../../api/tokens",
+            "api/plugins/../../../api/auth",
+            "api/plugins/%2e%2e/%2e%2e/%2e%2e/api/token",
+            "api/../../api/token",
+            "./api/token",
+        ] {
+            let resp = gate(&request("GET", "/__srv/abc/x"), loopback(), rest).unwrap_err();
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{rest} must not be relayed");
+        }
+    }
+
+    /// The gate resolves exactly as the request builder does, so a path that
+    /// normalizes back to something harmless stays relayable.
+    #[test]
+    fn resolving_does_not_reject_ordinary_paths() {
+        assert_eq!(normalized_relay_path("api/info").unwrap(), "api/info");
+        assert_eq!(normalized_relay_path("api/plugins/x/y").unwrap(), "api/plugins/x/y");
+        assert_eq!(normalized_relay_path("api/plugins/../info").unwrap(), "api/info");
+        assert_eq!(
+            normalized_relay_path("api/plugins/%2e%2e/info").unwrap(),
+            "api/info",
+            "the encoded spelling of `..` is a `..` to the parser"
+        );
     }
 
     // ── header handling ─────────────────────────────────────────────────────
