@@ -292,8 +292,6 @@
 
     <CommandBookmarks ref="bookmarksRef" :get-send-fn="getSendFn" :create-tab="newTab" />
 
-    <ServerList ref="serverListRef" @connect="onServerConnect" />
-
     <SshHostsPanel ref="sshPanelRef" @connect="onSshConnect" />
 
     <SshAuthPromptDialog
@@ -401,7 +399,6 @@ import {
 import TabBar from './components/terminal/TabBar.vue'
 import CommandPalette from './components/command/CommandPalette.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
-import ServerList from './components/ServerList.vue'
 import SshHostsPanel from './components/ssh/SshHostsPanel.vue'
 import SshAuthPromptDialog from './components/ssh/SshAuthPromptDialog.vue'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
@@ -547,7 +544,6 @@ const appRootRef = ref<HTMLElement | null>(null)
 const tabBarRef = ref<InstanceType<typeof TabBar> | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
-const serverListRef = ref<InstanceType<typeof ServerList>>()
 const sshPanelRef = ref<InstanceType<typeof SshHostsPanel>>()
 
 // ── Orchestration composables (core → actions → keyboard → connectivity → tauri → bridge) ──
@@ -751,7 +747,6 @@ const {
 } = keyboard
 
 const {
-  onServerConnect,
   onSshConnect,
   onSshReconnect,
   onSshAuthSubmit,
