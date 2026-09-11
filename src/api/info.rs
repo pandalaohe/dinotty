@@ -35,8 +35,35 @@ pub fn info_payload(port: u16, version: &str, repo_url: &str) -> serde_json::Val
         "version": version,
         "repo_url": repo_url,
         "settings_version": CURRENT_SETTINGS_VERSION,
+        "capabilities": CAPABILITIES,
     })
 }
+
+/// What this build can be asked to do, beyond what the wire protocol has always
+/// meant.
+///
+/// A hub relays to servers it did not build and cannot upgrade, so a *client*
+/// that is newer than the server it is addressed to has to know which of its
+/// calls that server will understand - and the relay is a pass-through, so
+/// nothing between the two can absorb the difference. The version string cannot
+/// answer this: it is bumped per release, not per feature, so a build carrying
+/// a new op and one that predates it routinely report the same `version`. Only
+/// the server itself knows, and this is where it says so.
+///
+/// A capability is named for the *call* it unlocks, in the vocabulary of the
+/// code that has to branch on it. Renaming one silently downgrades every
+/// client, so treat these strings as wire format.
+///
+/// Absence is the answer for anything older: a server that predates this field
+/// returns no `capabilities` key at all, and a consumer must read that as "no"
+/// rather than as "cannot tell".
+pub const CAPABILITIES: &[&str] = &[
+    // `McOp::Set` is understood. It is the only way to drive Mission Control's
+    // open bit to a chosen state; a server without it knows only `Toggle`,
+    // which is not idempotent and closes the overview for *every* client
+    // attached to it.
+    "mc_op_set",
+];
 
 #[cfg(test)]
 mod tests {
@@ -50,6 +77,7 @@ mod tests {
         let payload = info_payload(58911, "0.26.0", "https://example.invalid/repo");
 
         assert_eq!(payload["settings_version"], serde_json::json!(CURRENT_SETTINGS_VERSION));
+        assert_eq!(payload["capabilities"], serde_json::json!(CAPABILITIES));
         // The pre-existing fields must not be disturbed by the addition.
         assert_eq!(payload["port"], serde_json::json!(58911));
         assert_eq!(payload["version"], serde_json::json!("0.26.0"));

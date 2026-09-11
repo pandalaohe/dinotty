@@ -43,6 +43,7 @@ import { floatWindowId, resolvePreviewOpenMode } from '../types/floatWindow'
 import { settings } from './useSettings'
 import { useTabLifecycle } from './useTabLifecycle'
 import { setMcSender, sendMcOp, useMissionControlState } from './useMissionControlState'
+import { ensureCapabilities } from './serverCapabilities'
 import { useSplitPane } from './useSplitPane'
 import { useSyncWebSocket, setPluginChangedHandler } from './useSyncWebSocket'
 import type { SyncClientMsg } from '../types/protocol'
@@ -1030,6 +1031,11 @@ export function useAppCore(options: AppCoreOptions) {
     mc.selectedWorkspaceId = null
     mc.selectedTabId = null
     mc.selectedTabTitle = null
+    // The mirror is now a leftover, not a reading: `synced` is what the
+    // older-server downgrade consults before turning a `set` into a `toggle`,
+    // and a `toggle` sent on a guess would close another device's overview.
+    // The new server's `mc_snapshot` sets it again.
+    mc.synced = false
   })
 
   // ── Steps 8-9: bring-up against the new server ──
@@ -1046,6 +1052,10 @@ export function useAppCore(options: AppCoreOptions) {
     // — leaving the old server's settings in place for the next PUT to write
     // to the new server.
     markCookieAuthenticated()
+    // Which calls the new server understands. Asked here rather than on first
+    // use so a click never waits on it, and re-asked on every switch because
+    // the map is keyed by server id - the answer that matters is this one's.
+    void ensureCapabilities()
     // Step 8 - `settings` is a global singleton ref, so it still holds the old
     // server's values.
     await settingsStore.load()

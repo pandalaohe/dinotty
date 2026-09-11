@@ -23,7 +23,7 @@ import { scopedKey } from './serverScope'
 import { toActiveWorkspaceId, useWorkspaces } from './useWorkspaces'
 import { apiCreatePluginTab } from './useTabApi'
 import { clearFileWorkspaceState } from './useFileWorkspaceState'
-import { useMissionControlState } from './useMissionControlState'
+import { markMcSnapshot, useMissionControlState } from './useMissionControlState'
 import { pickSuccessorTab } from '../utils/tabSuccessor'
 import { currentRevealNavGen, nextRevealNavGen } from '../utils/navGen'
 import { workspaceIdFromPaneId } from '../utils/pluginPaneId'
@@ -594,6 +594,9 @@ export function useSyncWebSocket(opts: {
         mcState.selectedWorkspaceId = msg.selected_workspace_id ?? null
         mcState.selectedTabId = msg.selected_tab_id ?? null
         mcState.selectedTabTitle = null
+        // This is the server's own answer, sent as the socket opens - the point
+        // at which the mirror stops being a leftover from the previous server.
+        markMcSnapshot()
       } else if (msg.type === 'layout_updated') {
         // Two-pass match: prefer paneId, fall back to leaf overlap only if no
         // paneId match. A single-pass `find()` with OR-ed conditions can pick

@@ -116,6 +116,18 @@ pub struct ProbeRemoteServerResponse {
     /// Upstream's `settings_version`, for the version-compat warning. `None`
     /// means "not learned" - see the type docs, not "incompatible".
     pub settings_version: Option<u32>,
+    /// Upstream's own version string, e.g. `0.24.3`.
+    ///
+    /// This is what the picker shows so a user can see *why* a freshly switched
+    /// server is missing something, and it is deliberately the human-facing
+    /// string rather than a number to compare: the repo bumps the version per
+    /// release, not per feature, so two builds that differ in what they
+    /// understand routinely report the same one. Feature support is
+    /// `capabilities` in the same payload, and is not inferable from this.
+    ///
+    /// `None` means "not learned" - absent on a build older than the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     /// Whether the credential the probe used was accepted.
     ///
     /// - `None` - no credential was supplied, so authentication was never
@@ -361,6 +373,13 @@ pub async fn probe_remote_server(
                 .get("settings_version")
                 .and_then(serde_json::Value::as_u64)
                 .and_then(|v| u32::try_from(v).ok());
+            probe.version =
+                body.get("version").and_then(serde_json::Value::as_str).map(str::to_string);
+            // The probe is the only thing that ever learns this, so it is also
+            // the only place that can record it for the picker.
+            if let (Some(id), Some(version)) = (req.id.as_deref(), probe.version.as_deref()) {
+                remember_version(&settings, id, version).await;
+            }
         }
     } else if response.status() == StatusCode::UNAUTHORIZED {
         // The upstream's `auth_middleware` answers a bad Bearer with exactly
@@ -369,6 +388,30 @@ pub async fn probe_remote_server(
         probe.token_valid = Some(false);
     }
     Json(probe).into_response()
+}
+
+/// Record the upstream version a probe just learned.
+///
+/// `last_seen_version` is what the picker shows as "this server is older", and
+/// the probe is the only thing that can ever learn it: the roster API is written
+/// by the *client*, which has no way to know, and the relay never reads it. So
+/// the write belongs here, on the one path that has the answer.
+///
+/// Unchanged versions are not rewritten: a server switch probes on every use,
+/// and rewriting `settings.json` each time would turn a read-shaped operation
+/// into a disk write.
+async fn remember_version(settings: &SettingsState, id: &str, version: &str) {
+    let mut current = settings.write().await;
+    let Some(server) = current.remote_servers.iter_mut().find(|s| s.id == id) else {
+        return;
+    };
+    if server.last_seen_version.as_deref() == Some(version) {
+        return;
+    }
+    server.last_seen_version = Some(version.to_string());
+    if let Err(e) = super::io::save_settings(&current) {
+        tracing::warn!("could not persist last_seen_version for {id}: {e}");
+    }
 }
 
 fn unreachable(reason: impl Into<String>) -> ProbeRemoteServerResponse {

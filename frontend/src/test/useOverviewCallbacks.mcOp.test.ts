@@ -6,11 +6,24 @@ import type { SyncClientMsg } from '../types/protocol'
 // option is an inert stub so importing the module does not drag in transport.
 vi.mock('../composables/useTabApi', () => ({ apiCreateSshTab: vi.fn() }))
 
+// These tests are about the callbacks, not about which op a server can take:
+// the capability answer is pinned to "understands `set`" so every case below
+// exercises the ordinary path. The downgrade has its own file.
+vi.mock('../composables/serverCapabilities', () => ({
+  cachedCapabilities: () => new Set(['mc_op_set']),
+  ensureCapabilities: async () => new Set(['mc_op_set']),
+}))
+
 import { useOverviewCallbacks } from '../composables/useOverviewCallbacks'
-import { useMissionControlState } from '../composables/useMissionControlState'
+import { setMcSender, useMissionControlState } from '../composables/useMissionControlState'
 
 const mcState = useMissionControlState()
 const sent: SyncClientMsg[] = []
+
+// The callbacks hand their op to `sendMcOp`, which is the one exit every MC op
+// leaves by - so the spy belongs on that exit, not on the `sendSync` the
+// callbacks happen to be holding.
+setMcSender((op) => sent.push({ type: 'mission_control_op', op }))
 
 function setup() {
   return useOverviewCallbacks({
