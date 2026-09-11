@@ -31,10 +31,16 @@ macOS 产物已通过 Apple Developer ID 签名并完成公证，首次打开无
 
 | 格式 | 适用发行版 | 安装方式 |
 |------|-----------|---------|
-| `.deb` | Debian / Ubuntu / Linux Mint | `sudo dpkg -i dinotty_<version>_amd64.deb` |
+| `.deb` | Ubuntu 22.04+ / Debian 12+ / Linux Mint 21+ | `sudo dpkg -i dinotty_<version>_amd64.deb` |
 | `.AppImage` | 大多数发行版 | `chmod +x Dinotty_*.AppImage && ./Dinotty_*.AppImage` |
 
 `.AppImage` 是单文件可执行，无需安装；首次运行如果提示信任，需在文件属性里勾选「允许执行」。
+
+::: warning 桌面端 `.deb` 需要 glibc ≥ 2.34
+桌面端 `.deb` 在 Ubuntu 22.04 runner 上构建（GNOME/WebKit 的运行库只有 22.04 起才齐备），因此二进制要求 `libc6 (>= 2.34)`，只能装在 Ubuntu 22.04+ / Debian 12+ / Mint 21+ 上。
+
+在 Ubuntu 20.04 / Debian 11 这类老系统上，`dpkg -i` 会报依赖错误且 `apt-get -f install` 也修不好 —— 这是 glibc 符号版本不匹配，不是缺包。老系统请改用下面「服务端」的 `.deb`，或直接用 AppImage / Docker 镜像。
+:::
 
 ### Windows
 
@@ -48,6 +54,8 @@ macOS 产物已通过 Apple Developer ID 签名并完成公证，首次打开无
 ## 服务端 deb（Linux）
 
 `dinotty-server` 是独立的 Rust 二进制，不依赖桌面端，适合部署到 VPS 或家用服务器。
+
+服务端 `.deb` 在 Ubuntu 20.04 容器里单独构建，要求 `libc6 (>= 2.31)`，可装在 **Ubuntu 20.04+ / Debian 11+ / Linux Mint 20+** 上，比桌面端 `.deb` 的适用范围宽。
 
 ```bash
 # 一键下载安装最新版
