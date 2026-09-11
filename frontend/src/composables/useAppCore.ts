@@ -101,8 +101,12 @@ import { storeToRefs } from 'pinia'
  */
 export const activeServerIdRef = ref(activeServerId())
 
-/** Whether the status-bar server picker is showing. This is the escape hatch
- *  for switching while Mission Control is closed or disconnected. */
+/** Whether the status-bar server picker is showing.
+ *
+ *  This is the one switch entry - the status bar's chip is the only UI that
+ *  opens it. Mission Control cannot host a second one: its open bit is server
+ *  state, so it cannot even open while the active server is unreachable, which
+ *  is exactly when a switch is needed. */
 export const serverPickerOpen = ref(false)
 
 export function toggleServerPicker(): void {

@@ -37,9 +37,9 @@ beforeEach(() => {
 })
 
 describe('useRemoteServers roster sharing', () => {
-  // Both switch entry points (the StatusBar escape hatch and the Mission
-  // Control switcher) read this module's state rather than fetching their own,
-  // so a refresh triggered by one is what the other renders.
+  // Every consumer of the roster - the status bar's chip and picker, and the
+  // manager dialog - reads this module's state rather than fetching its own, so
+  // a refresh triggered by one is what the others render.
   it('is a shared singleton: a refresh is visible to a second consumer', async () => {
     const first = useRemoteServers()
     const second = useRemoteServers()

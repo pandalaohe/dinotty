@@ -361,7 +361,7 @@ export default {
   'settings.save': '保存',
   'settings.cancel': '取消',
   'settings.monitor': '系统监控',
-  'settings.monitor.enabled': '启用状态栏',
+  'settings.monitor.enabled': '显示监控项',
   'settings.monitor.localHint': '数据来自运行 dinotty 的本机',
   'settings.virtualKeyboard': '虚拟键盘',
   'settings.virtualKeyboard.show': '显示悬浮按钮',
@@ -791,8 +791,7 @@ export default {
   'server.newName': '新服务端',
   'server.delete': '删除',
   'server.confirmDelete': '删除服务端「{name}」？',
-  'server.confirmDeleteActive':
-    '「{name}」是当前正在使用的服务端。保存后会先切回本机，再删除它。',
+  'server.confirmDeleteActive': '「{name}」是当前正在使用的服务端。保存后会先切回本机，再删除它。',
   'server.moveUp': '上移',
   'server.moveDown': '下移',
   // 「测试连接」

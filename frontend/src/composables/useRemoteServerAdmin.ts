@@ -270,13 +270,7 @@ function probeFailure(error: string): ProbeResult {
   }
 }
 
-export type ProbeFailureKind =
-  | 'timeout'
-  | 'refused'
-  | 'dns'
-  | 'notDinotty'
-  | 'badUrl'
-  | 'other'
+export type ProbeFailureKind = 'timeout' | 'refused' | 'dns' | 'notDinotty' | 'badUrl' | 'other'
 
 /**
  * The backend's own wordings, from `classify_transport_error` and
@@ -340,9 +334,11 @@ export function probeFailureText(t: Translate, result: ProbeResult, url: string)
 
 // ── Manager UI state ─────────────────────────────────────────────
 //
-// Module-level rather than owned by a component: two different places open
-// this dialog (the Mission Control switcher and the status bar), and exactly
-// one instance must exist, or two dialogs would race over the same roster.
+// Module-level rather than owned by a component: it is opened from the server
+// picker, which is rendered by the status bar but driven from several places
+// (the chip, the palette, the keybinding, Mission Control's disconnected
+// panel). Exactly one instance must exist, or two dialogs would race over the
+// same roster.
 
 export const managerOpen = ref(false)
 

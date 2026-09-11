@@ -371,7 +371,7 @@ export default {
   'settings.save': 'Save',
   'settings.cancel': 'Cancel',
   'settings.monitor': 'System Monitor',
-  'settings.monitor.enabled': 'Enable status bar',
+  'settings.monitor.enabled': 'Show monitor items',
   'settings.monitor.localHint': 'Data from the local machine running dinotty',
   'settings.virtualKeyboard': 'Virtual Keyboard',
   'settings.virtualKeyboard.show': 'Show floating button',

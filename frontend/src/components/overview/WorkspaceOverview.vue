@@ -28,7 +28,6 @@
         >
           <X :size="18" />
         </button>
-        <ServerSwitcher ref="serverSwitcherRef" @close="$emit('close')" />
         <WorkspaceList
           v-if="syncConnected"
           :workspaces="workspaces"
@@ -47,12 +46,13 @@
           <!-- Disconnected: the grid would show stale cards and every op would
                be dropped, and the selection mirror is broadcast-only (see the
                `selectedWorkspaceId` comment), so a local switch here would
-               never resolve. Offer the switcher instead. -->
+               never resolve. Offer the server picker instead - it is the only
+               control that still works with the socket down. -->
           <div v-if="!syncConnected" class="mc-offline">
             <Unplug class="mc-offline-icon" :size="32" />
             <p class="mc-offline-title">{{ t('server.disconnected') }}</p>
             <p class="mc-offline-hint">{{ t('server.disconnectedHint') }}</p>
-            <button class="mc-offline-btn" @click="serverSwitcherRef?.openPop()">
+            <button class="mc-offline-btn" @click="toggleServerPicker()">
               <Server :size="14" />
               <span>{{ t('server.switch') }}</span>
             </button>
@@ -95,10 +95,14 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useTabPreview, type TabCard } from '../../composables/useTabPreview'
 import { useMissionControlState, sendMcOp } from '../../composables/useMissionControlState'
+import {
+  closeServerPicker,
+  serverPickerOpen,
+  toggleServerPicker,
+} from '../../composables/useAppCore'
 import { getAllLeaves } from '../../types/pane'
 import type { Workspace } from '../../types/workspace'
 import WorkspaceList from './WorkspaceList.vue'
-import ServerSwitcher from './ServerSwitcher.vue'
 import TabOverview from './TabOverview.vue'
 import CreateWorkspaceDialog from '../ui/CreateWorkspaceDialog.vue'
 import { shallowReactive } from 'vue'
@@ -131,12 +135,12 @@ const mcState = useMissionControlState()
 
 // The workspace/tab grid is rebuilt from the active server's state; while the
 // sync WS is down there is nothing to render and nothing to drive it, so the
-// grid is replaced by the disconnected panel + switcher escape hatch.
+// grid is replaced by the disconnected panel, which offers the status bar's
+// server picker as the way out.
 const syncConnected = computed(() => ui.syncConnected)
 
 const closing = ref(false)
 const backdropRef = ref<any>(null)
-const serverSwitcherRef = ref<InstanceType<typeof ServerSwitcher> | null>(null)
 const tabOverviewRef = ref<InstanceType<typeof TabOverview> | null>(null)
 const showCreateDialog = ref(false)
 const renamingWorkspace = ref<Workspace | null>(null)
@@ -167,10 +171,13 @@ function onDocKeydown(e: KeyboardEvent) {
   onKeydown(e)
 }
 
-// Managing servers is a dialog inside MC now (`ServerManagerDialog`, opened
-// from the switcher itself), so this component no longer has a part in it: the
-// old "close MC, open the settings panel" route led to a panel that has no
-// server section at all.
+// Managing servers is a dialog (`ServerManagerDialog`, opened from the status
+// bar's picker), so this component has no part in it: the old "close MC, open
+// the settings panel" route led to a panel with no server section at all.
+//
+// MC hosts no switcher of its own either - see `serverPickerOpen` in
+// `useAppCore`. The `s` binding below opens the status bar's picker, which
+// rides above this overlay via `.status-bar.is-elevated`.
 
 // Capture all cards when visible — deferred so overlay renders first
 const allCards = ref<TabCard[]>([])
@@ -340,14 +347,16 @@ function onNewTabForSelected() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  // While the server popover is open the switcher owns the keyboard: it
-  // binds Up/Down/Enter/Esc itself (and stops propagation for them), but `s`
-  // and `n` would otherwise re-trigger here. `Escape` must not fall through
-  // to the Cancel op below either - that would close MC server-side too.
-  if (serverSwitcherRef.value?.open) {
-    if (e.key === 's' || e.key === 'Escape') {
+  // While the server picker is open it owns the keyboard. It lives in the
+  // status bar, underneath this backdrop, so its own Up/Down/Enter/Escape
+  // handler sits on `window` - which only runs *after* this one. Without the
+  // gate, Up/Down would also drive workspace navigation, Enter would confirm a
+  // tab, and Escape would become the Cancel op and close MC server-side for
+  // every client.
+  if (serverPickerOpen.value) {
+    if ((e.key === 's' || e.key === 'Escape') && !e.metaKey && !e.ctrlKey) {
       e.preventDefault()
-      serverSwitcherRef.value.close()
+      closeServerPicker()
     }
     return
   }
@@ -378,13 +387,15 @@ function onKeydown(e: KeyboardEvent) {
       }
       break
     case 's':
-      // Server switcher. Device-level local view state, deliberately not an
-      // McOp: the roster and the active server belong to this device, not to
-      // the server's own MissionControlState. Also the escape hatch when the
-      // sync WS is down (the grid is replaced by the disconnected panel).
+      // The server picker - the same one the status-bar chip opens, not a
+      // second implementation of it. Device-level local view state,
+      // deliberately not an McOp: the roster and the active server belong to
+      // this device, not to the server's own MissionControlState. It is also
+      // the way out when the sync WS is down and the grid has been replaced by
+      // the disconnected panel.
       if (!e.metaKey && !e.ctrlKey) {
         e.preventDefault()
-        serverSwitcherRef.value?.openPop()
+        toggleServerPicker()
       }
       break
     case 'Delete':

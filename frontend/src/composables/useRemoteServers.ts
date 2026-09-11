@@ -3,7 +3,7 @@ import { authFetch, hubApiUrl } from './apiBase'
 import { activeServerId, LOCAL_SERVER_ID } from './activeServer'
 
 /**
- * One entry in the Mission Control server switcher.
+ * One entry in the server picker on the status bar.
  *
  * Mirrors the Rust `RemoteServer` shape (minus the write-only token, which the
  * API never returns - clients read `hasToken` instead). `local` is synthesized
@@ -70,7 +70,11 @@ async function readRoster(): Promise<{
     }
     const data = await res.json()
     const list = Array.isArray(data) ? data : (data?.servers ?? [])
-    return { ok: true, entries: (list as any[]).map(normalize).filter(Boolean) as ServerEntry[], error: null }
+    return {
+      ok: true,
+      entries: (list as any[]).map(normalize).filter(Boolean) as ServerEntry[],
+      error: null,
+    }
   } catch (e) {
     return { ok: false, entries: [], error: e instanceof Error ? e.message : String(e) }
   }
@@ -127,12 +131,11 @@ export function markServerVerified(id: string): void {
 /**
  * How one roster row should read.
  *
- * Shared by the three places that render a server list - the Mission Control
- * switcher, the manager dialog and the status bar picker - so that "no token"
- * cannot mean an amber dot in one and a plain one in another. The tokenless
- * state is the one that matters: with an empty token the upstream's
- * `auth_middleware` lets everyone through, so it is a security state, not a
- * cosmetic one.
+ * Read by the status bar's picker - both the chip's dot and every row's - so
+ * that "no token" cannot mean an amber dot in one place and a plain one in
+ * another. The tokenless state is the one that matters: with an empty token
+ * the upstream's `auth_middleware` lets everyone through, so it is a security
+ * state, not a cosmetic one.
  */
 export type ServerVisualState = 'local' | 'current' | 'noToken' | 'ready'
 
@@ -145,9 +148,7 @@ export function serverVisualState(entry: ServerEntry, currentId: string): Server
 export function useRemoteServers() {
   const servers = computed<ServerEntry[]>(() => [localEntry, ...roster.value])
   const currentId = computed(() => activeServerId())
-  const current = computed(
-    () => servers.value.find((s) => s.id === currentId.value) ?? localEntry
-  )
+  const current = computed(() => servers.value.find((s) => s.id === currentId.value) ?? localEntry)
   /** True when the active server is no longer in the roster (e.g. removed). */
   const currentMissing = computed(
     () => !currentId.value.startsWith(LOCAL_SERVER_ID) && current.value.local
