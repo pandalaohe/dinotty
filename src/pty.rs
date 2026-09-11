@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_lines)]
-use crate::event_bus::BusEvent;
+use crate::events::BusEvent;
 use crate::platform::shell::{self, ShellLaunchKind, ShellSpec};
 use crate::session::{
     CloseReason, Session, SessionBackend, SessionManager, SessionStatus, SyncMsg, SyncState,

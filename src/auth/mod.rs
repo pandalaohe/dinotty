@@ -18,6 +18,7 @@ use std::{net::IpAddr, sync::OnceLock, time::Instant};
 use crate::auth::session::SessionStore;
 use crate::settings::SettingsState;
 
+pub mod handlers;
 pub mod session;
 pub mod verification_code;
 

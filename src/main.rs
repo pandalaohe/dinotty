@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use dinotty_server::{
-    agent, api::clipboard, audit, auth, event_bus, events, file_watcher, history, mcp,
+    agent, api::clipboard, audit, auth, events, file_watcher, history, mcp,
     mission_control, monitor, notification, openapi, plugin, proxy, session, settings, tabs,
-    templates, token, update_check, webhook, workspace, workspace_mgmt, ws,
+    templates, token, update_check, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -32,8 +32,7 @@ use crate::session::SessionManager;
 mod app_state;
 use app_state::AppState;
 
-mod auth_handlers;
-use auth_handlers::{
+use auth::handlers::{
     auto_token, check_auth, get_token, list_sessions, login, logout, put_settings_with_session_ttl,
     request_code, revoke_other_sessions, revoke_session, token_configured, update_token,
 };
@@ -355,9 +354,9 @@ async fn main() {
     // Load webhook configs from settings
     let webhook_configs = {
         // Webhook configs will be added to settings later; for now empty
-        Vec::<webhook::WebhookConfig>::new()
+        Vec::<events::WebhookConfig>::new()
     };
-    let webhooks = Arc::new(webhook::WebhookDispatcher::new(webhook_configs));
+    let webhooks = Arc::new(events::WebhookDispatcher::new(webhook_configs));
     webhooks.start(&manager.event_bus);
 
     // Shared single instance: the in-flight WSL probe dedup relies on it.

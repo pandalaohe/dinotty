@@ -8,7 +8,7 @@ use crate::attention::{
     evaluate_ingest_gate, AttentionLedger, DedupOutcome, IngestGateResult, IngestSource,
     MarkReadResult, ProducerOutcome, ReserveResult, Severity,
 };
-use crate::event_bus::{BusEvent, EventBus};
+use crate::events::{BusEvent, EventBus};
 use crate::platform::{process::CommandNoWindowExt, shell};
 use crate::session::{SyncClient, SyncMsg};
 use crate::settings::{NotificationConfig, SettingsState};
