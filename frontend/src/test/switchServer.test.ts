@@ -274,6 +274,91 @@ describe('switchServer', () => {
     })
   })
 
+  describe('step 1 — a target that rejects the stored credential', () => {
+    /** Capture the probe's own log line, which is where the reason is stated. */
+    function captureWarnings(): string[] {
+      const lines: string[] = []
+      vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+        lines.push(args.map(String).join(' '))
+      })
+      return lines
+    }
+
+    it('refuses to switch when the hub reports token_valid: false', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      // Reachable, but the hub's stored token was rejected. Switching would put
+      // the UI on a server that 401s every relayed request, so this is a failed
+      // switch rather than a degraded one.
+      mockHub({ body: { reachable: true, token_configured: true, token_valid: false } })
+      active.registerServerTargetResolver(() => ({ id: 'lab', name: 'Lab board' }))
+      const teardown = vi.fn()
+      const reconnect = vi.fn()
+      active.registerSwitchTeardown(teardown)
+      active.registerSwitchReconnect(reconnect)
+
+      await active.switchServer('lab')
+
+      // "The bad token must not enter the new server": no id move, no teardown,
+      // nothing brought up against a credential the target already refused.
+      expect(active.activeServerId()).toBe('srv-old')
+      expect(localStorage.getItem(ACTIVE_KEY)).toBe('srv-old')
+      expect(teardown).not.toHaveBeenCalled()
+      expect(reconnect).not.toHaveBeenCalled()
+    })
+
+    it('names the target instead of its url when it refuses the credential', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      const warnings = captureWarnings()
+      mockHub({ body: { reachable: true, token_configured: true, token_valid: false } })
+      active.registerServerTargetResolver(() => ({
+        id: 'lab',
+        name: 'Lab board',
+        url: 'http://192.168.1.9:8999',
+      }))
+
+      await active.switchServer('lab')
+
+      // The frontend may not hold the url at all (the roster is shared between
+      // two shapes and only one carries one), so a message keyed on the url can
+      // read as "undefined". The name always exists.
+      const line = warnings.find((w) => w.includes('stored token'))
+      expect(line).toBeDefined()
+      expect(line).toContain('Lab board')
+      expect(line).not.toContain('http://192.168.1.9:8999')
+    })
+
+    it('still switches when the target has no token to reject', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      // `token_valid` is absent, not false: the hub had no credential to try.
+      // Reading "absent" as a rejection would break every tokenless server,
+      // which is the mirror image of the bug this whole change fixes.
+      mockHub({ body: { reachable: true, token_configured: false } })
+      active.registerServerTargetResolver(() => ({ id: 'attic', name: 'Attic' }))
+      const teardown = vi.fn()
+      active.registerSwitchTeardown(teardown)
+
+      await active.switchServer('attic')
+
+      expect(teardown).toHaveBeenCalled()
+      expect(active.activeServerId()).toBe('attic')
+    })
+
+    it('still switches when the hub accepted the stored token', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      mockHub({ body: { reachable: true, token_configured: true, token_valid: true } })
+      active.registerServerTargetResolver(() => ({ id: 'lab', name: 'Lab board' }))
+
+      await active.switchServer('lab')
+
+      expect(active.activeServerId()).toBe('lab')
+      expect(localStorage.getItem(ACTIVE_KEY)).toBe('lab')
+    })
+  })
+
   describe('steps 2-9 — ordering', () => {
     it('runs teardowns under the old id and reconnects under the new one', async () => {
       localStorage.setItem(ACTIVE_KEY, 'srv-old')

@@ -168,8 +168,13 @@ const PROBE_PATH = '/api/remote-servers/probe'
  * accessor is the contract for "the hub, not the active server", and it is what
  * keeps this correct if the two ever diverge.
  *
- * Every failure mode (unknown id, network error, non-2xx, `reachable: false`)
- * collapses to `false` so the caller aborts with the old server untouched.
+ * "Can we reach it" is read as "will the relayed requests work", not merely "is
+ * anything listening" — a target that answers but rejects the stored credential
+ * is *not* a target we may switch to. See the `token_valid` check below.
+ *
+ * Every failure mode (unknown id, network error, non-2xx, `reachable: false`,
+ * a rejected credential) collapses to `false` so the caller aborts with the old
+ * server untouched.
  */
 async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
   const label = describeTarget(target)
@@ -191,6 +196,7 @@ async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
     const data = (await res.json().catch(() => null)) as {
       reachable?: boolean
       error?: string
+      token_valid?: boolean
     } | null
     if (!data) {
       console.warn(`[activeServer] probe of ${label} returned no result`)
@@ -198,6 +204,25 @@ async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
     }
     if (data.reachable === false) {
       console.warn(`[activeServer] probe of ${label} reported unreachable: ${data.error ?? ''}`)
+      return false
+    }
+    // The hub reached the target and the target rejected the stored credential
+    // (a 401 from its `/api/info` — reached only now that the probe runs by id
+    // and the hub can supply a token at all). Every reachability check above
+    // passed, but switching would land the UI on a server that 401s every
+    // relayed request: tabs, settings and the sync socket would all come back
+    // empty against a server we *did* reach. There is no recovery from inside
+    // the new server — the fix is re-pasting the token on the hub — so this is
+    // a failed switch, not a degraded one. Leaving the old server in place is
+    // the only state the user can act from.
+    //
+    // Only an explicit `false` counts. `undefined` means the hub had no token
+    // to try, which is an ordinary working configuration (`token_configured`
+    // false), and `true` means it was accepted.
+    if (data.token_valid === false) {
+      console.warn(
+        `[activeServer] probe of ${label} rejected the stored token — refusing to switch`
+      )
       return false
     }
     return true
