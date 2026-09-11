@@ -98,14 +98,30 @@ export async function refreshRemoteServers(): Promise<void> {
 }
 
 /**
- * Load the roster once per session unless it is already available.
+ * `refreshRemoteServers`, but only when the roster is not already loaded.
  *
- * Called when the popover opens, so an unavailable endpoint is retried on the
- * next open (B2 may land while the app is running) without polling.
+ * The server switchers call `refreshRemoteServers` on open so a roster change
+ * made on another device shows up; this is the cheaper variant for a caller
+ * that only needs the list to exist.
  */
 export async function ensureRemoteServers(): Promise<void> {
   if (status.value === 'ready' || status.value === 'loading') return
   await refreshRemoteServers()
+}
+
+/**
+ * Note that a server answered our probe, which means we hold a credential it
+ * accepted — the one fact the roster endpoint cannot carry, because it is
+ * `skip_serializing` on the token and would otherwise require a round trip to
+ * re-derive. Drives the same lock icon as `has_token`.
+ */
+export function markServerVerified(id: string): void {
+  if (id === LOCAL_SERVER_ID) return
+  const entry = roster.value.find((s) => s.id === id)
+  if (!entry || entry.hasToken) return
+  // Replace rather than mutate: `roster` is a `ref` holding plain objects, and
+  // the entry is also handed out to callers that hold on to the old one.
+  roster.value = roster.value.map((s) => (s.id === id ? { ...s, hasToken: true } : s))
 }
 
 export function useRemoteServers() {

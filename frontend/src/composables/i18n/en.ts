@@ -523,6 +523,7 @@ export default {
   'terminal.createFailed': 'Unable to create the terminal.',
   'terminal.splitFailed': 'Unable to create the split terminal.',
   'settings.tab.notification': 'Notification',
+  'settings.tab.workspaces': 'Workspaces',
   'notification.title': 'NOTIFICATIONS',
   'notification.pin': 'Pin panel',
   'notification.empty': 'No notifications',
@@ -679,6 +680,7 @@ export default {
   'keybinding.searchTerminal': 'Search Terminal',
   'keybinding.switchTab': 'Switch to Tab (⌘1~9)',
   'keybinding.missionControl': 'Mission Control',
+  'keybinding.switchServer': 'Switch Server',
   'keybinding.superviseTabs': 'Supervise Tabs',
   'keybinding.superviseTabsHint':
     'Jumps to the next unread tab, or the tab to the right when all tabs are read.',
@@ -758,6 +760,7 @@ export default {
   'server.disconnected': 'Not connected',
   'server.disconnectedHint':
     'Lost contact with this server. Switch to another one, or wait for it to come back.',
+  'server.switchFailed': 'Could not switch server',
   'settings.tab.about': 'About',
   'settings.tab.security': 'Security',
   'security.sessions': 'Active Sessions',
@@ -931,6 +934,8 @@ export default {
   'palette.rename': 'Rename',
   'palette.sshConnect': 'SSH Connection',
   'palette.sshConnectDesc': 'Connect to a remote server via SSH',
+  'palette.switchServer': 'Switch Server',
+  'palette.switchServerDesc': 'Switch the Mission Control server',
   'palette.newLocalTerminal': 'New Local Terminal',
   'palette.newLocalTerminalDesc': 'Open a local terminal session',
   'ssh.title': 'SSH Connections',

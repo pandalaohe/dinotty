@@ -26,6 +26,7 @@ import { FOCUS_ACTIVE_KEY } from './useFocusActive'
 import { useSshAuth } from './useSshAuth'
 import { useCursorPicker } from './useCursorPicker'
 import { useOverviewCallbacks } from './useOverviewCallbacks'
+import { markServerVerified } from './useRemoteServers'
 import { useNotificationPresentation } from './useNotificationPresentation'
 import {
   setToastInstance,
@@ -1052,6 +1053,11 @@ export function useAppCore(options: AppCoreOptions) {
     // Step 8 - `settings` is a global singleton ref, so it still holds the old
     // server's values.
     await settingsStore.load()
+    // The switched-to server is in the roster by definition: `switchServer`
+    // refuses an id the resolver cannot find, and the probe passed with the
+    // token we hold. Recording it keeps the switchers' lock icon honest now
+    // that it is no longer inferred from a relayed settings payload.
+    markServerVerified(activeServerId())
     void loadAll()
   })
 

@@ -4,7 +4,7 @@
       <button
         class="status-bar-server"
         :class="{ 'is-open': serverPickerOpen }"
-        :title="t('serverSwitcher.title')"
+        :title="t('server.switch')"
         :aria-expanded="serverPickerOpen"
         @click.stop="toggleServerPicker()"
       >
@@ -92,10 +92,10 @@ import { LOCAL_SERVER_ID, switchServer } from '../../composables/activeServer'
 import {
   activeServerIdRef,
   closeServerPicker,
-  remoteServerEntries,
   serverPickerOpen,
   toggleServerPicker,
 } from '../../composables/useAppCore'
+import { refreshRemoteServers, useRemoteServers } from '../../composables/useRemoteServers'
 import { useUiStore } from '../../stores/uiStore'
 import { useStatusBarItemsStore } from '../../stores/statusBarItems'
 import { usePluginMonitorStore } from '../../stores/pluginMonitor'
@@ -138,18 +138,26 @@ const monitorSettings = computed(
 
 const syncConnected = computed(() => ui.syncConnected)
 
+// The roster comes from `useRemoteServers`, the same source the Mission Control
+// switcher reads: the hub's `GET /api/remote-servers`. Reading it out of the
+// active server's settings payload instead would show two different lists as
+// soon as a remote server is active, because `settings` is relayed.
+const { servers: remoteServers } = useRemoteServers()
+
 /** Local first: it is the always-reachable way back. */
 const serverOptions = computed(() => [
   {
     id: LOCAL_SERVER_ID,
-    name: t('serverSwitcher.local'),
+    name: t('server.local'),
     subtitle: location.host,
   },
-  ...remoteServerEntries().map((srv) => ({
-    id: srv.id,
-    name: srv.name || srv.url,
-    subtitle: srv.url,
-  })),
+  ...remoteServers.value
+    .filter((srv) => !srv.local)
+    .map((srv) => ({
+      id: srv.id,
+      name: srv.name || srv.url,
+      subtitle: srv.url,
+    })),
 ])
 
 const activeServerLabel = computed(
@@ -174,7 +182,7 @@ async function onPickServer(id: string) {
   await switchServer(id)
   // `switchServer` aborts (leaving everything as it was) when the target fails
   // its reachability probe, so an unchanged id means the probe did not pass.
-  if (activeServerIdRef.value !== id) toast.error(t('serverSwitcher.switchFailed'))
+  if (activeServerIdRef.value !== id) toast.error(t('server.switchFailed'))
 }
 
 function onServerPickerKeydown(e: KeyboardEvent) {
@@ -281,6 +289,14 @@ watch(
   () => allRightItems.value.length,
   () => nextTick(updateOverflow)
 )
+
+// The picker is opened from three places (the chip, the palette, the
+// keybinding), so the roster is refreshed on the shared open bit rather than in
+// the chip's click handler. Same call the Mission Control switcher makes on
+// open, so both entries show the same list after a roster change.
+watch(serverPickerOpen, (open) => {
+  if (open) void refreshRemoteServers()
+})
 </script>
 
 <style scoped>
