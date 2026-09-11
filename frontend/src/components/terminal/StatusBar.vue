@@ -11,11 +11,11 @@
         :aria-expanded="serverPickerOpen"
         @click.stop="toggleServerPicker()"
       >
-        <Server class="server-icon" :size="12" />
-        <span class="server-dot" :class="{ 'is-offline': chipOffline }" />
+        <!-- Icon size, gap and padding are `.status-bar-item`'s, so the chip
+             reads as one more metric rather than as a separate control. -->
+        <Server class="server-icon" :size="14" />
         <span class="server-name" :class="{ stale: currentMissing }">{{ activeServerLabel }}</span>
-        <ChevronUp v-if="serverPickerOpen" class="server-chevron" :size="12" />
-        <ChevronDown v-else class="server-chevron" :size="12" />
+        <span class="server-dot" :class="{ 'is-offline': chipOffline }" />
       </button>
       <div v-if="serverPickerOpen" class="server-picker" @click.stop>
         <!-- One wrapper per row: the failure notice belongs to the row but
@@ -132,7 +132,7 @@ import {
   gpuUtilHistory,
   gpuMemHistory,
 } from '../../composables/useMonitor'
-import { AlertCircle, Check, ChevronDown, ChevronUp, KeyRound, Server } from 'lucide-vue-next'
+import { AlertCircle, Check, KeyRound, Server } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { usePaneWarning } from '../../composables/usePaneWarning'
 import { useI18n } from '../../composables/useI18n'
@@ -498,45 +498,42 @@ watch(serverPickerOpen, (open) => {
 .status-bar-server-wrap {
   position: relative;
   flex-shrink: 0;
-  /* Claim the bar's full height rather than wrapping an 18px pill. On a phone
-     there is no keyboard, so this chip is the *only* way to switch servers -
-     and 18px is a hard tap. Stretching buys the 24px the bar actually has. */
+  /* Claim the bar's full height rather than wrapping a pill: on a phone there
+     is no keyboard, so this chip is the *only* way to switch servers, and the
+     24px the bar has beats the 18px a centred pill would get. */
   align-self: stretch;
   display: flex;
 }
+/* `.status-bar-item`'s box exactly - gap, padding, font size, line height,
+   radius. The chip sits beside three of those, and matching them is what makes
+   it read as one more metric instead of as a separate control. */
 .status-bar-server {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  /* Fixed, so a longer server name cannot shove the monitor items beside it
-     sideways - the name ellipsises inside instead. The picker and the tooltip
-     carry the full text. */
-  width: 140px;
-  height: 100%;
-  padding: 0 6px;
-  font: inherit;
-  font-size: 11px;
-  color: var(--fg-muted);
-  background: transparent;
+  gap: 4px;
+  background: none;
   border: none;
-  border-radius: var(--radius);
+  color: var(--fg-muted);
   cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  /* Capped rather than fixed: the local entry ("This device" / "本机") is what
+     most sessions show, and a fixed 140px left a wide empty gap on every one of
+     them. Past the cap a long remote name ellipsises, so the monitor items
+     still stop moving; only a short name shifts them. */
+  max-width: 140px;
 }
 .status-bar-server:hover,
 .status-bar-server.is-open {
-  color: var(--text-color);
-  background: var(--bg-hover);
+  color: var(--fg-bright);
 }
-.server-icon,
-.server-chevron {
+.server-icon {
   flex: none;
 }
-.server-chevron {
-  color: var(--text-muted, #888);
-}
 .server-name {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
