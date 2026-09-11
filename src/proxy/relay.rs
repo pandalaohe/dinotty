@@ -82,6 +82,13 @@ fn is_hop_by_hop(name: &str) -> bool {
 ///
 /// - `authorization`: the caller's credential is the hub's own; the upstream
 ///   gets the roster token instead (see [`forward_http`]);
+/// - `cookie`: the relay crosses a trust boundary. The caller's cookies were
+///   issued by *this* hub for *this* hub's origin, and the upstream is a
+///   different machine - so forwarding them leaks the hub's session credential
+///   to a host that has no business seeing it. The upstream gains nothing
+///   either: the relay authenticates with the roster token. This is the one
+///   place the relay is deliberately *less* transparent than `/preview/`, which
+///   forwards cookies because it drives a dev server the user is logged into;
 /// - `content-length`: the body is streamed with an unknown size and reqwest
 ///   frames it itself. A length header next to a stream is how a body gets
 ///   truncated;
@@ -90,7 +97,7 @@ fn is_hop_by_hop(name: &str) -> bool {
 fn should_forward_header(name: &str) -> bool {
     !is_hop_by_hop(name)
         && name != RELAY_CSRF_HEADER
-        && !matches!(name, "authorization" | "content-length")
+        && !matches!(name, "authorization" | "cookie" | "content-length")
         && super::should_forward_header(name)
 }
 
@@ -407,6 +414,15 @@ pub async fn relay_ws_handler(
             t => vec![(header::AUTHORIZATION.to_string(), format!("Bearer {t}"))],
         };
 
+    // `proxy_websocket` forwards `cookie` on purpose - `/preview/` shares it,
+    // and there the cookie belongs to the server being previewed. Here it does
+    // not: the cookie was issued by this hub for this hub's origin, and the
+    // upstream is a different machine. Strip it from the request *before*
+    // handing it over, rather than adding a relay/preview switch to a function
+    // that would then need a flag to keep its existing callers correct.
+    let mut req = req;
+    req.headers_mut().remove(header::COOKIE);
+
     super::proxy_websocket(req, ws_url, &allowed_origins, &trusted_proxies, &inject_headers).await
 }
 
@@ -467,6 +483,7 @@ mod tests {
     use axum::extract::FromRef;
     use axum::routing::any;
     use axum::Router;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tower::ServiceExt;
 
     #[test]
@@ -692,6 +709,11 @@ mod tests {
         );
         assert!(!should_forward_header("content-length"), "the body is streamed, not measured");
         assert!(!should_forward_header(RELAY_CSRF_HEADER), "hub-internal signalling");
+        // The hub's session cookie is scoped to the hub's origin. The upstream
+        // is a different machine, so carrying it there would hand a credential
+        // to a host that has no business seeing it - and the relay authenticates
+        // with the roster token, so the upstream has no use for it anyway.
+        assert!(!should_forward_header("cookie"), "the hub's session cookie must not leak");
         for h in [
             "host",
             "connection",
@@ -709,9 +731,12 @@ mod tests {
         }
     }
 
+    /// The strip has to stay surgical: the relay is otherwise transparent, and
+    /// an upstream that stopped receiving these would break in ways that look
+    /// unrelated to credential handling.
     #[test]
     fn ordinary_request_headers_still_reach_the_upstream() {
-        for h in ["content-type", "accept", "user-agent", "cookie", "x-requested-with"] {
+        for h in ["content-type", "accept", "user-agent", "x-requested-with"] {
             assert!(should_forward_header(h), "{h} must be forwarded");
         }
     }
@@ -844,13 +869,17 @@ mod tests {
     /// one the caller sent.
     #[tokio::test]
     async fn relays_to_the_roster_url_with_the_roster_token() {
+        // Reports what actually arrived, so the assertions below are on the
+        // upstream's view of the request rather than on the relay's intent.
         async fn echo(uri: axum::http::Uri, headers: HeaderMap) -> String {
             let auth = headers
                 .get(header::AUTHORIZATION)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("<none>");
             let csrf = headers.contains_key(RELAY_CSRF_HEADER);
-            format!("{}|{auth}|csrf={csrf}", uri)
+            let cookie =
+                headers.get(header::COOKIE).and_then(|v| v.to_str().ok()).unwrap_or("<none>");
+            format!("{}|{auth}|csrf={csrf}|cookie={cookie}", uri)
         }
 
         // An ephemeral port, so this never collides with the user's running
@@ -874,6 +903,8 @@ mod tests {
             .method("GET")
             .uri("/__srv/abc/api/echo?x=1")
             .header(header::AUTHORIZATION, "Bearer hub-session-token")
+            // The hub's own session cookie, which the upstream must never see.
+            .header(header::COOKIE, "dinotty_sid=hub-session-secret")
             .body(Body::empty())
             .unwrap();
         let mut req = req;
@@ -884,8 +915,8 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         assert_eq!(
             String::from_utf8_lossy(&body),
-            "/api/echo?x=1|Bearer upstream-token|csrf=false",
-            "the upstream must see the roster credential and the relayed path"
+            "/api/echo?x=1|Bearer upstream-token|csrf=false|cookie=<none>",
+            "the upstream must see the roster credential and the relayed path, but not the cookie"
         );
 
         // An unauthenticated upstream gets no Authorization header at all.
@@ -893,6 +924,91 @@ mod tests {
         let req = from_loopback("GET", "/__srv/abc/api/echo");
         let resp = app(anonymous).oneshot(req).await.unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(String::from_utf8_lossy(&body), "/api/echo|<none>|csrf=false");
+        assert_eq!(String::from_utf8_lossy(&body), "/api/echo|<none>|csrf=false|cookie=<none>");
+    }
+
+    /// The WebSocket branch strips the cookie itself, before handing the
+    /// request to `proxy_websocket` - that function forwards `cookie` on
+    /// purpose for `/preview/`, so it cannot be the one to decide.
+    ///
+    /// Driven over a real socket rather than through `oneshot`: `proxy_websocket`
+    /// only reaches its header handling from inside `on_upgrade`, and a bare
+    /// `oneshot` never performs the upgrade, so it would pass whether the cookie
+    /// was stripped or not. The upstream is a real handshake for the same
+    /// reason - this asserts on what the upstream *received*.
+    // `accept_hdr_async`'s callback returns the whole handshake `Response` in
+    // its `Err` arm, which is far wider than this test has any use for.
+    #[allow(clippy::result_large_err)]
+    #[tokio::test]
+    async fn the_websocket_branch_does_not_forward_the_hub_cookie() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let recorded = Arc::clone(&seen);
+
+        let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((stream, _)) = upstream_listener.accept().await else { return };
+            let accepted = tokio_tungstenite::accept_hdr_async(stream, {
+                let recorded = Arc::clone(&recorded);
+                move |req: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                      resp: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                    let cookie = req
+                        .headers()
+                        .get(header::COOKIE)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("<none>")
+                        .to_string();
+                    recorded.lock().unwrap().push(cookie);
+                    Ok(resp)
+                }
+            })
+            .await;
+            if let Ok(mut ws) = accepted {
+                // Hold the upgrade open briefly; the assertion is on the handshake.
+                let _ = ws.close(None).await;
+            }
+        });
+
+        // The relay itself, on a real listener so the upgrade can complete.
+        let relay_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_addr = relay_listener.local_addr().unwrap();
+        let servers = vec![RemoteServer {
+            id: "abc".into(),
+            name: "A".into(),
+            url: format!("http://{upstream_addr}"),
+            token: Some(SensitiveString::new("upstream-token".into())),
+            ..RemoteServer::default()
+        }];
+        tokio::spawn(async move {
+            let _ = axum::serve(
+                relay_listener,
+                app(servers).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
+        });
+
+        let mut req = format!("ws://{relay_addr}/__srv/abc/ws/sync").into_client_request().unwrap();
+        req.headers_mut().insert(header::COOKIE, "dinotty_sid=hub-session-secret".parse().unwrap());
+
+        // The handshake completing at all proves the relay connected upstream;
+        // if the upstream refused, this errors or times out.
+        let handshake = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio_tungstenite::connect_async(req),
+        )
+        .await;
+
+        for _ in 0..100 {
+            if !seen.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let cookies = seen.lock().unwrap().clone();
+        assert_eq!(
+            cookies,
+            vec!["<none>".to_string()],
+            "the hub cookie reached the upstream (handshake: {handshake:?})"
+        );
     }
 }
