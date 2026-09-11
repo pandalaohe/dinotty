@@ -64,10 +64,22 @@ describe('mission control mobile layout', () => {
     expect(mobileCss).not.toMatch(/^\s*\.mc-ws-list\s*{[^}]*padding-top:/sm)
   })
 
-  it('turns the server popover into a bottom sheet with 44px rows', () => {
+  it('turns the server popover into a bottom sheet with touch-sized rows', () => {
     expect(mobileCss).toMatch(/\.mc-srv-pop\s*{[^}]*bottom:\s*0;/s)
     expect(mobileCss).toMatch(/\.mc-srv-pop\s*{[^}]*border-radius:\s*14px 14px 0 0;/s)
-    expect(mobileCss).toMatch(/\.mc-srv-item\s*{[^}]*height:\s*44px;/s)
+    // A row is two lines (name + origin) on mobile too, so it outgrows the 44px
+    // it used to be - and still has to clear a finger.
+    expect(mobileCss).toMatch(/\.mc-srv-item\s*{[^}]*min-height:\s*52px;/s)
     expect(mobileCss).toMatch(/\.mc-srv-action\s*{[^}]*height:\s*44px;/s)
+  })
+
+  it('lets the sheet span the screen instead of the desktop popover width', () => {
+    // The desktop popover is a fixed 300px hanging off a 200px column; the
+    // sheet overrides it or it would be a 300px sliver at the screen edge.
+    expect(mobileCss).toMatch(/\.mc-srv-pop\s*{[^}]*width:\s*auto;/s)
+  })
+
+  it('gives the inline retry button a finger-sized target', () => {
+    expect(mobileCss).toMatch(/\.mc-srv-retry\s*{[^}]*min-height:\s*32px;/s)
   })
 })

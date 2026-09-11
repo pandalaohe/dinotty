@@ -28,11 +28,7 @@
         >
           <X :size="18" />
         </button>
-        <ServerSwitcher
-          ref="serverSwitcherRef"
-          @close="$emit('close')"
-          @manage="onManageServers"
-        />
+        <ServerSwitcher ref="serverSwitcherRef" @close="$emit('close')" />
         <WorkspaceList
           v-if="syncConnected"
           :workspaces="workspaces"
@@ -171,12 +167,10 @@ function onDocKeydown(e: KeyboardEvent) {
   onKeydown(e)
 }
 
-function onManageServers() {
-  // Close MC first: the overlay sits above the settings panel, and
-  // `switchServer` re-opens MC on the new server via the backend broadcast.
-  emit('close')
-  window.dispatchEvent(new CustomEvent('dinotty:open-settings'))
-}
+// Managing servers is a dialog inside MC now (`ServerManagerDialog`, opened
+// from the switcher itself), so this component no longer has a part in it: the
+// old "close MC, open the settings panel" route led to a panel that has no
+// server section at all.
 
 // Capture all cards when visible — deferred so overlay renders first
 const allCards = ref<TabCard[]>([])

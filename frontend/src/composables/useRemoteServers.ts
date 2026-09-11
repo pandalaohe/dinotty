@@ -124,6 +124,24 @@ export function markServerVerified(id: string): void {
   roster.value = roster.value.map((s) => (s.id === id ? { ...s, hasToken: true } : s))
 }
 
+/**
+ * How one roster row should read.
+ *
+ * Shared by the three places that render a server list - the Mission Control
+ * switcher, the manager dialog and the status bar picker - so that "no token"
+ * cannot mean an amber dot in one and a plain one in another. The tokenless
+ * state is the one that matters: with an empty token the upstream's
+ * `auth_middleware` lets everyone through, so it is a security state, not a
+ * cosmetic one.
+ */
+export type ServerVisualState = 'local' | 'current' | 'noToken' | 'ready'
+
+export function serverVisualState(entry: ServerEntry, currentId: string): ServerVisualState {
+  if (entry.local) return 'local'
+  if (entry.id === currentId) return 'current'
+  return entry.hasToken ? 'ready' : 'noToken'
+}
+
 export function useRemoteServers() {
   const servers = computed<ServerEntry[]>(() => [localEntry, ...roster.value])
   const currentId = computed(() => activeServerId())

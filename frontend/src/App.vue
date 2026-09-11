@@ -250,6 +250,11 @@
       @confirm="alertResolve"
     />
 
+    <!-- One instance, opened from the Mission Control switcher and the status
+         bar alike: two would race over the same roster. It owns its own
+         visibility (`managerOpen`), so nothing here has to pass it down. -->
+    <ServerManagerDialog />
+
     <PromptModal
       :visible="promptState.visible"
       :title="promptState.title"
@@ -409,6 +414,7 @@ const SettingsPanel = defineAsyncComponent(() => import('./components/SettingsPa
 import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
 import ConfirmModal from './components/ui/ConfirmModal.vue'
 import AlertModal from './components/ui/AlertModal.vue'
+import ServerManagerDialog from './components/server/ServerManagerDialog.vue'
 import PromptModal from './components/ui/PromptModal.vue'
 import WindowCloseDialog from './components/ui/WindowCloseDialog.vue'
 import TrayVisibilityDialog from './components/ui/TrayVisibilityDialog.vue'

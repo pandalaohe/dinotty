@@ -440,4 +440,94 @@ describe('switchServer', () => {
       expect(probeBody(authFetch)).toEqual({ id: 'srv-new' })
     })
   })
+
+  // The return value is what lets the UI say *why* a switch did not happen
+  // instead of only logging it. The transport reports a coarse `kind` and
+  // carries the hub's own wording in `detail`; turning that into a
+  // user-facing sentence is the caller's job, so nothing here is translated.
+  describe('the returned result', () => {
+    it('reports success with the id it landed on', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      mockHub({ body: { reachable: true } })
+      active.registerServerTargetResolver(() => ({ id: 'srv-new' }))
+
+      await expect(active.switchServer('srv-new')).resolves.toEqual({
+        ok: true,
+        id: 'srv-new',
+      })
+    })
+
+    it('carries the hub wording through when the target is unreachable', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      mockHub({ body: { reachable: false, error: 'connection refused by http://h:1' } })
+      active.registerServerTargetResolver(() => ({ id: 'srv-new' }))
+
+      const result = await active.switchServer('srv-new')
+
+      expect(result).toEqual({
+        ok: false,
+        id: 'srv-new',
+        failure: { kind: 'unreachable', detail: 'connection refused by http://h:1' },
+      })
+    })
+
+    it('distinguishes a rejected credential from an unreachable host', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      // Reachable and answering, but the stored token is wrong: the fix is
+      // re-pasting a credential, which is a different message entirely.
+      mockHub({ body: { reachable: true, token_valid: false } })
+      active.registerServerTargetResolver(() => ({ id: 'srv-new' }))
+
+      const result = await active.switchServer('srv-new')
+
+      expect(result.ok).toBe(false)
+      expect(result.ok ? null : result.failure.kind).toBe('tokenRejected')
+      expect(active.activeServerId()).toBe('srv-old')
+    })
+
+    it('reports an unknown id as such rather than as a reachability problem', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      mockHub({})
+      active.registerServerTargetResolver(() => null)
+
+      await expect(active.switchServer('srv-ghost')).resolves.toEqual({
+        ok: false,
+        id: 'srv-ghost',
+        failure: { kind: 'unknownId' },
+      })
+    })
+
+    it('treats an already-active id as success without touching anything', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      const authFetch = mockHub({})
+      const teardown = vi.fn()
+      active.registerSwitchTeardown(teardown)
+
+      // The caller asked for a state that already holds; that is not a failure.
+      await expect(active.switchServer('srv-old')).resolves.toEqual({ ok: true, id: 'srv-old' })
+      expect(authFetch).not.toHaveBeenCalled()
+      expect(teardown).not.toHaveBeenCalled()
+    })
+
+    it('reports success for the switch back to local, which is never probed', async () => {
+      localStorage.setItem(ACTIVE_KEY, 'srv-old')
+      const active = await load()
+      const authFetch = mockHub({})
+
+      // `__local__` is synthesized, not a roster entry, so the resolver has
+      // nothing to say about it — the switch back must still succeed.
+      active.registerServerTargetResolver(() => null)
+
+      await expect(active.switchServer(active.LOCAL_SERVER_ID)).resolves.toEqual({
+        ok: true,
+        id: active.LOCAL_SERVER_ID,
+      })
+      expect(authFetch).not.toHaveBeenCalled()
+    })
+  })
 })

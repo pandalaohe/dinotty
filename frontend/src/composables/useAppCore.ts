@@ -26,7 +26,7 @@ import { FOCUS_ACTIVE_KEY } from './useFocusActive'
 import { useSshAuth } from './useSshAuth'
 import { useCursorPicker } from './useCursorPicker'
 import { useOverviewCallbacks } from './useOverviewCallbacks'
-import { markServerVerified } from './useRemoteServers'
+import { markServerVerified, useRemoteServers } from './useRemoteServers'
 import { useNotificationPresentation } from './useNotificationPresentation'
 import {
   setToastInstance,
@@ -91,31 +91,6 @@ import { storeToRefs } from 'pinia'
 // The pieces it needs — the roster lookup, and the UI's view of "which server
 // are we on" — therefore live here, at module scope, where both `useAppCore`
 // and the components can reach them.
-
-/** Roster entry as the hub persists it. `SettingsData` does not declare
- *  `remote_servers` yet, so read it structurally rather than through the
- *  settings shape; entries arrive with the settings payload.
- *
- *  Both ways an entry can arrive are scrubbed on the way out - `GET
- *  /api/settings` runs `Settings::scrub_secrets` and `GET /api/remote-servers`
- *  runs it per entry - so the stored token never reaches the browser and
- *  nothing here may depend on one. "Has a token" is `has_token`; there is no
- *  field to send it in. Everything outside the id is for display and log
- *  messages, not decisions. */
-export interface RemoteServerEntry {
-  id: string
-  name: string
-  url?: string
-  /** Never populated by either endpoint; kept only because the settings file's
-   *  own shape declares it. Do not read it to decide anything. */
-  token?: string
-  has_token?: boolean
-}
-
-export function remoteServerEntries(): RemoteServerEntry[] {
-  const raw = (settings as unknown as { remote_servers?: unknown }).remote_servers
-  return Array.isArray(raw) ? (raw as RemoteServerEntry[]) : []
-}
 
 /**
  * Reactive mirror of the device-level active server id.
@@ -975,10 +950,19 @@ export function useAppCore(options: AppCoreOptions) {
 
   /** Resolves a roster id for the pre-switch probe. It returns the id alone:
    *  the hub looks the entry up itself, because the token never reaches the
-   *  client. Only `name`/`url` ride along, and only for error messages. */
+   *  client. Only `name`/`url` ride along, and only for error messages.
+   *
+   *  Reads the *hub's* roster (`useRemoteServers`), not the active server's
+   *  settings payload. The two differ the moment we are on a remote server,
+   *  and they differ again the moment the manager saves: a PUT updates the
+   *  hub's roster immediately but leaves this client's `settings` copy stale,
+   *  so resolving against it would refuse to switch to a server the user had
+   *  just added. `relayPrefix()` builds `/__srv/<id>` and the *hub* resolves
+   *  that id, which makes the hub's roster the only authority on whether it
+   *  exists. */
   registerServerTargetResolver((id) => {
-    const srv = remoteServerEntries().find((s) => s.id === id)
-    return srv ? { id: srv.id, name: srv.name, url: srv.url } : null
+    const srv = useRemoteServers().servers.value.find((s) => s.id === id)
+    return srv && !srv.local ? { id: srv.id, name: srv.name, url: srv.url } : null
   })
 
   // ── Steps 2-6: teardown, all of it still under the *old* server id ──

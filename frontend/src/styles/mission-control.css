@@ -326,10 +326,19 @@
   background: #dc2626;
 }
 
-/* Position context for the popover. `right: 0` on the popover (rather than
-   `width: 100%`) keeps the workspace column's 200px width authoritative. */
+/* Position context for the popover, and the box the bar overlays.
+   Absolute rather than relative on purpose: as a flex item the wrap had no
+   in-flow content of its own (the bar is absolute), so it resolved to
+   `width: 0` and the bar - `left: 0; right: 0` against a zero-width
+   containing block - collapsed to a 24px sliver with its label spilling over
+   the workspace list. Taking it out of the row entirely gives the bar a real
+   200px box while leaving the column's own flex layout untouched. */
 .mc-srv-bar-wrap {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 200px;
+  z-index: 2;
 }
 
 /* Desktop: overlay the bar above the workspace column's scroll area. The
@@ -350,11 +359,16 @@
   padding-top: 43px;
 }
 
+/* Wider than the 200px column it hangs off, on purpose: a row now carries the
+   origin as a subtitle, and `192.168.1.5:58901` does not fit in 184px. The
+   overflow lands over the tab grid, which is what a popover is for. */
 .mc-srv-pop {
   position: absolute;
   top: 40px;
   left: 8px;
-  right: 8px;
+  right: auto;
+  width: 300px;
+  max-width: calc(100vw - 32px);
   z-index: 20;
   min-width: 216px;
   display: flex;
@@ -377,14 +391,22 @@
   display: none;
 }
 
+/* The row wrapper exists so the failure notice can sit under its own row: it
+   cannot go inside `.mc-srv-item`, which is a <button> and may not contain the
+   retry <button>. */
+.mc-srv-row {
+  display: flex;
+  flex-direction: column;
+}
+
 .mc-srv-item {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 36px;
+  min-height: 44px;
   box-sizing: border-box;
-  padding: 0 12px;
+  padding: 5px 12px;
   border: none;
   border-left: 3px solid transparent;
   background: transparent;
@@ -404,12 +426,50 @@
   background: var(--bg-surface-hover);
   border-left-color: var(--accent);
 }
-.mc-srv-item-name {
+.mc-srv-item.busy {
+  cursor: progress;
+}
+.mc-srv-item-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.mc-srv-item-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The origin. Monospaced because it is an address, and truncated from the
+   right: the host is the part that tells two boards apart, not the port. */
+.mc-srv-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-muted, #888);
+}
+.mc-srv-status {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-muted, #888);
+}
+.mc-srv-status.warn {
+  border-color: #d97706;
+  color: #d97706;
+}
+.mc-srv-status.current {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .mc-srv-lock {
   flex-shrink: 0;
@@ -421,7 +481,58 @@
   color: var(--accent);
 }
 
+/* The probe is two requests with a 4s budget each, so a switch can take eight
+   seconds to fail. Without this the row looks inert and gets clicked again. */
+.mc-srv-spin {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text-muted, #888);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: mc-srv-spin 0.6s linear infinite;
+}
+@keyframes mc-srv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mc-srv-item-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 12px 8px 26px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-red, #dc2626);
+}
+.mc-srv-err-icon {
+  flex-shrink: 0;
+}
+.mc-srv-retry {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg, inherit);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.mc-srv-retry:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
 .mc-srv-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
   padding: 8px 12px;
   font-size: 12px;
@@ -436,8 +547,10 @@
 .mc-srv-action {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  width: 100%;
+  /* Both actions share the footer width. */
+  flex: 1;
   height: 36px;
   padding: 0 12px;
   border: none;
@@ -447,6 +560,10 @@
   font-size: 12px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+/* The divider keeps the two footer actions from reading as one wide target. */
+.mc-srv-action + .mc-srv-action {
+  border-left: 1px solid var(--border);
 }
 .mc-srv-action:hover {
   background: var(--bg-hover);
@@ -882,6 +999,17 @@
   .mc-srv-bar + .mc-ws-list {
     padding-top: 0;
   }
+  /* Back into the column flow, and back to being the popover's position
+     context. This is what puts the popover below on the right ancestor: while
+     the wrap was positioned, `bottom: 0` on `.mc-srv-pop` resolved against the
+     36px row at the very top and the sheet grew upwards off-screen. Static
+     hands the containing block to `.mc-ws-dual`, so it anchors to the panel's
+     bottom edge - which is the bottom sheet the `.mc-srv-pop` rules below
+     describe. */
+  .mc-srv-bar-wrap {
+    position: static;
+    width: auto;
+  }
   .mc-srv-bar {
     position: static;
     height: 36px;
@@ -902,14 +1030,25 @@
     bottom: 0;
     left: 0;
     right: 0;
+    /* Undo the desktop `width: 300px`; the sheet spans the screen instead. */
+    width: auto;
     min-width: 0;
     max-height: 65vh;
     border-radius: 14px 14px 0 0;
     border-bottom: none;
   }
+  /* Taller than the 44px single-line row was: a row is two lines now. Still a
+     comfortable touch target. */
   .mc-srv-item {
-    height: 44px;
-    padding: 0 16px;
+    min-height: 52px;
+    padding: 6px 16px;
+  }
+  .mc-srv-item-error {
+    padding: 2px 16px 10px 32px;
+  }
+  .mc-srv-retry {
+    min-height: 32px;
+    padding: 4px 12px;
   }
   .mc-srv-actions {
     padding-bottom: env(safe-area-inset-bottom, 0px);

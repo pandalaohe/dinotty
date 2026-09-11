@@ -192,4 +192,25 @@ describe('WorkspaceOverview server switcher wiring', () => {
     expect(wrapper.find('.mc-offline').exists()).toBe(false)
     expect(wrapper.find('.mc-ws-list').exists()).toBe(true)
   })
+
+  // The server manager is a BaseDialog, which teleports to <body> and so lands
+  // outside `.mc-backdrop`. That is what lets it sit over Mission Control
+  // without MC acting on every keystroke aimed at it - Escape above all, which
+  // would otherwise become a Cancel op and close the whole overlay.
+  it('ignores keys aimed outside the overlay, where a teleported dialog lives', async () => {
+    mountOverview()
+    const outside = document.createElement('input')
+    document.body.appendChild(outside)
+    try {
+      for (const key of ['Escape', 'n', 's', 'ArrowDown']) {
+        outside.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(hoisted.sendMcOp).not.toHaveBeenCalled()
+      expect(hoisted.openPop).not.toHaveBeenCalled()
+    } finally {
+      outside.remove()
+    }
+  })
 })

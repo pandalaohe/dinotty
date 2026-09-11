@@ -14,15 +14,34 @@
         <ChevronUp v-else :size="12" />
       </button>
       <div v-if="serverPickerOpen" class="server-picker" @click.stop>
-        <button
-          v-for="option in serverOptions"
-          :key="option.id"
-          class="server-option"
-          :class="{ 'is-active': option.id === activeServerIdRef }"
-          @click="onPickServer(option.id)"
-        >
-          <span class="server-option-name">{{ option.name }}</span>
-          <span class="server-option-url">{{ option.subtitle }}</span>
+        <!-- One wrapper per option: the failure notice belongs to the row but
+             cannot live inside its <button>, which may hold no interactive
+             content - the retry button is a sibling. -->
+        <div v-for="option in serverOptions" :key="option.id" class="server-option-row">
+          <button
+            class="server-option"
+            :class="{ 'is-active': option.id === activeServerIdRef }"
+            :aria-busy="switchingId === option.id ? 'true' : undefined"
+            @click="onPickServer(option)"
+          >
+            <span class="server-option-main">
+              <span class="server-option-name">{{ option.name }}</span>
+              <span class="server-option-url">{{ option.subtitle }}</span>
+            </span>
+            <span v-if="optionStatusText(option)" class="server-option-tag" :class="{ warn: optionWarns(option) }">
+              {{ optionStatusText(option) }}
+            </span>
+            <span v-if="switchingId === option.id" class="server-option-spin" />
+          </button>
+          <p v-if="failures[option.id]" class="server-option-error">
+            <span>{{ switchFailureFor(option.id) }}</span>
+            <button class="server-option-retry" @click.stop="onPickServer(option)">
+              {{ t('server.retry') }}
+            </button>
+          </p>
+        </div>
+        <button class="server-picker-manage" @click.stop="onManageServers">
+          {{ t('server.manage') }}
         </button>
       </div>
     </div>
@@ -87,8 +106,12 @@ import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { usePaneWarning } from '../../composables/usePaneWarning'
 import { useI18n } from '../../composables/useI18n'
-import { useToast } from 'vue-toastification'
-import { LOCAL_SERVER_ID, switchServer } from '../../composables/activeServer'
+import { LOCAL_SERVER_ID, switchServer, type SwitchFailure } from '../../composables/activeServer'
+import {
+  omitKey,
+  openServerManager,
+  switchFailureText,
+} from '../../composables/useRemoteServerAdmin'
 import {
   activeServerIdRef,
   closeServerPicker,
@@ -112,7 +135,6 @@ const PluginSeriesPopover = defineAsyncComponent(() => import('./PluginSeriesPop
 const data = monitorData
 const { settings } = useSettings()
 const { t } = useI18n()
-const toast = useToast()
 const ui = useUiStore()
 const warning = usePaneWarning()
 const store = useStatusBarItemsStore()
@@ -144,12 +166,22 @@ const syncConnected = computed(() => ui.syncConnected)
 // soon as a remote server is active, because `settings` is relayed.
 const { servers: remoteServers } = useRemoteServers()
 
+interface ServerOption {
+  id: string
+  name: string
+  subtitle: string
+  /** Absent for the local entry, which has no credential of its own. */
+  hasToken?: boolean
+  local: boolean
+}
+
 /** Local first: it is the always-reachable way back. */
-const serverOptions = computed(() => [
+const serverOptions = computed<ServerOption[]>(() => [
   {
     id: LOCAL_SERVER_ID,
     name: t('server.local'),
     subtitle: location.host,
+    local: true,
   },
   ...remoteServers.value
     .filter((srv) => !srv.local)
@@ -157,8 +189,22 @@ const serverOptions = computed(() => [
       id: srv.id,
       name: srv.name || srv.url,
       subtitle: srv.url,
+      hasToken: srv.hasToken,
+      local: false,
     })),
 ])
+
+/** Same words as the Mission Control switcher, so a state reads the same
+ *  wherever it is met. */
+function optionStatusText(option: ServerOption): string {
+  if (option.local) return ''
+  if (option.id === activeServerIdRef.value) return t('server.statusCurrent')
+  return option.hasToken ? '' : t('server.statusNoToken')
+}
+
+function optionWarns(option: ServerOption): boolean {
+  return !option.local && option.hasToken === false
+}
 
 const activeServerLabel = computed(
   () =>
@@ -176,13 +222,45 @@ const barVisible = computed(
   () => monitorSettings.value.enabled || !!warning.message.value || serverChipVisible.value
 )
 
-async function onPickServer(id: string) {
+/** The row being switched to, if any - one at a time, like the MC switcher. */
+const switchingId = ref<string | null>(null)
+/** Last switch failure per row, so the reason stays put until it is retried. */
+const failures = ref<Record<string, { failure: SwitchFailure; url: string }>>({})
+
+async function onPickServer(option: ServerOption) {
+  if (option.id === activeServerIdRef.value) {
+    closeServerPicker()
+    return
+  }
+  if (switchingId.value) return
+
+  failures.value = omitKey(failures.value, option.id)
+  switchingId.value = option.id
+  try {
+    const result = await switchServer(option.id)
+    if (!result.ok) {
+      // The picker stays open: the reason belongs where the click happened, and
+      // a toast that disappears is no help for "why did that not work".
+      failures.value = {
+        ...failures.value,
+        [option.id]: { failure: result.failure, url: option.subtitle },
+      }
+      return
+    }
+    closeServerPicker()
+  } finally {
+    switchingId.value = null
+  }
+}
+
+function switchFailureFor(id: string): string {
+  const record = failures.value[id]
+  return record ? switchFailureText(t, record.failure, record.url) : ''
+}
+
+function onManageServers() {
   closeServerPicker()
-  if (id === activeServerIdRef.value) return
-  await switchServer(id)
-  // `switchServer` aborts (leaving everything as it was) when the target fails
-  // its reachability probe, so an unchanged id means the probe did not pass.
-  if (activeServerIdRef.value !== id) toast.error(t('server.switchFailed'))
+  openServerManager({ kind: 'list' })
 }
 
 function onServerPickerKeydown(e: KeyboardEvent) {
@@ -368,10 +446,14 @@ watch(serverPickerOpen, (open) => {
   border-radius: var(--radius);
   box-shadow: var(--dialog-shadow);
 }
-.server-option {
+.server-option-row {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+}
+.server-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 5px 8px;
   font: inherit;
   text-align: left;
@@ -385,6 +467,86 @@ watch(serverPickerOpen, (open) => {
   background: var(--bg-hover);
 }
 .server-option.is-active {
+  color: var(--accent);
+}
+.server-option-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+/* The state in words: a coloured dot is not readable on its own, and "no
+   token" is the one that means anyone reaching this server is an admin. */
+.server-option-tag {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+}
+.server-option-tag.warn {
+  border-color: #d97706;
+  color: #d97706;
+}
+/* The probe is two 4s-budgeted requests, so a switch can look inert for a
+   while - long enough to be clicked again. */
+.server-option-spin {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--fg-muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: server-option-spin 0.6s linear infinite;
+}
+@keyframes server-option-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.server-option-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 8px 5px 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--danger);
+}
+.server-option-retry {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-color);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.server-option-retry:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+.server-picker-manage {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.server-picker-manage:hover {
   color: var(--accent);
 }
 .server-option-name {

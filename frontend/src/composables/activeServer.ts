@@ -90,8 +90,8 @@ export async function runSwitchTeardown(): Promise<void> {
  * `ProbeRemoteServerRequest` in `src/settings/remote_servers.rs`).
  *
  * `name`/`url` are for logs and error messages only, and are never sent. Prefer
- * `name`: the roster is shared between the frontend's two shapes (see
- * `RemoteServerEntry`) and only one of them carries a url at all.
+ * `name` — the manager lets an entry be saved before it has a usable url, so
+ * `url` is the one that can be empty.
  */
 export interface ServerSwitchTarget {
   id: string
@@ -104,6 +104,33 @@ export interface ServerSwitchTarget {
 /** Human-readable label for a probe failure — never the wire format. */
 function describeTarget(target: ServerSwitchTarget): string {
   return target.name || target.url || target.id
+}
+
+/**
+ * Why a switch did not happen.
+ *
+ * A switch is all-or-nothing: every one of these leaves the previous server
+ * exactly as it was, so the caller can render the reason and offer a retry
+ * without having to undo anything.
+ */
+export type SwitchFailure =
+  /** No roster entry carries this id, so there is nothing to probe. */
+  | { kind: 'unknownId' }
+  /** The hub could not reach the target. `detail` is the hub's own wording. */
+  | { kind: 'unreachable'; detail: string }
+  /** The target answered, but rejected the stored credential (401). */
+  | { kind: 'tokenRejected' }
+
+/** Outcome of [`switchServer`]. `ok` is the only thing a caller must branch on. */
+export type SwitchResult =
+  | { ok: true; id: string }
+  | { ok: false; id: string; failure: SwitchFailure }
+
+/** The probe's verdict on one target. */
+type ProbeOutcome = { ok: true } | { ok: false; failure: SwitchFailure }
+
+function unreachable(detail: string): ProbeOutcome {
+  return { ok: false, failure: { kind: 'unreachable', detail } }
 }
 
 let targetResolver: ((id: string) => ServerSwitchTarget | null) | null = null
@@ -172,11 +199,13 @@ const PROBE_PATH = '/api/remote-servers/probe'
  * anything listening" — a target that answers but rejects the stored credential
  * is *not* a target we may switch to. See the `token_valid` check below.
  *
- * Every failure mode (unknown id, network error, non-2xx, `reachable: false`,
- * a rejected credential) collapses to `false` so the caller aborts with the old
- * server untouched.
+ * Every failure mode (network error, non-2xx, `reachable: false`, a rejected
+ * credential) comes back as a [`SwitchFailure`] rather than a bare `false`, so
+ * the caller can show the user *why* instead of only logging it. The hub's own
+ * wording is carried through as `detail`; nothing here has to be translated
+ * for the message to be useful.
  */
-async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
+async function probeTarget(target: ServerSwitchTarget): Promise<ProbeOutcome> {
   const label = describeTarget(target)
   try {
     // Dynamic import: a static one would close the `apiBase` ⇄ `activeServer`
@@ -191,7 +220,7 @@ async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
     })
     if (!res.ok) {
       console.warn(`[activeServer] probe of ${label} failed: HTTP ${res.status}`)
-      return false
+      return unreachable(`the hub answered HTTP ${res.status}`)
     }
     const data = (await res.json().catch(() => null)) as {
       reachable?: boolean
@@ -200,11 +229,11 @@ async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
     } | null
     if (!data) {
       console.warn(`[activeServer] probe of ${label} returned no result`)
-      return false
+      return unreachable('the hub returned no probe result')
     }
     if (data.reachable === false) {
       console.warn(`[activeServer] probe of ${label} reported unreachable: ${data.error ?? ''}`)
-      return false
+      return unreachable(data.error || 'the hub could not reach it')
     }
     // The hub reached the target and the target rejected the stored credential
     // (a 401 from its `/api/info` — reached only now that the probe runs by id
@@ -223,12 +252,12 @@ async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
       console.warn(
         `[activeServer] probe of ${label} rejected the stored token — refusing to switch`
       )
-      return false
+      return { ok: false, failure: { kind: 'tokenRejected' } }
     }
-    return true
+    return { ok: true }
   } catch (e) {
     console.warn(`[activeServer] probe of ${label} failed:`, e)
-    return false
+    return unreachable(e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -247,10 +276,15 @@ async function probeTarget(target: ServerSwitchTarget): Promise<boolean> {
  *
  * Steps 2–6 and 8–9 live behind hooks so this module can stay free of the
  * subsystems it orchestrates.
+ *
+ * Returns a [`SwitchResult`] instead of throwing: an aborted switch is an
+ * ordinary outcome with a reason the UI should show, not an exception. The
+ * `ok: true` early return for "already on that server" is deliberate — the
+ * caller asked for a state, and that state already holds.
  */
-export async function switchServer(id: string): Promise<void> {
+export async function switchServer(id: string): Promise<SwitchResult> {
   const next = id || LOCAL_SERVER_ID
-  if (next === activeServerId()) return
+  if (next === activeServerId()) return { ok: true, id: next }
 
   // 1. Probe before touching anything. The local server *is* the hub, so it
   // needs no reachability check (and must stay reachable even if the roster
@@ -263,12 +297,14 @@ export async function switchServer(id: string): Promise<void> {
     const target = targetResolver?.(next) ?? null
     if (!target) {
       console.warn(`[activeServer] no roster entry for "${next}" — refusing to switch`)
-      return
+      return { ok: false, id: next, failure: { kind: 'unknownId' } }
     }
-    if (!(await probeTarget(target))) return
+    const probe = await probeTarget(target)
+    if (!probe.ok) return { ok: false, id: next, failure: probe.failure }
   }
 
   await runSwitchTeardown() // 2–6, still under the old id
   setActiveServerId(next) // 7
   await runSwitchReconnect() // 8–9
+  return { ok: true, id: next }
 }
