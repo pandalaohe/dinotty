@@ -133,17 +133,50 @@ Findings:
 > currently classifies "no `pane_id`" as a plugin notification. That is a behaviour change and
 > belongs in its own change, not in the backend attribution fix.
 
-=> **Shape A is feasible with no hook and no `.claude` change.** A `/ws/sync` subscriber sees
-`sourcePaneId` and can target a supervised pane directly from claude's *native* OSC 9 emission.
-Hooks remain an optional refinement (custom type, richer body, explicit "task complete"), not a
-prerequisite. The git-HEAD check can drop to a long interval or be replaced entirely.
+=> **Shape A is feasible with no hook and no `.claude` file — but NOT from claude's native
+OSC 9 emission, which it does not send by default.** See the probe below.
+
+## PROBED 2026-09-11 — claude's completion signal (A/B, CONFIRMED)
+
+Ran two claude tabs (v2.1.218, `--permission-mode auto`) with the same trivial prompt
+("reply with PONG, use no tools"), while a `/ws/sync` subscriber watched every pane.
+
+| Tab | argv | Frames received |
+|---|---|---|
+| A | `claude --permission-mode auto "…"` | **none** — tab reached `⏺ PONG`, `✻ Cogitated for 1s`, cursor idle at the prompt, and emitted nothing |
+| B | `claude --settings '{"preferredNotifChannel":"terminal_bell"}' --permission-mode auto "…"` | **one** — `{"type":"bell", …}` |
+
+Tab B's frame, as captured:
+
+```
+EVENT: <pane> pane=a7477779-54fa-4868-be3c-88f7cefb36cf type=bell body=Bell
+```
+
+Conclusions (these supersede the assumptions they replace):
+
+1. **claude does not emit OSC 9 on turn completion by default.** Open question 1 below is
+   answered: the reliable trigger is *not* native OSC. Anything built on "claude already rings
+   the bell" would have been silently dead.
+2. **`preferredNotifChannel: "terminal_bell"` makes it emit a plain BEL**, which dinotty's PTY
+   detection turns into a `bell` frame. Valid values in the binary (v2.1.218):
+   `terminal_bell`, `iterm2_with_bell`, `iterm2+bell`, `none`.
+3. **The setting needs no file.** `claude --settings '<json>'` accepts inline JSON, so it rides in
+   the tab's argv — the same place the model override goes. No `.claude/settings.json`, no
+   per-worktree config, nothing to install and nothing to forget on a new worktree.
+4. **The `bell` frame already carries the real `pane_id`** (`SyncMsg::Bell` is not
+   pane-decoupled, unlike `Notify`). So this path did not need `sourcePaneId` at all — that field
+   remains the fix for *OSC 9 messages*, a different trigger this probe did not exercise.
+
+**Not verified:** whether claude rings on "needs your input / permission" as well as on
+completion. Tab B's prompt finished unattended under `auto` mode, so no approval prompt was
+raised. Worth probing before relying on the bell for the approval case too.
 
 ## Open questions to resolve before building (verified-by-experiment)
 
-1. **Does the deployed claude actually emit OSC 9 on "waiting for input"?** Empirically probe:
-   open `/ws/sync` while an agent tab sits at a "to proceed?" prompt; see if a notify/bell frame
-   arrives. If claude's OSC emission is absent/version-dependent, the reliable trigger is an
-   explicit hook.
+1. **Does claude emit anything when it *waits for input* (rather than finishing)?** The
+   2026-09-11 probe answered the completion half: no native OSC, but yes with
+   `preferredNotifChannel: terminal_bell`. The approval half is still unprobed — run a tab that
+   trips a permission prompt (i.e. not under `auto`) and watch whether a `bell` arrives.
 2. ~~**Does a `notify` frame carry the target `pane_id`?**~~ **ANSWERED 2026-09-11**: yes, via
    `sourcePaneId` (added to `SyncMsg::Notify`). `pane_id` itself stays empty by design. See the
    correction above.
