@@ -221,14 +221,13 @@ fn parse_port() -> u16 {
 }
 
 async fn server_info(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let lan_ip =
-        local_ip_address::local_ip().map_or_else(|_| "127.0.0.1".to_string(), |ip| ip.to_string());
-    Json(serde_json::json!({
-        "lan_ip": lan_ip,
-        "port": state.port,
-        "version": state.git_info.version,
-        "repo_url": state.git_info.repo_url,
-    }))
+    // Shared with the Tauri host's copy so the two cannot drift; see
+    // `api::info` for why `settings_version` is part of the payload.
+    Json(dinotty_server::api::info::info_payload(
+        state.port,
+        &state.git_info.version,
+        &state.git_info.repo_url,
+    ))
 }
 
 #[tokio::main]

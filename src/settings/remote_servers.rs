@@ -38,12 +38,48 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 /// Request body for [`probe_remote_server`].
 ///
 /// The probe runs hub-side rather than from the browser, so the target carries
-/// no CORS or origin problem in any client mode. `token` is the candidate
-/// credential to test; it is optional so the user can probe an unauthenticated
-/// target before deciding whether one is needed.
+/// no CORS or origin problem in any client mode.
+///
+/// There are two shapes, and `id` selects between them:
+///
+/// - **`id` present** - probe an existing roster entry. `url` and `token` are
+///   *ignored entirely* and both come from the stored roster, because this is
+///   the only form that can work for an entry that has a token: `GET
+///   /api/remote-servers` scrubs the token out of its response (by design, so
+///   the secret never reaches JavaScript), so a client probing by URL cannot
+///   send a credential it was never given. Without this shape every
+///   token-protected server would probe as a 401 and the switch to it would
+///   abort.
+/// - **`id` absent** - probe an arbitrary `url` with an optional candidate
+///   `token`. This is the "Test connection" button on the add/edit form, where
+///   the credential is still in the user's hands and no roster entry exists yet.
+///
+/// Ignoring the supplied `url`/`token` when `id` is present is a security
+/// property, not a convenience: it means a caller cannot use a roster id to
+/// reach a *different* host, and cannot substitute its own credential for the
+/// stored one. The relay's `authorized_target` takes the same line - see the
+/// module docs on `crate::proxy::relay`.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ProbeRemoteServerRequest {
+    /// Roster id to probe. Takes precedence over `url`/`token` when set.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Target for the id-less form.
+    ///
+    /// Falls back to the empty string rather than being a required field, so
+    /// the by-id form can send `{"id": "…"}` alone - a caller probing a roster
+    /// entry has no reason to name a URL and no way to know the stored one. An
+    /// id-less request that omits it is still rejected, by
+    /// [`normalize_origin`]'s "url is empty" rather than by a deserializer
+    /// message that names a field the caller never meant to use.
+    #[serde(default)]
     pub url: String,
+    /// Candidate credential for the id-less form.
+    ///
+    /// `skip_serializing` keeps a candidate token out of anything that echoes a
+    /// request back. It is safe here, unlike on [`RemoteServer::token`], because
+    /// this type is never persisted - a request body has no disk round trip to
+    /// lose. See that field's docs for the trap `skip_serializing` sets.
     #[serde(default, skip_serializing)]
     pub token: Option<String>,
 }
@@ -54,15 +90,46 @@ pub struct ProbeRemoteServerRequest {
 /// upstream with an empty token lets *anyone* who can reach it in as admin
 /// (`auth_middleware` returns early when the token is empty), so "reachable"
 /// must never be presented as "set up correctly".
+///
+/// # Three ways to end up with no usable version
+///
+/// `settings_version` staying `None` is not by itself an error. It is `None`
+/// when the upstream answered but we learned nothing from `/api/info`, which
+/// happens for three different reasons that the caller has to tell apart:
+///
+/// 1. no credential was supplied, so the authenticated step was skipped;
+/// 2. a credential was supplied and the upstream *rejected* it - see
+///    `token_valid`;
+/// 3. the credential was accepted and the upstream simply does not carry the
+///    field, i.e. it predates `settings_version` in `/api/info`.
+///
+/// `token_valid` and `token_configured` together separate the three. This is
+/// why an upstream whose `/api/info` lacks the field is *not* reported as an
+/// error: "you are talking to an older dinotty" is a successful probe that
+/// wants a compatibility hint, not a failure.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ProbeRemoteServerResponse {
     pub reachable: bool,
     pub token_configured: bool,
     /// "server" or "embedded" - which binary answered.
     pub server_mode: Option<String>,
-    /// Upstream's `settings_version`, for the version-compat warning.
+    /// Upstream's `settings_version`, for the version-compat warning. `None`
+    /// means "not learned" - see the type docs, not "incompatible".
     pub settings_version: Option<u32>,
-    /// Human-readable failure reason when `reachable` is false.
+    /// Whether the credential the probe used was accepted.
+    ///
+    /// - `None` - no credential was supplied, so authentication was never
+    ///   tested. The upstream may or may not require one.
+    /// - `Some(true)` - `/api/info` accepted it.
+    /// - `Some(false)` - the upstream answered the authenticated step with 401,
+    ///   so the stored token is wrong (or was rotated upstream).
+    ///
+    /// Without this, a wrong token and a merely old upstream both look like
+    /// `reachable: true, settings_version: None`, and the user is told to worry
+    /// about versions when the real fix is to re-paste a token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_valid: Option<bool>,
+    /// Human-readable failure reason, set only when `reachable` is false.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -183,8 +250,37 @@ pub async fn put_remote_servers(
 ///    blur into one.
 /// 2. `GET /api/info` is authenticated, so it is only attempted with a
 ///    candidate token and only ever refines the answer.
-pub async fn probe_remote_server(Json(req): Json<ProbeRemoteServerRequest>) -> Response {
-    let origin = match normalize_origin(&req.url) {
+///
+/// The target and the credential come from one of two places, decided by
+/// [`ProbeRemoteServerRequest::id`]. When an `id` is given, both are read out of
+/// the roster and the request's own `url`/`token` are ignored - the caller is a
+/// frontend that was never shown the stored token, so there is nothing for it to
+/// contribute, and accepting its `url` would let a roster id be aimed at a host
+/// the roster does not name. See that type's docs.
+pub async fn probe_remote_server(
+    State(settings): State<SettingsState>,
+    Json(req): Json<ProbeRemoteServerRequest>,
+) -> Response {
+    // `id` wins over the request's own url/token, both of which are then
+    // deliberately never read.
+    let (url, token) = match req.id.as_deref() {
+        Some(id) => {
+            let roster = settings.read().await;
+            let Some(server) = roster.remote_servers.iter().find(|s| s.id == id) else {
+                // Terse and roster-free on purpose: an unknown id and an id the
+                // caller may not see are the same answer, so the roster cannot
+                // be enumerated through this endpoint.
+                return Json(unreachable(format!("no remote server with id `{id}`")))
+                    .into_response();
+            };
+            // Clone the secret out rather than holding the read lock across the
+            // two network round trips below.
+            (server.url.clone(), server.token.as_ref().map(|t| t.expose().to_string()))
+        }
+        None => (req.url, req.token),
+    };
+
+    let origin = match normalize_origin(&url) {
         Ok(origin) => origin,
         Err(reason) => return Json(unreachable(reason)).into_response(),
     };
@@ -241,24 +337,36 @@ pub async fn probe_remote_server(Json(req): Json<ProbeRemoteServerRequest>) -> R
     };
 
     // Without a candidate credential the authenticated step cannot succeed, so
-    // it is skipped rather than burned on a guaranteed 401.
-    let Some(token) = req.token.filter(|t| !t.is_empty()) else {
+    // it is skipped rather than burned on a guaranteed 401. `token_valid` stays
+    // `None`: nothing was tested, so nothing is claimed.
+    let Some(token) = token.filter(|t| !t.is_empty()) else {
         return Json(probe).into_response();
     };
 
     let Ok(response) = client.get(format!("{origin}/api/info")).bearer_auth(&token).send().await
     else {
         // Reachability was already established by step 1; a failed version
-        // probe does not make the server unreachable.
+        // probe does not make the server unreachable, and it says nothing about
+        // the credential either - so `token_valid` stays `None` rather than
+        // claiming a rejection that was never observed.
         return Json(probe).into_response();
     };
     if response.status().is_success() {
+        probe.token_valid = Some(true);
         if let Ok(body) = response.json::<serde_json::Value>().await {
+            // Absent for an upstream older than this field; `None` then means
+            // "that server cannot say", which the caller must not read as
+            // "incompatible" - see the response type's docs.
             probe.settings_version = body
                 .get("settings_version")
                 .and_then(serde_json::Value::as_u64)
                 .and_then(|v| u32::try_from(v).ok());
         }
+    } else if response.status() == StatusCode::UNAUTHORIZED {
+        // The upstream's `auth_middleware` answers a bad Bearer with exactly
+        // this, so it is the one status that identifies a wrong token rather
+        // than, say, a cross-site 403 from an IP-whitelist rule.
+        probe.token_valid = Some(false);
     }
     Json(probe).into_response()
 }

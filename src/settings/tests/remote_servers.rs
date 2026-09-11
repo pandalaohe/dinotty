@@ -271,11 +271,29 @@ async fn spawn_dinotty(
     is_server_binary: bool,
     info: serde_json::Value,
 ) -> Upstream {
+    spawn_dinotty_guarded(configured, is_server_binary, info, None).await
+}
+
+/// The same upstream, but `/api/info` demands `required` and answers `401` when
+/// the Bearer header does not match - which is what the real
+/// `auth_middleware` does for a token it does not accept.
+///
+/// The guard is what makes the by-id tests meaningful: without it the fake
+/// upstream ignored the credential entirely, so a probe that sent the *wrong*
+/// token would still have "succeeded" and the security assertion would pass for
+/// the wrong reason.
+async fn spawn_dinotty_guarded(
+    configured: bool,
+    is_server_binary: bool,
+    info: serde_json::Value,
+    required: Option<&str>,
+) -> Upstream {
     let info_hits = Arc::new(AtomicUsize::new(0));
     let info_auth = Arc::new(Mutex::new(Vec::new()));
 
     let recorded_hits = Arc::clone(&info_hits);
     let recorded_auth = Arc::clone(&info_auth);
+    let required = required.map(str::to_string);
     let app = Router::new()
         .route(
             "/api/token-configured",
@@ -293,6 +311,7 @@ async fn spawn_dinotty(
                 let hits = Arc::clone(&recorded_hits);
                 let auth = Arc::clone(&recorded_auth);
                 let info = info.clone();
+                let required = required.clone();
                 async move {
                     hits.fetch_add(1, Ordering::SeqCst);
                     let seen = headers
@@ -300,8 +319,17 @@ async fn spawn_dinotty(
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or_default()
                         .to_string();
-                    auth.lock().unwrap().push(seen);
-                    Json(info)
+                    auth.lock().unwrap().push(seen.clone());
+                    if let Some(required) = required {
+                        if seen != format!("Bearer {required}") {
+                            return (
+                                StatusCode::UNAUTHORIZED,
+                                Json(json!({"error": "unauthorized"})),
+                            )
+                                .into_response();
+                        }
+                    }
+                    Json(info).into_response()
                 }
             }),
         );
@@ -313,9 +341,47 @@ async fn spawn_dinotty(
 }
 
 async fn probe(url: &str, token: Option<&str>) -> ProbeRemoteServerResponse {
-    let request =
-        ProbeRemoteServerRequest { url: url.to_string(), token: token.map(str::to_string) };
-    read_json(probe_remote_server(Json(request)).await).await
+    probe_with(&settings_state(vec![]), url, token).await
+}
+
+/// The id-less form, against a caller-supplied roster.
+///
+/// The roster is only passed in so a test can prove it is *not* consulted on
+/// this path; the URL probe must not depend on what is stored.
+async fn probe_with(
+    state: &SettingsState,
+    url: &str,
+    token: Option<&str>,
+) -> ProbeRemoteServerResponse {
+    let request = ProbeRemoteServerRequest {
+        id: None,
+        url: url.to_string(),
+        token: token.map(str::to_string),
+    };
+    read_json(probe_remote_server(State(Arc::clone(state)), Json(request)).await).await
+}
+
+async fn probe_by_id(state: &SettingsState, id: Option<&str>) -> ProbeRemoteServerResponse {
+    probe_by_id_request(state, id, "", None).await
+}
+
+/// Probe an existing roster entry.
+///
+/// `url` and `token` are the *forged* values a hostile or confused client would
+/// send alongside the id; the tests pass a real one where they want that
+/// proven ignored.
+async fn probe_by_id_request(
+    state: &SettingsState,
+    id: Option<&str>,
+    url: &str,
+    token: Option<&str>,
+) -> ProbeRemoteServerResponse {
+    let request = ProbeRemoteServerRequest {
+        id: id.map(str::to_string),
+        url: url.to_string(),
+        token: token.map(str::to_string),
+    };
+    read_json(probe_remote_server(State(Arc::clone(state)), Json(request)).await).await
 }
 
 /// A probe that must fail before any socket is opened. The URLs below are
@@ -390,9 +456,9 @@ async fn probe_reports_an_upstream_that_demands_no_token() {
     assert!(!result.token_configured, "an unprotected upstream must be reported as such");
 }
 
-/// Today's real `/api/info` returns no `settings_version` (see `server_info`),
-/// so the field stays `None` while everything else still resolves. Pinned so
-/// the gap is visible in the tests rather than silently inferred.
+/// An upstream that accepts the token but does not carry `settings_version`
+/// answers `Some(true)` for the credential and `None` for the version - it is
+/// simply too old to say, which is a successful probe, not a failure.
 #[tokio::test]
 async fn probe_reports_no_settings_version_when_the_upstream_does_not_expose_one() {
     let upstream = spawn_dinotty(
@@ -407,6 +473,40 @@ async fn probe_reports_no_settings_version_when_the_upstream_does_not_expose_one
     assert!(result.reachable);
     assert!(result.token_configured);
     assert_eq!(result.settings_version, None);
+    assert_eq!(
+        result.token_valid,
+        Some(true),
+        "an old upstream that accepted the token must not be blamed for the missing field"
+    );
+    assert!(result.error.is_none(), "an old upstream is not an error");
+}
+
+/// The counterpart to the test above, and the reason `token_valid` exists: a
+/// *rejected* credential and an *old* upstream both leave `settings_version`
+/// as `None` while `reachable` stays true, so without this flag the user would
+/// be told to check versions when the real fix is to re-paste a token.
+#[tokio::test]
+async fn probe_reports_a_rejected_token_apart_from_a_missing_version_field() {
+    let upstream =
+        spawn_dinotty_guarded(false, true, json!({"version": "0.26.0"}), Some("right")).await;
+
+    let result = probe(&upstream.origin, Some("wrong")).await;
+
+    assert!(result.reachable, "a 401 from /api/info does not make the server unreachable");
+    assert_eq!(result.token_valid, Some(false), "a 401 must be reported as a bad token");
+    assert_eq!(result.settings_version, None);
+}
+
+/// The third of the three ways to get no version: nothing was tested, so
+/// nothing is claimed. `None` must not be read as a rejection.
+#[tokio::test]
+async fn probe_leaves_token_valid_unset_when_it_had_no_credential_to_test() {
+    let upstream = spawn_dinotty(true, true, json!({"version": "0.26.0"})).await;
+
+    let result = probe(&upstream.origin, Some("")).await;
+
+    assert!(result.reachable);
+    assert_eq!(result.token_valid, None, "an untested credential is not a rejected one");
 }
 
 #[tokio::test]
@@ -435,6 +535,193 @@ async fn probe_refuses_to_call_a_stranger_a_dinotty_server() {
     let error = result.error.unwrap_or_default();
     assert!(error.contains("not a dinotty server"), "got {error}");
     assert_eq!(upstream.info_hits.load(Ordering::SeqCst), 0);
+}
+
+// ---------------------------------------------------------------------------
+// probe by roster id
+// ---------------------------------------------------------------------------
+
+/// The defect this whole shape exists for.
+///
+/// `GET /api/remote-servers` never returns a token, so a frontend switching to
+/// an existing entry has no credential to send. Probing by URL therefore cannot
+/// authenticate against a token-protected server at all - it would come back
+/// `reachable: true` off the public step with the authenticated step 401ing,
+/// and the switch would abort. Resolving both the URL and the token hub-side is
+/// what makes "switch to a server that has a token" possible.
+#[tokio::test]
+async fn probe_by_id_uses_the_stored_token_to_reach_the_version_step() {
+    let upstream =
+        spawn_dinotty_guarded(true, true, json!({"settings_version": 15}), Some("stored")).await;
+    let state = settings_state(vec![RemoteServer {
+        id: "lab".to_string(),
+        name: "Lab".to_string(),
+        url: upstream.origin.clone(),
+        token: Some(SensitiveString::new("stored".to_string())),
+        has_token: true,
+        ..RemoteServer::default()
+    }]);
+
+    let result = probe_by_id(&state, Some("lab")).await;
+
+    assert!(result.reachable, "{:?}", result.error);
+    assert_eq!(result.token_valid, Some(true), "the stored token must have been used");
+    assert_eq!(result.settings_version, Some(15), "the version step must have been reached");
+    assert_eq!(upstream.info_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        upstream.info_auth.lock().unwrap().as_slice(),
+        ["Bearer stored"],
+        "the roster token is the only credential the upstream may see"
+    );
+}
+
+/// The security assertion for the by-id shape: a request that names a roster id
+/// gets *that* entry's origin and *that* entry's token, whatever it puts in its
+/// own `url` and `token` fields.
+///
+/// Both halves are load-bearing. The forged URL is pointed at a second live
+/// upstream, so "the request url was ignored" is proved by *which server
+/// answered* rather than by reading the code; the forged token is what that
+/// second server would have accepted, so a probe that let it through would
+/// still have to explain `token_valid: Some(true)` here. Accepting either field
+/// would turn a roster id into a way to aim the hub's probe at an arbitrary
+/// host with an arbitrary credential.
+#[tokio::test]
+async fn probe_by_id_ignores_a_supplied_url_and_token() {
+    let roster_upstream =
+        spawn_dinotty_guarded(true, true, json!({"settings_version": 15}), Some("stored")).await;
+    // The decoy accepts a *different* token, so the two candidate credentials
+    // are distinguishable by outcome and not just by the recorded header.
+    let forged_upstream =
+        spawn_dinotty_guarded(true, true, json!({"settings_version": 15}), Some("forged")).await;
+
+    let state = settings_state(vec![RemoteServer {
+        id: "lab".to_string(),
+        name: "Lab".to_string(),
+        url: roster_upstream.origin.clone(),
+        token: Some(SensitiveString::new("stored".to_string())),
+        has_token: true,
+        ..RemoteServer::default()
+    }]);
+
+    let result =
+        probe_by_id_request(&state, Some("lab"), &forged_upstream.origin, Some("forged")).await;
+
+    assert!(result.reachable, "{:?}", result.error);
+    assert_eq!(
+        forged_upstream.info_hits.load(Ordering::SeqCst),
+        0,
+        "the probe must not have contacted the url supplied alongside the id"
+    );
+    assert_eq!(
+        roster_upstream.info_hits.load(Ordering::SeqCst),
+        1,
+        "the probe must have contacted the roster entry's own url"
+    );
+    assert_eq!(
+        roster_upstream.info_auth.lock().unwrap().as_slice(),
+        ["Bearer stored"],
+        "the roster token must have been used, not the supplied one"
+    );
+    assert_eq!(result.token_valid, Some(true));
+}
+
+/// An id that is not in the roster is an error, and the error must not describe
+/// the roster - not the ids it does hold, not how many, and not any URL. The
+/// answer has to be the same shape as any other unknown id, so the endpoint
+/// cannot be used to enumerate what the hub is configured to reach.
+#[tokio::test]
+async fn probe_by_id_rejects_an_unknown_id_without_describing_the_roster() {
+    let upstream = spawn_dinotty(true, true, json!({"settings_version": 15})).await;
+    let state = settings_state(vec![RemoteServer {
+        id: "lab".to_string(),
+        name: "Lab".to_string(),
+        url: upstream.origin.clone(),
+        token: Some(SensitiveString::new("stored".to_string())),
+        has_token: true,
+        ..RemoteServer::default()
+    }]);
+
+    let result = probe_by_id_request(&state, Some("attic"), &upstream.origin, Some("stored")).await;
+
+    assert!(!result.reachable, "an unknown id must not be probed");
+    let error = result.error.clone().unwrap_or_default();
+    assert!(error.contains("attic"), "the unknown id should be named: {error}");
+    assert!(
+        !error.contains("lab") && !error.contains(&upstream.origin),
+        "the error must not leak the roster: {error}"
+    );
+    assert_eq!(
+        upstream.info_hits.load(Ordering::SeqCst),
+        0,
+        "an unknown id must fail before any network call"
+    );
+}
+
+/// Regression guard for the id-less form, which the add/edit "Test connection"
+/// button still uses: the stored roster must play no part in it.
+#[tokio::test]
+async fn probe_without_an_id_still_uses_the_supplied_url_and_token() {
+    let target =
+        spawn_dinotty_guarded(true, true, json!({"settings_version": 15}), Some("typed")).await;
+    // A roster that names a *different* server, to prove the id-less path does
+    // not fall back to the roster when its own url is present.
+    let state = settings_state(vec![stored_server("lab", Some("stored"), true)]);
+
+    let result = probe_with(&state, &target.origin, Some("typed")).await;
+
+    assert!(result.reachable, "{:?}", result.error);
+    assert_eq!(result.token_valid, Some(true));
+    assert_eq!(result.settings_version, Some(15));
+    assert_eq!(target.info_auth.lock().unwrap().as_slice(), ["Bearer typed"]);
+}
+
+/// The id-less form still validates its own url rather than trusting it.
+#[tokio::test]
+async fn probe_without_an_id_still_rejects_a_bad_url() {
+    let state = settings_state(vec![]);
+
+    let result = probe_with(&state, "ws://192.168.1.5:58901", Some("typed")).await;
+
+    assert!(!result.reachable);
+    assert!(
+        result.error.unwrap_or_default().contains("scheme"),
+        "the url validation must still run on the id-less path"
+    );
+}
+
+/// The wire shapes the frontend actually sends, pinned as raw JSON.
+///
+/// `{"id": "…"}` is the one that matters: a caller probing a roster entry has
+/// no URL to send and no way to learn the stored one, so the endpoint has to
+/// accept the id on its own. Building the request through the Rust struct would
+/// not catch a `url` that went back to being a required field, because the
+/// struct's `Default` always supplies one.
+#[test]
+fn probe_request_accepts_the_shapes_clients_send() {
+    // By id alone - the switch path.
+    let by_id: ProbeRemoteServerRequest = serde_json::from_str(r#"{"id":"lab"}"#).unwrap();
+    assert_eq!(by_id.id.as_deref(), Some("lab"));
+    assert!(by_id.url.is_empty());
+    assert!(by_id.token.is_none());
+
+    // By url, with and without a candidate token - the add/edit "Test
+    // connection" button.
+    let by_url: ProbeRemoteServerRequest =
+        serde_json::from_str(r#"{"url":"http://192.168.1.5:58901"}"#).unwrap();
+    assert!(by_url.id.is_none());
+    assert_eq!(by_url.url, "http://192.168.1.5:58901");
+    assert!(by_url.token.is_none());
+
+    let with_token: ProbeRemoteServerRequest =
+        serde_json::from_str(r#"{"url":"http://192.168.1.5:58901","token":"candidate"}"#).unwrap();
+    assert_eq!(with_token.token.as_deref(), Some("candidate"));
+
+    // A request that names neither still deserializes, so the failure is the
+    // actionable "url is empty" rather than a field-name complaint.
+    let neither: ProbeRemoteServerRequest = serde_json::from_str("{}").unwrap();
+    assert!(neither.id.is_none());
+    assert!(neither.url.is_empty());
 }
 
 // ---------------------------------------------------------------------------
