@@ -25,7 +25,7 @@ vi.mock('../composables/apiBase', () => ({
 }))
 
 import ServerSwitcher from '../components/overview/ServerSwitcher.vue'
-import { closeServerManager, managerOpen, managerSeed } from '../composables/useRemoteServerAdmin'
+import { closeServerManager, managerOpen } from '../composables/useRemoteServerAdmin'
 
 function jsonResponse(body: unknown, status = 200) {
   return { ok: status < 400, status, json: async () => body }
@@ -286,23 +286,11 @@ describe('ServerSwitcher', () => {
     const wrapper = mountSwitcher()
     await openPop(wrapper)
 
-    await wrapper.find('.mc-srv-actions .mc-srv-action:last-child').trigger('click')
+    await wrapper.find('.mc-srv-actions .mc-srv-action').trigger('click')
 
     expect(wrapper.find(POP).exists()).toBe(false)
     expect(managerOpen.value).toBe(true)
-    expect(managerSeed.value).toEqual({ kind: 'list' })
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(wrapper.emitted('manage')).toBeUndefined()
-  })
-
-  it('opens the manager on the add form from the add action', async () => {
-    const wrapper = mountSwitcher()
-    await openPop(wrapper)
-
-    await wrapper.find('.mc-srv-actions .mc-srv-action:first-child').trigger('click')
-
-    expect(managerOpen.value).toBe(true)
-    expect(managerSeed.value).toEqual({ kind: 'new' })
-    expect(wrapper.emitted('close')).toBeUndefined()
   })
 })

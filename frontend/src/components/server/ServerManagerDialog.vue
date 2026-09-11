@@ -64,7 +64,6 @@ import {
   closeServerManager,
   draftFromEntry,
   managerOpen,
-  managerSeed,
   newDraft,
   omitKey,
   probeRemoteServer,
@@ -131,13 +130,7 @@ watch(
     results.value = {}
     busyOps.value = new Set()
     drafts.value = servers.value.filter((s) => !s.local).map(draftFromEntry)
-    if (managerSeed.value.kind === 'new') {
-      const draft = newDraft()
-      drafts.value = [...drafts.value, draft]
-      selectedId.value = draft.id
-    } else {
-      selectedId.value = drafts.value[0]?.id ?? null
-    }
+    selectedId.value = drafts.value[0]?.id ?? null
     baseline.value = snapshot()
     // Pick up a roster change made on another device while we were closed. The
     // drafts above are a one-time copy, so the re-read that lands afterwards

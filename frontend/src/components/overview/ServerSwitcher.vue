@@ -63,10 +63,6 @@
       </div>
 
       <div class="mc-srv-actions">
-        <button class="mc-srv-action" @click="onAdd">
-          <Plus :size="13" />
-          <span>{{ t('server.add') }}</span>
-        </button>
         <button class="mc-srv-action" @click="onManage">
           <Settings :size="13" />
           <span>{{ t('server.manage') }}</span>
@@ -78,7 +74,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { AlertCircle, Check, ChevronDown, KeyRound, Plus, Settings } from 'lucide-vue-next'
+import { AlertCircle, Check, ChevronDown, KeyRound, Settings } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { switchServer, type SwitchFailure } from '../../composables/activeServer'
 import {
@@ -228,15 +224,12 @@ async function onPick(s: ServerEntry) {
 }
 
 // Managing is a Mission Control concern now: the dialog opens over MC and MC
-// stays up behind it, so neither entry point emits `close`.
-function onAdd() {
-  close()
-  openServerManager({ kind: 'new' })
-}
-
+// stays up behind it, so this does not emit `close`. Adding is not a separate
+// entry point - "Add server" is a button inside the dialog, and the whole
+// roster is submitted as one replacement, so there is no create path to seed.
 function onManage() {
   close()
-  openServerManager({ kind: 'list' })
+  openServerManager()
 }
 
 function onKeydown(e: KeyboardEvent) {

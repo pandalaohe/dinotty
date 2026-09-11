@@ -33,7 +33,6 @@ import {
   closeServerManager,
   managerOpen,
   openServerManager,
-  type ManagerSeed,
 } from '../composables/useRemoteServerAdmin'
 
 function jsonResponse(body: unknown, status = 200) {
@@ -66,9 +65,9 @@ beforeEach(() => {
   hub([LAB, ATTIC])
 })
 
-async function openManager(seed: ManagerSeed = { kind: 'list' }) {
+async function openManager() {
   await refreshRemoteServers()
-  openServerManager(seed)
+  openServerManager()
   const wrapper = mount(ServerManagerDialog, {
     // The dialog teleports to <body>; rendering it inline keeps the queries
     // below on the wrapper.

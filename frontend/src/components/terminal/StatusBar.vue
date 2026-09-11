@@ -260,7 +260,7 @@ function switchFailureFor(id: string): string {
 
 function onManageServers() {
   closeServerPicker()
-  openServerManager({ kind: 'list' })
+  openServerManager()
 }
 
 function onServerPickerKeydown(e: KeyboardEvent) {
