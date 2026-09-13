@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use dinotty_server::{
-    agent, api::clipboard, audit, auth, events, file_watcher, history, mcp,
-    mission_control, monitor, notification, openapi, plugin, proxy, session, settings, tabs,
-    templates, token, update_check, workspace, workspace_mgmt, ws,
+    agent, api::clipboard, audit, auth, events, file_watcher, history, mcp, mission_control,
+    monitor, notification, openapi, plugin, proxy, session, settings, tabs, templates, token,
+    update_check, workspace, workspace_mgmt, ws,
 };
 
 use axum::{

@@ -841,7 +841,7 @@ mod tests {
     fn skips_assets_that_are_not_uploaded_yet() {
         let mut assets = release_assets("v0.26.0", "0.26.0");
         for asset in &mut assets {
-            if asset.name.ends_with(".dmg") {
+            if asset.name.to_ascii_lowercase().ends_with(".dmg") {
                 asset.state = Some("new".to_string());
             }
         }

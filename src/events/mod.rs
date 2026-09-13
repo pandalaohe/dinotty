@@ -1,4 +1,4 @@
-//! Global event bus, BusEvent → SyncMsg bridging, HTTP emit handlers, and webhooks.
+//! Global event bus, `BusEvent` → `SyncMsg` bridging, HTTP emit handlers, and webhooks.
 
 mod bridge;
 mod bus;
