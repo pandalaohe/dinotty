@@ -177,7 +177,7 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 > **REBUILT on `upstream/dev@1255721d` on `2026-08-24` — this was a rebuild, not a merge.** Every prior
 > snapshot in this file describes a branch that no longer exists. `custom` was recreated from clean
 > upstream with only the private mods replayed on top, as a single commit `e86d122a`; the pre-rebuild
-> lineage (158 local commits) is preserved at tag `backup/custom-20260824`, pushed to `origin`.
+> lineage (158 local commits) was preserved at tag `backup/custom-20260824` until that tag was deleted `2026-09-13`.
 > Why a rebuild and not a merge: of those 158 commits, 22 PRs' worth had already merged upstream, and
 > the remaining delta collided with upstream's refactor of `App.vue` into six composables and
 > `KeyboardTab.vue` into section components — 52 conflicts that were a re-port, not a merge.
@@ -1179,9 +1179,11 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 - `custom` -> the branch we BUILD, RUN, and base work on; MIRRORED to `origin/custom` since `2026-09-13`
   (user decision: GitHub and local keep only the latest, identical copy). Until then it was local-only and
   `origin/custom` sat stale at `2540a7f4` (`2026-07-28`, diverged 100/233); that one publish used
-  `--force-with-lease=custom:2540a7f4`, and every commit it overwrote is an ancestor of the pushed tag
-  `backup/custom-20260824`. Because re-aligns MERGE, later pushes are fast-forward — a push that needs force
-  again means history was rewritten and must stop for the user. It tracks `upstream/dev` by MERGE (not reset): each re-align merges
+  `--force-with-lease=custom:2540a7f4`, and every commit it overwrote was an ancestor of tag
+  `backup/custom-20260824` (deleted local + origin 2026-09-13 with every other stale ref, user decision; restore
+  bundle only in the short-lived `$TMPDIR` recycle bin). Because re-aligns MERGE, later pushes are fast-forward — a push that needs force
+  again means history was rewritten and must stop for the user. `origin` holds exactly `custom`, `main` and
+  `dev` (the GitHub default branch); `main` and `dev` are fast-forwarded to `upstream/dev` at each re-align. It tracks `upstream/dev` by MERGE (not reset): each re-align merges
   the newer `upstream/dev` into `custom`, so all merged feature code arrives via the merge and only
   the still-local mods (Mocha, `.gitignore`, in-flight DT19) remain as a real net diff. Merged-PR
   commits stay in `custom` history but carry zero net tree-diff vs base (no duplication).
@@ -1191,8 +1193,8 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 - Re-align recipe (MERGE model — never `reset --hard`, which would discard all local mods):
   `git fetch upstream && git tag backup/custom-pre-align-<date> custom && git checkout custom &&
   git merge --no-edit upstream/dev`, resolve any conflict by inspection, then rebuild via
-  `dinotty rebuild all`. Latest pre-align snapshots: `backup/custom-pre-6ba-align-260713`,
-  `backup/custom-pre-align-260713` (drop older ones once the new build is confirmed good).
+  `dinotty rebuild all`. Latest pre-align snapshot: `backup/custom-pre-align-20260913` (the only backup tag
+  kept; delete it once prod 8999 is confirmed good on the new build).
 
 ## Upstream divergence policy (how to resolve "upstream replaced our feature")
 Given upstream ships a DIFFERENT solution that overwrites or deletes a feature we already had.
@@ -1465,7 +1467,7 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
   (`frontend/src/components/keyboard/MobileKeyboard.vue`), the editing UI in
   `frontend/src/components/settings/ActionKeyboardEditor.vue`, EN+ZH `settings.toolbarQuickKeys*`
   copy, and its own tests. The original `861a5528` (`2026-07-07`) introduced those same two
-  identifiers; it is reachable only from tag `recovery/dt13-quick-key` and is NOT an ancestor of
+  identifiers; it was reachable only from tag `recovery/dt13-quick-key` (deleted `2026-09-13`) and is NOT an ancestor of
   `custom` or `upstream/dev` — superseded, nothing to replay. Exit condition met: no PR is owed and
   the tag is droppable.
   **Correction (`2026-09-10`)**: this entry sat under `## Pending recovery` reading "never PR'd,
@@ -1575,7 +1577,7 @@ All feature work goes upstream via minimal PRs, then drops from the local delta.
 ## Abandoned (do NOT revive)
 - Touch-drag synthetic-wheel scroll in fullscreen TUIs (`626cab0a`): its `isMouseModeEnabled`
   fix is already in upstream verbatim; its only unique delta (alt-screen finger-scroll) was never
-  real-device verified. Dropped 2026-07-06; retained in tag `custom-pre-align-260706` if needed.
+  real-device verified. Dropped 2026-07-06; tag `custom-pre-align-260706` that retained it was deleted 2026-09-13.
 
 ## Build (verified recipe — version tracks upstream)
 
