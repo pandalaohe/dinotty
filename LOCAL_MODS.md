@@ -1194,7 +1194,8 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   `git fetch upstream && git tag backup/custom-pre-align-<date> custom && git checkout custom &&
   git merge --no-edit upstream/dev`, resolve any conflict by inspection, then rebuild via
   `dinotty rebuild all`. Latest pre-align snapshot: `backup/custom-pre-align-20260913` (the only backup tag
-  kept; delete it once prod 8999 is confirmed good on the new build).
+  kept) plus app copy `~/.dinotty/backup/Dinotty-0.25.1.app`; delete both, with user confirmation, once prod
+  8999 on 0.26.0 passes the device checks (mobile keyboard toolbar, iOS-26 capsule reclaim, AboutTab seven-tap).
 
 ## Upstream divergence policy (how to resolve "upstream replaced our feature")
 Given upstream ships a DIFFERENT solution that overwrites or deletes a feature we already had.
