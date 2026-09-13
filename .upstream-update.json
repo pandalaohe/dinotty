@@ -10,7 +10,7 @@
 
   "verify": {
     "steps": [
-      { "id": "web-test", "cwd": "frontend", "argv": ["pnpm", "exec", "vitest", "run"], "required": true, "timeout_s": 900, "expect": "exit0" },
+      { "id": "web-test", "cwd": "frontend", "argv": ["env", "NODE_OPTIONS=--no-experimental-webstorage", "pnpm", "exec", "vitest", "run"], "required": true, "timeout_s": 900, "expect": "exit0" },
       { "id": "web-build", "cwd": "frontend", "argv": ["pnpm", "build"], "required": true, "timeout_s": 900, "expect": "exit0" },
       { "id": "native-check", "cwd": ".", "argv": ["cargo", "check", "--workspace"], "required": true, "timeout_s": 900, "expect": "exit0" }
     ]
@@ -19,7 +19,7 @@
   "survival": {
     "steps": [
       { "id": "workflow-tools", "cwd": ".", "argv": ["python3", "scripts/test-upstream-workflows.py"], "required": true, "timeout_s": 60, "expect": "exit0" },
-      { "id": "mobile-input", "cwd": "frontend", "argv": ["pnpm", "exec", "vitest", "run", "src/test/appPaneClose/system-keyboard.test.ts", "src/test/SystemKeyboardToolbar.test.ts", "src/test/useViewportResize.test.ts", "src/test/useViewportPanLock.test.ts", "src/test/useTerminalDeviceText.test.ts", "src/test/systemMobileInput.test.ts", "src/test/tauriImeRescue.test.ts"], "required": true, "timeout_s": 300, "expect": "exit0" },
+      { "id": "mobile-input", "cwd": "frontend", "argv": ["env", "NODE_OPTIONS=--no-experimental-webstorage", "pnpm", "exec", "vitest", "run", "src/test/appPaneClose/system-keyboard.test.ts", "src/test/SystemKeyboardToolbar.test.ts", "src/test/useViewportResize.test.ts", "src/test/useViewportPanLock.test.ts", "src/test/useTerminalDeviceText.test.ts", "src/test/systemMobileInput.test.ts", "src/test/tauriImeRescue.test.ts"], "required": true, "timeout_s": 300, "expect": "exit0" },
       { "id": "session-input", "cwd": ".", "argv": ["cargo", "test", "session::"], "required": true, "timeout_s": 600, "expect": "exit0" }
     ]
   },

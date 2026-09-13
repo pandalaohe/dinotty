@@ -248,7 +248,8 @@ assert_started(){
 
 frontend_verify_gate(){
   info "frontend: vitest + build ..."
-  ( cd frontend && pnpm exec vitest run && pnpm build ) \
+  # Node 25+ enables an experimental global localStorage by default (flag since 22.4) that shadows happy-dom's in vitest workers; upstream CI runs Node 20.
+  ( cd frontend && NODE_OPTIONS=--no-experimental-webstorage pnpm exec vitest run && pnpm build ) \
     || die "frontend verify failed — fix before installing ($NAME installed app left untouched)"
 }
 
@@ -513,7 +514,7 @@ align_upstream(){
     || die "frontend vue-tsc failed — merged tree retained; backup tag $tag is available"
 
   info "verify: frontend vitest ..."
-  ( cd frontend && pnpm exec vitest run ) \
+  ( cd frontend && NODE_OPTIONS=--no-experimental-webstorage pnpm exec vitest run ) \
     || die "frontend vitest failed — merged tree retained; backup tag $tag is available"
 
   info "verify: frontend build ..."
