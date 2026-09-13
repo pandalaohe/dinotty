@@ -189,14 +189,44 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   2. **`OverlayDragItem.test.ts` localStorage fixture** — dropped. User's stated ground: not specifically tested, not pursuing. Consequence carried, and it is not symmetric with (1): this candidate WAS verified real — `upstream/dev` is RED on a clean checkout of `8b644d9` (15 failures), the fork's copy is GREEN, re-confirmed `2026-08-27` after the #277 align. Dropping it means upstream stays red on that test indefinitely while this fork silently carries the fix that would repair it (the `vi.stubGlobal` localStorage fixture our merged PR #252 supplied). Re-open by filing that fixture against upstream's copy of the test file.
   3. **Physical Windows/Linux IME verification** — dropped, not performed. This was the sole remaining device residual of the whole KB series; the iPhone half is accepted and closed. Windows/Linux IME behaviour stays unobserved by choice. Re-open only if a Windows or Linux user reports IME input trouble.
 - Aligned + filed `2026-09-10` (T260910-006 / board `UPA01`): **`custom` re-aligned onto `upstream/dev@6c97227` — 0.23.1 → 0.25.1, 52 upstream commits — and one new local mod filed upstream as PR [#296](https://github.com/xichan96/dinotty/pull/296).** The binding constraint was the user's own: absorb upstream without losing any fork mod or configuration upstream has not taken. **Zero loss, proven three independent ways** and not by assertion: (a) seven targeted content greps over the mods with no test guard (`ime-open`=2, `--kb-capsule-reclaim`=1, `--safe-area-bottom`=1, `activateKbDebug`=2, `default_locale "zh"`=1, `Dinotty Local Signing`=1, `preview_open_modes`=2), plus a zero-residual conflict-marker sweep; (b) residual-set equality — `git diff --name-only <merge-base> custom` (23 paths) against `git diff --name-only upstream/dev <merged>` (22), `comm -23` yielding exactly one path, `SystemKeyboardToolbar.test.ts`, whose disappearance is the INTENDED convergence of the #277 row above and not a loss; (c) an independent codex review of the narrowed loss surface — the 23 pre-merge fork-only paths' diff across `895e9da..247719e`, 119 lines in 4 files — returning `no fork-local loss`, one of whose claims (the `AboutTab.vue` hunk being 14 lines of upstream removing CSS-variable fallbacks, seven-tap gesture intact) was independently spot-verified rather than taken on trust. **Four facts worth carrying.** (1) `git checkout --ours|--theirs <file>` was HARD-BANNED for this merge and should be for every future one on this file: a whole-file take on `mobile-keyboard.css` deletes the iOS-26 capsule-reclaim `#system-mobile-kb.ime-open` block that sits immediately AFTER the conflict region, and that block has no test guard — it is observable only on a physical iPhone, so the loss would have shipped silently. Resolve hunk by hunk. (2) **The upgrade design doc had a real gap, caught only because the variable was checked before dispatching the resolution**: this fork had deleted `const toolbarPadding = toolbarRule.match(…)` OUTSIDE the conflict region, and git auto-merged that deletion cleanly — so taking upstream's in-conflict assertions alone would have left them referencing an undefined variable. It was restored by hand and the file converged whole to upstream. A conflict region is not the boundary of a conflict. (3) The post-merge suite came back with 17 failures across four files, and they were proven MERGE-NEUTRAL rather than argued away: the same four files run in a detached `upstream/dev@6c97227` worktree fail identically, `comm -23` on the failing-case sets empty. Root cause and disposition are the new `plugin-float-window-localstorage-stub` Index row. (4) `align-upstream` still early-returns on `behind==0` and so skips its entire verification suite after any hand-resolved conflict — the `2026-08-27` entry's warning, re-confirmed. Everything below was run by hand: `cargo check --workspace` 0, `src-tauri` crate `cargo check` 0 (separate crate, not in the root workspace — the tool never checks it), `vue-tsc --noEmit` 0, `pnpm build` 0, `vitest run` **1521 passed / 10 skipped / 0 failed**. Deployment: `dinotty rebuild test --fg` installed `Dinotty Test.app v0.25.1`, 8998 served a MATCHing asset fingerprint, browser smoke clean (seven settings tabs, `default_locale` still `zh`, upstream's new preview open-mode dropdowns, plugin marketplace + six installed plugins, zero console errors after reload). **The 8999 production rebuild was handed to the user to run themselves** — this session's terminal was hosted BY 8999 (`DINOTTY_INSTANCE=prod`, measured, not assumed) and `dinotty-ops.sh`'s self-host guard refuses that case by design; the live 0.23.1 bundle was saved to `~/.dinotty/backup/Dinotty-0.23.1.app` first as the instant rollback. **Blind spots, stated rather than inferred:** the mobile system-keyboard toolbar, the iOS-26 capsule reclaim, and the AboutTab seven-tap debug gesture are device-only and were NOT observed this run — code presence was verified two ways, behaviour was not. **One pre-existing defect found and deliberately not scheduled** (orphan scope): the theme list renders the raw key `settings.theme.catppuccin-mocha` instead of a label, because the fork's Mocha theme (`e86d122`, `2026-08-24`, `frontend/src/themes.ts:549`) never got an i18n label key and `t()` falls back to `table[key] ?? key`. `themeLabel` and that fallback are byte-identical before and after this merge, so it is not a regression of this align.
-- Currently aligned to `upstream/dev@6c97227` (`2026-09-10`, custom HEAD `da6b722`) by MERGE (`247719e`)
-  on top of that rebuild baseline; `behind=0`, `ahead=35`. Backup tag taken before this merge:
-  `pre-update-custom-20260910-101217`.
-- Residual fork layer vs `upstream/dev`: **26 paths, 4027 insertions / 26 deletions** (`git diff --stat
-  upstream/dev...custom`, measured `2026-09-10` — re-run the command rather than trusting this figure).
-  Twelve mods, plus one unclassified test fixture. The twelfth is
-  `plugin-float-window-localstorage-stub` — four upstream-OWNED test files carrying this fork's stub,
-  which is why the path count fell 32 → 22 on the align and then rose to 26. The seven
+- Aligned `2026-09-13` (T260913-TMB-CC-020, run of core board `FC11` quarterly fork audit): **`custom`
+  merged `upstream/dev@34a5e19b` — 0.25.1 → 0.26.0, 42 upstream commits (Mission Control multi-server,
+  status-bar server chip, events tree refactor, relay dot-segment fix).** Worktree merge `ca79481c`
+  (backup tag `backup/custom-pre-align-20260913` at `0f7c2e85`), then `custom` fast-forwarded, so the
+  deployable checkout never sat MERGING. One conflict, `src/pty.rs` test `use super::{…}` — union of
+  fork `pty_session_env_keys_to_strip`/`should_strip_inherited_no_color` and upstream `zshrc_contents`;
+  `src/settings/types/mod.rs` auto-merged. **Zero loss**: 10 fork-mod marker counts identical before and
+  after (`ime-open` 11, `--kb-capsule-reclaim` 9, `--safe-area-bottom` 2, `activateKbDebug` 2,
+  `default_locale` 7, `Dinotty Local Signing` 1, `preview_open_modes` 18, `should_strip_inherited_no_color` 7,
+  `pty_session_env_keys_to_strip` 4, `catppuccin-mocha` 1; `git grep -c`, excluding LOCAL_MODS.md and docs);
+  residual set 26 → 22, the four dropped paths being the `PluginFloatWindow*.test.ts` files whose `custom`
+  content already equalled upstream (#296 merged verbatim). Four lifecycle flips the `2026-09-10` align
+  missed (#272/#273/#274/#296, all MERGED; every PR file identical to upstream). Gates, by hand in the
+  worktree: `cargo check --workspace` 0, `src-tauri` `cargo check` 0 (needs `frontend/dist` first —
+  RustEmbed), `vue-tsc --noEmit` 0, `pnpm build` 0, `vitest run` 1647 passed / **59 failed** / 10 skipped.
+  The 59 failures (7 upstream-new test files) were identical on a detached `upstream/dev@34a5e19b`
+  worktree and their root cause is Node, not the merge — new row `vitest-node-webstorage-off` (`81e6ba13`);
+  with it 1706 passed / 0 failed, and `.upstream-update.json` web-test (1706) and mobile-input (166) pass
+  as written. It also overturns the #296 row's root-cause analysis (corrected there). codex review of the
+  resolution + ops fix: no correctness finding, two style fixes applied. Deploy: `dinotty rebuild test --fg`
+  → `Dinotty Test.app v0.26.0`, 8998 fingerprint MATCH (`index-CuEjFHKI.js`); headless Chromium load:
+  200, `lang=zh-CN`, Chinese UI, upstream `LOC` chip present, no 4xx after reload. **Two rebuild traps
+  worth carrying:** (1) run from a tmux/launchd-parented shell, tauri's `bundle_dmg.sh` Finder AppleScript
+  times out (`-1712`) and the whole rebuild dies after a good `.app` build — `CI=true dinotty rebuild …`
+  makes tauri pass `--skip-jenkins`; a Dinotty-hosted terminal does not hit it; (2) the frontend
+  `node_modules` may be absent in the main checkout and `dinotty-ops.sh` never installs — `pnpm install
+  --frozen-lockfile` in `frontend/` first. **Branch model changed by user decision**: `custom` is now
+  mirrored to `origin` — see `## Branch model`. **Blind spots:** prod 8999 not rebuilt (user's hands);
+  mobile system-keyboard toolbar, iOS-26 capsule reclaim and AboutTab seven-tap gesture are device-only and
+  NOT observed; settings tabs / plugin marketplace not clicked through this run.
+- Currently aligned to `upstream/dev@34a5e19b` (`2026-09-13`) by MERGE (`ca79481c`) on top of the rebuild
+  baseline; `behind=0`, ahead = `git rev-list --count upstream/dev..custom`. Backup tag taken before this
+  merge: `backup/custom-pre-align-20260913`.
+- Residual fork layer vs `upstream/dev`: **22 paths, 3984 insertions / 26 deletions** (`git diff --stat
+  upstream/dev...custom`, measured `2026-09-13` — re-run the command rather than trusting this figure).
+  `plugin-float-window-localstorage-stub` left the residual on this align (absorbed upstream, 26 → 22);
+  `vitest-node-webstorage-off` lives inside already-residual `fork-meta` / `deploy-scripts` files and adds
+  no path. The seven
   `lifecycle=private` carries:
   - `fork-meta` — `.gitignore`, `.upstream-update.json`, `LOCAL_MODS.md`
   - `mocha-theme` — `frontend/src/themes.ts`
@@ -280,6 +310,12 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
 - Verification for this snapshot is recorded in the newest re-align log entry and the alignment merge commits.
 - Update trigger: on any upstream re-align OR when a PR flips open<->merged — refresh SHA, date, table.
 - Re-align log (newest first):
+    - `2026-09-13` (T260913-TMB-CC-020 / core board `FC11`) → base `34a5e19b` (was `6c97227`), merge
+      `ca79481c`, ops fix `81e6ba13`, backup tag `backup/custom-pre-align-20260913` at pre-merge HEAD
+      `0f7c2e85`: 42 upstream commits, version 0.25.1 → 0.26.0, one conflict (`src/pty.rs` test imports,
+      union). Done by hand in a separate worktree, not via `align-upstream`. Loss check, gates, the Node
+      webstorage root cause, deploy, the dmg/AppleScript and missing-`node_modules` rebuild traps, the
+      branch-model change and blind spots are in the `2026-09-13` snapshot entry above.
     - `2026-09-10` (T260910-006 / board `UPA01`) → base `6c97227` (was `beb9e30`), custom HEAD `da6b722`,
       merge commit `247719e`, backup tag `pre-update-custom-20260910-101217` at pre-merge HEAD `895e9da`:
       **the largest align since the `2026-08-24` rebuild — 52 upstream commits, version 0.23.1 → 0.25.1.**
@@ -1140,8 +1176,12 @@ Upstream: https://github.com/xichan96/dinotty (MIT)
   (timeout parser + tests) / `3283d8fb` (deployment doc). Detail below.
 
 ## Branch model
-- `custom` -> the branch we BUILD, RUN, and base work on; LOCAL-ONLY (never pushed to origin, so
-  re-align needs no force-push). It tracks `upstream/dev` by MERGE (not reset): each re-align merges
+- `custom` -> the branch we BUILD, RUN, and base work on; MIRRORED to `origin/custom` since `2026-09-13`
+  (user decision: GitHub and local keep only the latest, identical copy). Until then it was local-only and
+  `origin/custom` sat stale at `2540a7f4` (`2026-07-28`, diverged 100/233); that one publish used
+  `--force-with-lease=custom:2540a7f4`, and every commit it overwrote is an ancestor of the pushed tag
+  `backup/custom-20260824`. Because re-aligns MERGE, later pushes are fast-forward — a push that needs force
+  again means history was rewritten and must stop for the user. It tracks `upstream/dev` by MERGE (not reset): each re-align merges
   the newer `upstream/dev` into `custom`, so all merged feature code arrives via the merge and only
   the still-local mods (Mocha, `.gitignore`, in-flight DT19) remain as a real net diff. Merged-PR
   commits stay in `custom` history but carry zero net tree-diff vs base (no duplication).
