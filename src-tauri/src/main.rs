@@ -17,6 +17,7 @@ mod autostart;
 mod embedded_server;
 mod shutdown;
 mod tray;
+mod update_download;
 mod window_actions;
 
 static EMBEDDED_HTTP_PORT: OnceLock<u16> = OnceLock::new();
@@ -767,6 +768,7 @@ fn main() {
         .manage(tray::state::TrayCapabilityState::default())
         .manage(tray::state::TrayMenuState::default())
         .manage(window_actions::MainWindowState::default())
+        .manage(update_download::UpdateDownloadState::default())
         .manage(StartupExitState::default())
         .manage(shutdown::ShutdownCoordinator::new(manager.clone()))
         .setup(move |app| {
@@ -866,6 +868,10 @@ fn main() {
             tauri_read_drag_pboard,
             pick_upload_dir,
             pick_workspace_dir,
+            update_download::download_update_asset,
+            update_download::cancel_update_download,
+            update_download::reveal_downloaded_file,
+            update_download::open_downloaded_file,
             shutdown::request_desktop_quit,
             shutdown::desktop_quit_ack,
             window_actions::desktop_capabilities,
