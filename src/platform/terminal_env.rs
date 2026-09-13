@@ -1,5 +1,6 @@
 use portable_pty::CommandBuilder;
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, PartialEq, Eq)]
 struct LocalePlan {
     remove_lc_all: bool,
@@ -103,6 +104,7 @@ fn default_utf8_locale() -> &'static str {
 }
 
 /// Merge PATH entries while preserving their first-seen order.
+#[must_use]
 pub fn path_with_fallbacks(path: &str, fallbacks: &[&str]) -> String {
     let mut entries = Vec::new();
     for entry in path.split(':').chain(fallbacks.iter().copied()) {
@@ -113,7 +115,7 @@ pub fn path_with_fallbacks(path: &str, fallbacks: &[&str]) -> String {
     entries.join(":")
 }
 
-/// A GUI-launched macOS app has LaunchServices' minimal PATH. Cache the
+/// A GUI-launched macOS app has `LaunchServices`' minimal PATH. Cache the
 /// user's login-shell PATH exclusively for direct-argv tabs; interactive
 /// login shells keep the original environment and evaluate startup files once.
 #[cfg(target_os = "macos")]
