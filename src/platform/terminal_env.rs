@@ -119,6 +119,7 @@ pub fn path_with_fallbacks(path: &str, fallbacks: &[&str]) -> String {
 /// user's login-shell PATH exclusively for direct-argv tabs; interactive
 /// login shells keep the original environment and evaluate startup files once.
 #[cfg(target_os = "macos")]
+#[must_use]
 pub fn direct_command_path() -> Option<&'static str> {
     use std::sync::OnceLock;
 
@@ -127,6 +128,7 @@ pub fn direct_command_path() -> Option<&'static str> {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[must_use]
 pub fn direct_command_path() -> Option<&'static str> {
     None
 }
