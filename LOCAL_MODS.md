@@ -1297,6 +1297,13 @@ Precedent: PR #172 monogram (upstream merged it, then reversed it in `dc7e0b6d`)
     to PTYs. Relaunch now also unsets only `NO_COLOR`; normal app launches and user-owned terminal
     environments retain their explicit setting. `scripts/test-dinotty-ops-relaunch-env.sh` guards all
     four relaunch exclusions without launching or replacing an app.
+    Replaced `2026-09-13`: a rebuild run as `CI=true dinotty rebuild all` from tmux leaked `CI=true` (supports-color
+    level 0 → Claude monochrome), `TMUX_PANE` and `OMNIGENT_*` into both apps — the denylist's third miss.
+    `relaunch_instance` now launches from `/usr/bin/env -i` carrying only HOME, USER, LOGNAME, SHELL, TMPDIR and the
+    system PATH; LaunchServices supplies SSH_AUTH_SOCK, XPC_* and __CF*, so the app's env name set equals a Dock
+    launch (probed on 8998). The test is behavioural: it stubs `open`, exports polluting vars, and asserts the
+    six-name allowlist; it fails on the old body. A direct `open` from an agent shell still bypasses this; the
+    PTY-boundary `NO_COLOR` backstop below covers only `NO_COLOR`.
     Extended `2026-08-18` at the PTY spawn boundary: a direct `/usr/bin/open` from an agent shell can bypass
     `relaunch_instance`, so terminal children now remove `NO_COLOR` when the inherited environment also has a
     session-scoped Codex (`CODEX_SESSION_ID`/`CODEX_THREAD_ID`/tool markers) or Claude marker. `NO_COLOR` alone,

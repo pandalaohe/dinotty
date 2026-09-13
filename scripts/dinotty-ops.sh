@@ -232,7 +232,8 @@ clear_asset_cache(){
 }
 
 relaunch_instance(){
-  /usr/bin/env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDECODE -u CLAUDE_SESSION_ID -u NO_COLOR /usr/bin/open "$DEST" \
+  # open forwards the caller environment into the launched app.
+  /usr/bin/env -i HOME="$HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" SHELL="${SHELL:-/bin/zsh}" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/bin/open "$DEST" \
     || die "$NAME relaunch failed — installed app remains at $DEST"
 }
 
