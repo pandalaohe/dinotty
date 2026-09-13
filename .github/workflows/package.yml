@@ -418,15 +418,18 @@ jobs:
             pkg-config \
             tzdata
 
+      # pnpm 必须先装：setup-node 的 `cache: pnpm` 要执行 `pnpm --version`
+      # 才能算出 lockfile 的 cache key，顺序反了会直接报 "Unable to locate
+      # executable file: pnpm"。与上面 package job 的顺序保持一致。
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: dtolnay/rust-toolchain@stable
 
