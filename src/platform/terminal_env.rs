@@ -1,5 +1,6 @@
 use portable_pty::CommandBuilder;
 
+#[cfg(not(windows))]
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, PartialEq, Eq)]
 struct LocalePlan {
@@ -53,20 +54,24 @@ fn apply_locale(cmd: &mut CommandBuilder) {
     }
 }
 
+#[cfg(not(windows))]
 fn env_value(cmd: &CommandBuilder, key: &str) -> Option<String> {
     cmd.get_env(key).map(|value| value.to_string_lossy().into_owned())
 }
 
+#[cfg(not(windows))]
 fn present(value: Option<&str>) -> Option<&str> {
     value.filter(|value| !value.trim().is_empty())
 }
 
 // Darwin has no C.UTF-8 locale. Treating it as UTF-8 by name silently makes
 // libc fall back to C, which breaks multibyte input and cursor handling.
+#[cfg(not(windows))]
 fn known_unsupported_locale(value: &str, is_macos: bool) -> bool {
     is_macos && matches!(value.trim().to_ascii_uppercase().as_str(), "C.UTF-8" | "C.UTF8")
 }
 
+#[cfg(not(windows))]
 fn locale_plan_for_platform(
     lc_all: Option<&str>,
     lc_ctype: Option<&str>,
@@ -95,6 +100,7 @@ fn locale_plan_for_platform(
     }
 }
 
+#[cfg(not(windows))]
 fn default_utf8_locale() -> &'static str {
     if cfg!(target_os = "macos") {
         "en_US.UTF-8"
@@ -170,11 +176,12 @@ fn read_login_shell_path() -> Option<String> {
 mod tests {
     use portable_pty::CommandBuilder;
 
-    use super::{
-        configure_terminal_environment, default_utf8_locale, locale_plan_for_platform,
-        path_with_fallbacks, LocalePlan,
-    };
+    use super::{configure_terminal_environment, path_with_fallbacks};
 
+    #[cfg(not(windows))]
+    use super::{default_utf8_locale, locale_plan_for_platform, LocalePlan};
+
+    #[cfg(not(windows))]
     #[test]
     fn locale_preserves_explicit_locale_precedence() {
         for (all, ctype, lang) in [
@@ -195,6 +202,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn locale_replaces_only_darwins_unsupported_c_utf8() {
         assert_eq!(
@@ -217,6 +225,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn locale_defaults_when_every_locale_is_missing_or_invalid() {
         assert_eq!(
