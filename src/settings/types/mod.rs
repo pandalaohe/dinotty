@@ -2,6 +2,7 @@ mod action;
 mod auth;
 mod bookmarks;
 mod notification;
+mod remote_server;
 mod ssh;
 mod text;
 mod theme;
@@ -10,6 +11,7 @@ pub use action::*;
 pub use auth::*;
 pub use bookmarks::*;
 pub use notification::*;
+pub use remote_server::*;
 pub use ssh::*;
 pub use text::*;
 pub use theme::*;
@@ -18,7 +20,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-pub const CURRENT_SETTINGS_VERSION: u32 = 13;
+pub const CURRENT_SETTINGS_VERSION: u32 = 15;
 pub(crate) const LEGACY_UPLOAD_DIR: &str = "~/.dinotty/uploads";
 
 #[derive(Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -196,6 +198,9 @@ pub struct Settings {
     pub show_workspace_badge_on_tab: Option<bool>,
     #[serde(default)]
     pub workspace_badge_mode: Option<WorkspaceBadgeMode>,
+    /// When enabled, a plain New Tab command starts in the active pane's CWD.
+    #[serde(default)]
+    pub inherit_cwd_for_new_tab: bool,
     #[serde(default, rename = "windowsAltAsCmd")]
     pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
@@ -230,6 +235,11 @@ pub struct Settings {
     pub log: LogConfig,
     #[serde(default)]
     pub ssh_profiles: Vec<SshProfile>,
+    /// Remote dinotty servers this hub can relay to (Mission Control server
+    /// switcher). Full-replace on PUT, with per-`id` token inheritance - see
+    /// `put_settings`.
+    #[serde(default)]
+    pub remote_servers: Vec<RemoteServer>,
     #[serde(default)]
     pub active_workspace_id: Option<String>,
     #[serde(default)]
@@ -442,6 +452,7 @@ impl Default for Settings {
             keyboard_keep_on_scroll: false,
             show_workspace_badge_on_tab: None,
             workspace_badge_mode: None,
+            inherit_cwd_for_new_tab: false,
             windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
             restore_session_on_startup: true,
@@ -459,6 +470,7 @@ impl Default for Settings {
             keybindings: std::collections::HashMap::new(),
             log: LogConfig::default(),
             ssh_profiles: vec![],
+            remote_servers: vec![],
             active_workspace_id: None,
             auth: AuthConfig::default(),
             preview: PreviewConfig::default(),

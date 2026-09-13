@@ -30,6 +30,7 @@
         :current-tab-index="currentTabIndex"
         :active-workspace-abbr="activeWorkspaceAbbr"
         :active-workspace-color="activeWorkspaceColor"
+        :toolbar-order="previewToolbarItems.map((item) => item.id)"
         @activate="activateTab"
         @close="requestCloseTab"
         @close-tabs="onCloseTabsBulk"
@@ -42,9 +43,9 @@
         @save-as-template="openSaveTemplateDialog"
         @apply-template="templatePickerVisible = true"
       >
-        <template #left>
+        <template #toolbar-item="{ itemId }">
           <button
-            v-if="isBroadcastActive"
+            v-if="itemId === 'broadcast' && isBroadcastActive"
             type="button"
             class="tab-bar-icon-btn broadcast-btn"
             :title="t('split.toggleBroadcast')"
@@ -53,10 +54,61 @@
           >
             <Radar :size="16" />
           </button>
+          <button
+            v-else-if="
+              activeTabType === 'terminal' &&
+              (itemId === 'files' || itemId === 'web') &&
+              isPreviewToolbarItemVisible(itemId)
+            "
+            type="button"
+            class="tab-bar-icon-btn"
+            :title="previewToolbarLabel(itemId)"
+            @click="openPreview(itemId as 'files' | 'web')"
+            @touchend.prevent="openPreview(itemId as 'files' | 'web')"
+          >
+            <FolderTree v-if="itemId === 'files'" :size="16" />
+            <Globe v-else :size="16" />
+          </button>
+          <button
+            v-else-if="itemId === 'reload'"
+            type="button"
+            class="tab-bar-icon-btn"
+            :title="t('app.reload')"
+            @click="reloadApp"
+            @touchend.prevent="reloadApp"
+          >
+            <RefreshCw :size="16" />
+          </button>
+          <button
+            v-else-if="itemId === 'settings'"
+            type="button"
+            class="tab-bar-icon-btn"
+            :title="t('app.settings')"
+            @click="settingsOpen = true"
+            @touchend.prevent="settingsOpen = true"
+          >
+            <Settings :size="16" />
+          </button>
+          <button
+            v-else-if="
+              itemId === 'notifications' &&
+              (notif.notifications.value.length > 0 || notif.unreadAttentionCount.value > 0)
+            "
+            type="button"
+            class="tab-bar-icon-btn notif-btn"
+            :title="t('notification.title')"
+            @click="notif.togglePanel()"
+            @touchend.prevent="notif.togglePanel()"
+          >
+            <Bell :size="16" />
+            <span v-if="notif.unreadAttentionCount.value > 0" class="notif-badge">{{
+              notif.unreadAttentionCount.value > 9 ? '9+' : notif.unreadAttentionCount.value
+            }}</span>
+          </button>
         </template>
-        <template #right>
+        <template #more>
           <div
-            v-if="activeTabType === 'terminal'"
+            v-if="activeTabType === 'terminal' && hiddenPreviewToolbarItems.length"
             ref="previewMenuWrapRef"
             class="preview-menu-wrap"
           >
@@ -64,11 +116,11 @@
               type="button"
               class="tab-bar-icon-btn"
               :class="{ 'is-active': previewMenuOpen }"
-              :title="t('app.preview')"
+              :title="t('previewToolbar.more')"
               @click="previewMenuOpen = !previewMenuOpen"
               @touchend.prevent="previewMenuOpen = !previewMenuOpen"
             >
-              <Monitor :size="16" />
+              <Ellipsis :size="16" />
             </button>
             <div
               v-if="previewMenuOpen"
@@ -83,56 +135,19 @@
               role="menu"
             >
               <button
+                v-for="item in hiddenPreviewToolbarItems"
+                :key="item.id"
                 type="button"
                 class="preview-menu-item"
                 role="menuitem"
-                @click="((previewMenuOpen = false), openPreview('files'))"
+                @click="((previewMenuOpen = false), openPreview(item.id as 'files' | 'web'))"
               >
-                <FolderTree :size="14" />
-                <span>{{ t('previewPanel.switchFiles') }}</span>
-              </button>
-              <button
-                type="button"
-                class="preview-menu-item"
-                role="menuitem"
-                @click="((previewMenuOpen = false), openPreview('web'))"
-              >
-                <Globe :size="14" />
-                <span>{{ t('previewPanel.switchWeb') }}</span>
+                <FolderTree v-if="item.id === 'files'" :size="14" />
+                <Globe v-else :size="14" />
+                <span>{{ previewToolbarLabel(item.id) }}</span>
               </button>
             </div>
           </div>
-          <button
-            type="button"
-            class="tab-bar-icon-btn"
-            :title="t('app.reload')"
-            @click="reloadApp"
-            @touchend.prevent="reloadApp"
-          >
-            <RefreshCw :size="16" />
-          </button>
-          <button
-            type="button"
-            class="tab-bar-icon-btn"
-            :title="t('app.settings')"
-            @click="settingsOpen = true"
-            @touchend.prevent="settingsOpen = true"
-          >
-            <Settings :size="16" />
-          </button>
-          <button
-            v-if="notif.notifications.value.length > 0 || notif.unreadAttentionCount.value > 0"
-            type="button"
-            class="tab-bar-icon-btn notif-btn"
-            :title="t('notification.title')"
-            @click="notif.togglePanel()"
-            @touchend.prevent="notif.togglePanel()"
-          >
-            <Bell :size="16" />
-            <span v-if="notif.unreadAttentionCount.value > 0" class="notif-badge">{{
-              notif.unreadAttentionCount.value > 9 ? '9+' : notif.unreadAttentionCount.value
-            }}</span>
-          </button>
         </template>
       </TabBar>
 
@@ -235,6 +250,11 @@
       @confirm="alertResolve"
     />
 
+    <!-- One instance, opened from the Mission Control switcher and the status
+         bar alike: two would race over the same roster. It owns its own
+         visibility (`managerOpen`), so nothing here has to pass it down. -->
+    <ServerManagerDialog />
+
     <PromptModal
       :visible="promptState.visible"
       :title="promptState.title"
@@ -276,8 +296,6 @@
     />
 
     <CommandBookmarks ref="bookmarksRef" :get-send-fn="getSendFn" :create-tab="newTab" />
-
-    <ServerList ref="serverListRef" @connect="onServerConnect" />
 
     <SshHostsPanel ref="sshPanelRef" @connect="onSshConnect" />
 
@@ -386,7 +404,6 @@ import {
 import TabBar from './components/terminal/TabBar.vue'
 import CommandPalette from './components/command/CommandPalette.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
-import ServerList from './components/ServerList.vue'
 import SshHostsPanel from './components/ssh/SshHostsPanel.vue'
 import SshAuthPromptDialog from './components/ssh/SshAuthPromptDialog.vue'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
@@ -397,6 +414,7 @@ const SettingsPanel = defineAsyncComponent(() => import('./components/SettingsPa
 import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
 import ConfirmModal from './components/ui/ConfirmModal.vue'
 import AlertModal from './components/ui/AlertModal.vue'
+import ServerManagerDialog from './components/server/ServerManagerDialog.vue'
 import PromptModal from './components/ui/PromptModal.vue'
 import WindowCloseDialog from './components/ui/WindowCloseDialog.vue'
 import TrayVisibilityDialog from './components/ui/TrayVisibilityDialog.vue'
@@ -425,6 +443,7 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
+  authFetch,
 } from './composables/apiBase'
 import { useToast } from 'vue-toastification'
 import {
@@ -455,7 +474,8 @@ import { useAppKeyboard } from './composables/useAppKeyboard'
 import { useAppConnectivity } from './composables/useAppConnectivity'
 import { useAppTauri } from './composables/useAppTauri'
 import { usePluginBridge } from './composables/usePluginBridge'
-import { Settings, Bell, Monitor, Radar, RefreshCw, FolderTree, Globe } from 'lucide-vue-next'
+import { Settings, Bell, Ellipsis, Radar, RefreshCw, FolderTree, Globe } from 'lucide-vue-next'
+import { normalizePreviewToolbarItems, type PreviewToolbarId } from './utils/previewToolbar'
 
 // ── Stores & shared app services ────────────────────────────────
 const session = useSessionStore()
@@ -530,7 +550,6 @@ const appRootRef = ref<HTMLElement | null>(null)
 const tabBarRef = ref<InstanceType<typeof TabBar> | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
-const serverListRef = ref<InstanceType<typeof ServerList>>()
 const sshPanelRef = ref<InstanceType<typeof SshHostsPanel>>()
 
 // ── Orchestration composables (core → actions → keyboard → connectivity → tauri → bridge) ──
@@ -662,6 +681,47 @@ const {
   stopForegroundGainSubscription,
 } = core
 
+const previewToolbarItems = computed(() =>
+  normalizePreviewToolbarItems(appSettings.preview.toolbar_items)
+)
+const visiblePreviewToolbarItems = computed(() =>
+  previewToolbarItems.value.filter((item) => item.visible)
+)
+const hiddenPreviewToolbarItems = computed(() =>
+  previewToolbarItems.value.filter(
+    (item) => (item.id === 'files' || item.id === 'web') && !item.visible
+  )
+)
+
+function isPreviewToolbarItemVisible(id: 'files' | 'web') {
+  return visiblePreviewToolbarItems.value.some((item) => item.id === id)
+}
+
+watch(hiddenPreviewToolbarItems, (items) => {
+  if (items.length === 0) previewMenuOpen.value = false
+})
+
+function previewToolbarLabel(id: PreviewToolbarId) {
+  switch (id) {
+    case 'broadcast':
+      return t('settings.previewToolbar.broadcast')
+    case 'new_tab':
+      return t('settings.previewToolbar.newTab')
+    case 'plugins':
+      return t('settings.previewToolbar.plugins')
+    case 'files':
+      return t('previewPanel.switchFiles')
+    case 'web':
+      return t('previewPanel.switchWeb')
+    case 'reload':
+      return t('app.reload')
+    case 'settings':
+      return t('app.settings')
+    case 'notifications':
+      return t('notification.title')
+  }
+}
+
 // Lazy-mount the Mission Control overview on first open; stays mounted
 // afterwards so re-opens are instant.
 const overviewMounted = ref(false)
@@ -693,7 +753,6 @@ const {
 } = keyboard
 
 const {
-  onServerConnect,
   onSshConnect,
   onSshReconnect,
   onSshAuthSubmit,
@@ -797,7 +856,7 @@ onMounted(async () => {
         // when the cookie is absent/invalid.
         let cookieOk = false
         try {
-          const res = await fetch(apiUrl('/api/settings'), { credentials: 'include' })
+          const res = await authFetch(apiUrl('/api/settings'))
           cookieOk = res.ok
         } catch {
           // network error - fall through to auto-token
@@ -816,7 +875,7 @@ onMounted(async () => {
       } else {
         // Server mode: check if session cookie is still valid
         try {
-          const res = await fetch(apiUrl('/api/settings'), { credentials: 'include' })
+          const res = await authFetch(apiUrl('/api/settings'))
           if (res.ok) {
             await onLoginSuccess()
           }

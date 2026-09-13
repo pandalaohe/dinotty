@@ -41,6 +41,23 @@
       </section>
 
       <section class="settings-section">
+        <h3>{{ t('settings.newTab') }}</h3>
+        <div class="settings-row">
+          <label>{{ t('settings.newTab.inheritCwd') }}</label>
+          <label class="toggle">
+            <input
+              v-model="settings.inherit_cwd_for_new_tab"
+              type="checkbox"
+              data-setting="inherit-cwd-for-new-tab"
+              @change="saveSettings()"
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint">{{ t('settings.newTab.inheritCwdHint') }}</p>
+      </section>
+
+      <section class="settings-section">
         <h3>{{ t('settings.virtualKeyboard') }}</h3>
         <div class="settings-row">
           <label>{{ t('settings.virtualKeyboard.show') }}</label>
@@ -647,7 +664,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
+import { computed, ref, onBeforeUnmount, onMounted, watch } from 'vue'
 import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X, FolderOpen } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import type { WorkspaceBadgeMode } from '../../composables/useSettings'
@@ -669,6 +686,7 @@ import { uiConfirm } from '../../composables/useConfirm'
 import { onAppForegroundGain } from '../../composables/useAppForeground'
 
 const emit = defineEmits<{ 'token-changed': [] }>()
+const props = withDefaults(defineProps<{ visible?: boolean }>(), { visible: true })
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 const { isMobile } = useIsMobile()
@@ -805,9 +823,20 @@ const {
   copied,
   qrCanvasRef,
   copyAccessUrl,
+  refreshAccessUrl,
   viewLog,
   refreshLog,
 } = accessUrlApi
+
+// SettingsPanel remains mounted after its first open, so onMounted only
+// refreshes once. Refresh whenever the user opens the General settings tab.
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) void refreshAccessUrl()
+  },
+  { immediate: true }
+)
 
 const newIp = ref('')
 

@@ -31,10 +31,16 @@ The desktop ships in two formats:
 
 | Format | Distro | Install |
 |--------|--------|---------|
-| `.deb` | Debian / Ubuntu / Linux Mint | `sudo dpkg -i dinotty_<version>_amd64.deb` |
+| `.deb` | Ubuntu 22.04+ / Debian 12+ / Linux Mint 21+ | `sudo dpkg -i dinotty_<version>_amd64.deb` |
 | `.AppImage` | Most distros | `chmod +x Dinotty_*.AppImage && ./Dinotty_*.AppImage` |
 
 `.AppImage` is a single executable, no install needed. If your file manager prompts for trust, enable "Allow executing" in the file properties.
+
+::: warning Desktop `.deb` requires glibc ≥ 2.34
+The desktop `.deb` is built on an Ubuntu 22.04 runner (the GNOME/WebKit runtime libraries only exist from 22.04 onward), so the binary requires `libc6 (>= 2.34)` and installs only on Ubuntu 22.04+ / Debian 12+ / Mint 21+.
+
+On older systems such as Ubuntu 20.04 / Debian 11, `dpkg -i` reports dependency errors that `apt-get -f install` cannot fix — the glibc symbol versions simply do not match, and no package can supply them. Use the server `.deb` described below, the AppImage, or the Docker image instead.
+:::
 
 ### Windows
 
@@ -48,6 +54,8 @@ Download the NSIS installer (`Dinotty_<version>_x64-setup.exe`) and run it, or u
 ## Server deb (Linux)
 
 `dinotty-server` is a standalone Rust binary with no desktop dependency, suitable for VPS or home servers.
+
+The server `.deb` is built separately in an Ubuntu 20.04 container and requires `libc6 (>= 2.31)`, so it installs on **Ubuntu 20.04+ / Debian 11+ / Linux Mint 20+** — a wider range than the desktop `.deb`.
 
 ```bash
 # Download and install the latest version in one go
