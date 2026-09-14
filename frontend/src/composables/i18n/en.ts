@@ -880,8 +880,6 @@ export default {
   'settings.about.checking': 'Checking…',
   'settings.about.upToDate': 'You are up to date ({version})',
   'settings.about.checkFailed': 'Update check failed. Please try again later.',
-  'settings.about.gracePeriod':
-    'Version {version} was just released. Details will appear within 24 hours.',
   'settings.about.downloadUpdate': 'Download update',
   'settings.about.downloading': 'Downloading… {percent}%',
   'settings.about.downloadPreparing': 'Waiting for a save location…',

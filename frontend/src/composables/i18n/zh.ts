@@ -873,7 +873,6 @@ export default {
   'settings.about.checking': '正在检查…',
   'settings.about.upToDate': '已是最新版本（{version}）',
   'settings.about.checkFailed': '检查更新失败，请稍后重试。',
-  'settings.about.gracePeriod': '新版本 {version} 刚刚发布，详情将在 24 小时后显示。',
   'settings.about.downloadUpdate': '下载更新',
   'settings.about.downloading': '正在下载… {percent}%',
   'settings.about.downloadPreparing': '等待选择保存位置…',
