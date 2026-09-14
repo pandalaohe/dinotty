@@ -467,6 +467,11 @@ async fn main() {
             )
             .route("/api/log", get(settings::get_log))
             .route(
+                "/api/locales",
+                get(settings::get_locales).post(settings::post_locale),
+            )
+            .route("/api/locales/:tag", delete(settings::delete_locale))
+            .route(
                 "/api/templates",
                 get(templates::list_templates).post(templates::create_template),
             )
