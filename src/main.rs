@@ -466,10 +466,7 @@ async fn main() {
                 post(settings::upload_background).get(settings::get_background),
             )
             .route("/api/log", get(settings::get_log))
-            .route(
-                "/api/locales",
-                get(settings::get_locales).post(settings::post_locale),
-            )
+            .route("/api/locales", get(settings::get_locales).post(settings::post_locale))
             .route("/api/locales/:tag", delete(settings::delete_locale))
             .route(
                 "/api/templates",

@@ -201,8 +201,7 @@ async fn the_manifest_tag_wins_over_the_filename() {
 #[tokio::test]
 async fn the_filename_is_used_when_the_manifest_has_no_tag() {
     let (_env, dir) = scratch_dir();
-    let (status, body) =
-        install(r#"{"messages":{"app.settings":"設定"}}"#, Some("ja.json")).await;
+    let (status, body) = install(r#"{"messages":{"app.settings":"設定"}}"#, Some("ja.json")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["tag"], "ja");
 
@@ -313,7 +312,7 @@ async fn a_tag_that_could_escape_the_directory_is_refused() {
     }
 
     // Nothing was created anywhere, inside or outside the directory.
-    assert!(std::fs::read_dir(&dir).map(|d| d.count() == 0).unwrap_or(true));
+    assert!(std::fs::read_dir(&dir).map_or(true, |d| d.count() == 0));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -334,8 +333,7 @@ async fn a_filename_with_a_directory_component_is_reduced_to_its_basename() {
         ("C:\\fakepath\\ja.json", "ja"),
         ("/tmp/ko.json", "ko"),
     ] {
-        let (status, body) =
-            install(r#"{"messages":{"a.b":"x"}}"#, Some(name)).await;
+        let (status, body) = install(r#"{"messages":{"a.b":"x"}}"#, Some(name)).await;
         assert_eq!(status, StatusCode::OK, "{name} should install under its basename");
         assert_eq!(body["tag"], expected_tag, "{name}");
         // And it landed *inside* the directory, never beside it.
