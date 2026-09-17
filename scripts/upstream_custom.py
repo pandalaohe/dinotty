@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import time
@@ -60,29 +62,106 @@ def canonical_custom_path(repo: pathlib.Path = ROOT) -> pathlib.Path:
     raise RuntimeError("cannot locate the worktree owning refs/heads/custom")
 
 
-def active_ledger_ids(repo: pathlib.Path) -> set[str]:
-    active: set[str] = set()
-    for line in (repo / "LOCAL_MODS.md").read_text().splitlines():
-        if not line.startswith("| `"):
-            continue
-        fields = [field.strip() for field in line.split("|")[1:-1]]
-        if len(fields) >= 7 and fields[4] in {"private", "candidate", "filed"}:
-            active.add(fields[0].strip("`"))
-    return active
+def collab_root(repo: pathlib.Path) -> pathlib.Path | None:
+    try:
+        common = run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=repo,
+            capture=True,
+        )
+    except subprocess.CalledProcessError:
+        return None
+    if not common:
+        return None
+    directory = pathlib.Path(common).parent
+    for candidate in (directory, *directory.parents):
+        if (candidate / ".collab-root").exists():
+            return candidate
+    return None
+
+
+def resolve_collab() -> tuple[list[str], dict[str, str]]:
+    executable = shutil.which("collab")
+    if executable is not None:
+        return [executable], {}
+    source = os.environ.get("COLLAB_SRC")
+    if not source:
+        raise RuntimeError("collab kit unresolvable: install collab on PATH or set COLLAB_SRC")
+    package = str(pathlib.Path(source) / "src")
+    existing = os.environ.get("PYTHONPATH")
+    path = f"{package}{os.pathsep}{existing}" if existing else package
+    return [sys.executable, "-m", "collab"], {"PYTHONPATH": path}
+
+
+def mods_validate(repo: pathlib.Path, ref: str) -> tuple[int, dict]:
+    root = collab_root(repo)
+    if root is None:
+        raise RuntimeError(f"no collab root above {repo}")
+    argv, extra_env = resolve_collab()
+    completed = subprocess.run(
+        [
+            *argv,
+            "mods",
+            "validate",
+            "--git",
+            "--component",
+            "dinotty",
+            "--head",
+            f"dinotty={ref}",
+            "--root",
+            str(root),
+        ],
+        cwd=repo,
+        env={**os.environ, **extra_env},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        envelope = json.loads(completed.stdout)
+    except ValueError as error:
+        raise RuntimeError(
+            f"collab mods validate: unparsable output (exit {completed.returncode}): {error}"
+        ) from error
+    if not isinstance(envelope, dict):
+        raise RuntimeError(
+            f"collab mods validate: output is not an envelope object (exit {completed.returncode})"
+        )
+    return completed.returncode, envelope
 
 
 def ownership(repo: pathlib.Path, ref: str) -> tuple[list[str], list[str]]:
-    integration = config()["integration"]
-    owners = integration["residual_owners"]
-    configured_ids = {owner["mod_id"] for owner in owners}
-    missing = active_ledger_ids(repo) - configured_ids
-    if missing:
-        raise ValueError("active ledger row(s) without residual owner: " + ", ".join(sorted(missing)))
-    patterns = [pattern for owner in owners for pattern in owner["paths"]]
-    paths = run(["git", "diff", "--name-only", f"upstream/dev..{ref}"], cwd=repo, capture=True)
-    residual = [line for line in paths.splitlines() if line]
-    require_allowlisted(residual, patterns)
-    return residual, patterns
+    exit_code, envelope = mods_validate(repo, ref)
+    if envelope.get("ok") is False:
+        error = envelope.get("error") or {}
+        failures = (error.get("detail") or {}).get("errors") or []
+        named = "; ".join(
+            f"{finding.get('code')}: {finding.get('detail')}" for finding in failures
+        )
+        message = f"local_mods validate refused: {error.get('code')}: {error.get('message')}"
+        raise ValueError(f"{message} ({named})" if named else message)
+    if envelope.get("ok") is not True:
+        raise RuntimeError(f"collab mods validate exited {exit_code}: envelope has no ok flag")
+    if exit_code != 0:
+        raise RuntimeError(f"collab mods validate exited {exit_code} with an ok envelope")
+    result = envelope.get("result")
+    ownership_map = result.get("ownership") if isinstance(result, dict) else None
+    component = ownership_map.get("dinotty") if isinstance(ownership_map, dict) else None
+    if not isinstance(component, dict):
+        raise RuntimeError(
+            f"collab mods validate exited {exit_code}: "
+            "result.ownership.dinotty is missing or not an object"
+        )
+    def string_list(field: str) -> list[str]:
+        value = component.get(field)
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise RuntimeError(
+                f"collab mods validate exited {exit_code}: "
+                f"result.ownership.dinotty.{field} is missing or not a list of strings"
+            )
+        return list(value)
+
+    return string_list("residual"), string_list("patterns")
 
 
 def run_steps(repo: pathlib.Path, key: str) -> None:
@@ -159,13 +238,15 @@ def prepare(args: argparse.Namespace) -> None:
         run(["git", "merge", "--no-edit", "upstream/dev"], cwd=worktree)
     except subprocess.CalledProcessError:
         print(
-            f"[upstream-custom] conflicts preserved in {worktree}; resolve, update LOCAL_MODS.md, "
+            f"[upstream-custom] conflicts preserved in {worktree}; resolve, "
+            f"update local_mods (collab mods set), "
             f"commit, then run finish --worktree {worktree} --previous-ref {previous}",
             file=sys.stderr,
         )
         raise
     print(
-        f"[upstream-custom] candidate prepared at {worktree}; update LOCAL_MODS.md for upstream "
+        f"[upstream-custom] candidate prepared at {worktree}; "
+        f"update local_mods (collab mods set) for upstream "
         f"{upstream}, commit it, then run finish --worktree {worktree} --previous-ref {previous}"
     )
 

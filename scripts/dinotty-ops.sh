@@ -522,9 +522,9 @@ align_upstream(){
   ( cd frontend && pnpm build ) \
     || die "frontend build failed — merged tree retained; backup tag $tag is available"
 
-  info "LOCAL_MODS.md ledger reminder:"
-  info "  update the Live-alignment snapshot SHA/date/table in fork/dinotty/LOCAL_MODS.md"
-  info "  append a Re-align log entry in fork/dinotty/LOCAL_MODS.md"
+  info "local_mods ledger reminder:"
+  info "  collab mods set <MOD> <field>=<value> --reason <why> for each MOD this merge changed"
+  info "  collab mods accept --heads --verify-file <file> --run <run> --review-ref <ref> after the joint check"
   info "  backup tag $tag was created at the pre-update custom HEAD"
 }
 
