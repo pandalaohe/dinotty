@@ -1,3 +1,5 @@
+> FROZEN 2026-09-18 — the ledger moved to the collab root's local_mods/; this file is evidence only.
+
 # LOCAL_MODS — pandalaohe/dinotty (fork of xichan96/dinotty)
 
 Upstream: https://github.com/xichan96/dinotty (MIT)
