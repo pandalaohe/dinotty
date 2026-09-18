@@ -381,7 +381,9 @@ rebuild_prod(){
 
   frontend_verify_gate
   info "native: cargo tauri build ..."
-  cargo tauri build || die "production native build failed (installed apps left untouched)"
+  # --bundles app: the install path below consumes only the .app; building the .dmg drags in
+  # bundle_dmg.sh, which drives Finder over Apple Events and fails in non-GUI/unauthorized contexts.
+  cargo tauri build --bundles app || die "production native build failed (installed apps left untouched)"
 
   new_app="target/release/bundle/macos/$APP"
   [ -d "$new_app" ] || die "built app not found at $new_app (installed apps left untouched)"
@@ -409,7 +411,7 @@ rebuild_test(){
 
   frontend_verify_gate
   info "native: baked-identity cargo tauri build ..."
-  DINOTTY_DEFAULT_PORT=8998 DINOTTY_CONFIG_SUFFIX=-test cargo tauri build \
+  DINOTTY_DEFAULT_PORT=8998 DINOTTY_CONFIG_SUFFIX=-test cargo tauri build --bundles app \
     --config '{"productName":"Dinotty Test","identifier":"com.dinotty.terminal.test","build":{"beforeBuildCommand":"cd '"$REPO_DIR"'/frontend && pnpm build"}}' \
     || die "test baked-identity native build failed (installed apps left untouched)"
 
