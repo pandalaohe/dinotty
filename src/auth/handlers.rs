@@ -17,8 +17,10 @@ use crate::settings::{self, SettingsState};
 
 use super::session::SessionStore;
 use super::verification_code::{CodeStore, VerifyOutcome};
-use super::{check_lockout, constant_time_eq, get_fail_count, real_client_ip, record_auth_failure,
-            session_cookie_name};
+use super::{
+    check_lockout, constant_time_eq, get_fail_count, real_client_ip, record_auth_failure,
+    session_cookie_name,
+};
 
 /// Subset of app state needed by auth HTTP handlers.
 #[derive(Clone)]
@@ -54,10 +56,7 @@ fn build_session_cookie(session_id: &str, ttl_days: u64, port: u16) -> String {
 }
 
 fn clear_session_cookie(port: u16) -> String {
-    format!(
-        "{name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
-        name = session_cookie_name(port)
-    )
+    format!("{name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0", name = session_cookie_name(port))
 }
 
 /// Login endpoint. Dispatches to either token login or verification-code login
@@ -404,6 +403,7 @@ pub async fn request_code(
         .into_response()
 }
 
+#[allow(clippy::unused_async)]
 pub async fn logout(
     State(state): State<AuthHandlerState>,
     headers: axum::http::HeaderMap,
@@ -442,6 +442,7 @@ pub async fn put_settings_with_session_ttl(
     status
 }
 
+#[allow(clippy::unused_async)]
 pub async fn list_sessions(State(state): State<AuthHandlerState>) -> impl IntoResponse {
     let sessions = state.sessions.list();
     Json(serde_json::json!({ "sessions": sessions }))
@@ -452,6 +453,7 @@ pub struct RevokeSessionPath {
     id: String,
 }
 
+#[allow(clippy::unused_async)]
 pub async fn revoke_session(
     State(state): State<AuthHandlerState>,
     Path(path): Path<RevokeSessionPath>,
@@ -461,6 +463,7 @@ pub async fn revoke_session(
     Json(serde_json::json!({ "ok": ok }))
 }
 
+#[allow(clippy::unused_async)]
 pub async fn revoke_other_sessions(
     State(state): State<AuthHandlerState>,
     headers: axum::http::HeaderMap,
@@ -483,6 +486,7 @@ pub async fn revoke_other_sessions(
     Json(serde_json::json!({ "ok": true }))
 }
 
+#[allow(clippy::unused_async)]
 pub async fn check_auth(State(_state): State<AuthHandlerState>) -> impl IntoResponse {
     // Legacy endpoint kept for backward compat - returns 200 if middleware passed.
     StatusCode::OK

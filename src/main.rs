@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use dinotty_server::{
-    agent, api::clipboard, audit, auth, events, file_watcher, history, mcp,
-    mission_control, monitor, notification, openapi, plugin, proxy, session, settings, tabs,
-    templates, token, update_check, workspace, workspace_mgmt, ws,
+    agent, api::clipboard, audit, auth, events, file_watcher, history, mcp, mission_control,
+    monitor, notification, openapi, plugin, proxy, session, settings, tabs, templates, token,
+    update_check, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -466,6 +466,8 @@ async fn main() {
                 post(settings::upload_background).get(settings::get_background),
             )
             .route("/api/log", get(settings::get_log))
+            .route("/api/locales", get(settings::get_locales).post(settings::post_locale))
+            .route("/api/locales/:tag", delete(settings::delete_locale))
             .route(
                 "/api/templates",
                 get(templates::list_templates).post(templates::create_template),

@@ -217,9 +217,7 @@ fn authorized_target(
     // Resolve before judging: `is_hub_only_path` must see the path the upstream
     // will see, not the one the caller spelled.
     let Some(resolved) = normalized_relay_path(rest) else {
-        return Err(Box::new(
-            (StatusCode::BAD_REQUEST, "malformed relay path").into_response(),
-        ));
+        return Err(Box::new((StatusCode::BAD_REQUEST, "malformed relay path").into_response()));
     };
     if is_hub_only_path(&resolved) {
         tracing::warn!(

@@ -155,11 +155,28 @@ Expected artifacts:
 | `dinotty-linux` | Desktop `.deb` / `.AppImage`, Server `dinotty-server_*.deb` |
 | `dinotty-windows` | NSIS installer, portable `.exe` |
 
-After publishing, verify that the GitHub Release tag, title, and asset versions match. Perform at least a basic install and startup check for the supported platforms.
+The exact asset filenames matter: the in-app updater picks the file for the
+running platform by matching these names, so renaming a bundle in CI silently
+removes in-app download for that platform.
+
+| Platform / arch | Asset filename |
+|-----------------|----------------|
+| macOS arm64 | `Dinotty_{version}_aarch64.dmg` |
+| macOS x64 | `Dinotty_{version}_x64.dmg` (no such job yet — Intel Macs have no in-app download) |
+| Linux amd64 | `Dinotty_{version}_amd64.AppImage`, `Dinotty_{version}_amd64.deb` |
+| Linux arm64 | `Dinotty_{version}_aarch64.AppImage`, `Dinotty_{version}_arm64.deb` |
+| Windows x64 | `Dinotty_{version}_x64-setup.exe`, `Dinotty_{version}_x64-portable.exe` |
+| Server (not offered in-app) | `dinotty-server_{version}-1_{amd64,arm64}.deb` |
+
+Note that the arch token is not uniform: the arm build is spelled `aarch64` for
+the AppImage and `.dmg` but `arm64` for the `.deb`, and Windows uses `x64`.
+`select_assets` in `src/update_check.rs` encodes exactly this table.
+
+After publishing, verify that the GitHub Release tag, title, and asset versions match. Perform at least a basic install and startup check for the supported platforms. Check the asset names against the table above, and if a rename was intended, update `AssetKind` in `src/update_check.rs` in the same change.
 
 ## 7. Withdraw a Broken Release
 
-Dinotty applies a 24-hour notification grace period to new versions. If a Release is deleted within 24 hours of publication, clients revalidate it with GitHub when the grace period ends and do not notify users about that version.
+Dinotty has no notification delay: once a Release is published, clients are notified about it on their next update check. Withdrawing therefore only helps clients that have not checked yet.
 
 For a serious issue, select **Delete this release** on the GitHub Release page, or run:
 
@@ -167,7 +184,9 @@ For a serious issue, select **Delete this release** on the GitHub Release page, 
 gh release delete "v0.20.0" --repo xichan96/dinotty --yes
 ```
 
-Delete only the Release and keep its Git tag; never move or reuse that tag. Fix the issue on `dev`, increment the PATCH version, and publish the replacement through the normal flow. If the Release was already more than 24 hours old, prompts already shown and the backend's successful cache of up to six hours cannot be revoked immediately; they disappear only after the page lifecycle ends or the cache revalidates, so publish the fixed version promptly.
+Delete only the Release and keep its Git tag; never move or reuse that tag. Fix the issue on `dev`, increment the PATCH version, and publish the replacement through the normal flow.
+
+After the deletion, GitHub's `releases/latest` falls back to the previous version, so clients stop being notified about the withdrawn version on their next check. A prompt already shown cannot be revoked, and the backend's successful cache of up to six hours may keep serving the old result, so delete the Release immediately and publish the fixed version promptly.
 
 ## Failure Handling
 
