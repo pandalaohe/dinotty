@@ -115,7 +115,10 @@ served_asset_name(){
 }
 
 local_asset_name(){
-  ls frontend/dist/assets/index-*.js 2>/dev/null | head -1 | xargs -r basename || true
+  grep -Eo "assets/index-[^\"']*\\.js" frontend/dist/index.html 2>/dev/null \
+    | head -1 \
+    | sed 's#^.*/##' \
+    || true
 }
 
 fingerprint_check(){
