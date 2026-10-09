@@ -21,6 +21,7 @@ export CLAUDE_CODE_CHILD_SESSION=1
 export CLAUDE_SESSION_ID=x
 export TMUX_PANE=%0
 export OMNIGENT=1
+export TMPDIR=/nonexistent/caller-scratch
 
 open_path='/usr/bin/open'
 search="${open_path} \"\$DEST\""
@@ -48,6 +49,11 @@ for required in HOME USER LOGNAME SHELL TMPDIR PATH; do
     exit 1
   }
 done
+
+if grep -qxF 'TMPDIR=/nonexistent/caller-scratch' "$DUMP"; then
+  printf 'caller TMPDIR leaked into relaunch env\n' >&2
+  exit 1
+fi
 
 while IFS= read -r line; do
   [ -n "$line" ] || continue
