@@ -236,7 +236,9 @@ clear_asset_cache(){
 
 relaunch_instance(){
   # open forwards the caller environment into the launched app.
-  /usr/bin/env -i HOME="$HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" SHELL="${SHELL:-/bin/zsh}" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/bin/open "$DEST" \
+  # TMPDIR is the user's temp dir, not the caller's (a scratch TMPDIR would outlive its directory in every pane).
+  local app_tmp; app_tmp=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null) || app_tmp=/tmp/
+  /usr/bin/env -i HOME="$HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" SHELL="${SHELL:-/bin/zsh}" TMPDIR="${app_tmp:-/tmp/}" PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/bin/open "$DEST" \
     || die "$NAME relaunch failed — installed app remains at $DEST"
 }
 
