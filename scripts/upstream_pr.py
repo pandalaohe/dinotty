@@ -14,9 +14,9 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FORK_GUARD = pathlib.Path(
-    "/Volumes/Dev/ai/core/share/codex/skills/upstream-update/scripts/fork_guard.py"
+    "/Volumes/Dev/ai/cccore/share/codex/skills/upstream-update/scripts/fork_guard.py"
 )
-INFRA_GUARD = pathlib.Path("/Volumes/Dev/ai/core/scripts/infra-git-hygiene.sh")
+INFRA_GUARD = pathlib.Path("/Volumes/Dev/ai/cccore/scripts/infra-git-hygiene.sh")
 DENIED_PATTERNS = (
     "LOCAL_MODS.md",
     ".upstream-update*",

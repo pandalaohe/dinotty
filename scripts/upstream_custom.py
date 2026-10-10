@@ -16,7 +16,7 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FORK_GUARD = pathlib.Path(
-    "/Volumes/Dev/ai/core/share/codex/skills/upstream-update/scripts/fork_guard.py"
+    "/Volumes/Dev/ai/cccore/share/codex/skills/upstream-update/scripts/fork_guard.py"
 )
 
 
