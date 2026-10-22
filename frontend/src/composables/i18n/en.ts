@@ -107,6 +107,7 @@ export default {
   'filePreview.ctxDownload': 'Download',
   'filePreview.ctxOpenToSide': 'Open to the Side',
   'filePreview.ctxReveal': 'Reveal in File Manager',
+  'filePreview.ctxOpenFolder': 'Open Folder',
   'filePreview.copyPath': 'Copy',
   'filePreview.copyText': 'Copy',
   'filePreview.insertToTerminal': 'Insert',

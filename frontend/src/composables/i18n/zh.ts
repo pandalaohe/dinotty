@@ -107,6 +107,7 @@ export default {
   'filePreview.ctxDownload': '下载',
   'filePreview.ctxOpenToSide': '在侧边打开',
   'filePreview.ctxReveal': '在文件管理器中显示',
+  'filePreview.ctxOpenFolder': '打开文件夹',
   'filePreview.copyPath': '复制',
   'filePreview.copyText': '复制',
   'filePreview.insertToTerminal': '插入',

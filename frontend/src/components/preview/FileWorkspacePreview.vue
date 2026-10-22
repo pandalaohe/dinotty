@@ -180,6 +180,15 @@
           <span class="tree-ctx-label">{{ t('filePreview.ctxReveal') }}</span>
         </button>
         <button
+          v-if="isTauri()"
+          type="button"
+          class="tree-ctx-item"
+          role="menuitem"
+          @click="ctxMenu.ctxOpenFolder"
+        >
+          <span class="tree-ctx-label">{{ t('filePreview.ctxOpenFolder') }}</span>
+        </button>
+        <button
           v-if="ctxMenu.canRunCode.value"
           type="button"
           class="tree-ctx-item"
