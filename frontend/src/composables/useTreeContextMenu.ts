@@ -3,6 +3,7 @@ import { copyToClipboard } from '../utils/clipboard'
 import { uiConfirm } from './useConfirm'
 import type { DirEntry } from '../components/workspace/TreeRows'
 import { isRunnableCodeFile } from '../utils/runCodeCommand'
+import { tauriInvoke } from './useTransport'
 
 interface Meta {
   kind: string
@@ -68,7 +69,7 @@ export function useTreeContextMenu(opts: {
     if (opts.narrow.value) return { left: '0', right: '0', bottom: '0' }
     const pad = 8
     const mw = 220
-    const mh = 300
+    const mh = 400
     let left = m.x
     let top = m.y
     if (typeof window !== 'undefined') {
@@ -217,6 +218,26 @@ export function useTreeContextMenu(opts: {
     await authFetch(apiUrl(`/api/workspace/reveal?${q}`), { method: 'GET' })
   }
 
+  /** Desktop-only: open the target's folder in the OS file manager. A
+   *  directory opens itself; a file is revealed selected in its parent —
+   *  matching VSCode's reveal behaviour. Uses the local `reveal_path` command
+   *  rather than the workspace HTTP endpoint, so it stays on the desktop
+   *  machine (the endpoint would open the file manager on the server host). */
+  async function ctxOpenFolder() {
+    if (!contextMenu.value) return
+    const { rel } = contextMenu.value
+    closeContextMenu()
+    const targetRel = rel || opts.selectedRel.value
+    if (!targetRel) return
+    const abs = opts.absolutePath(targetRel)
+    if (!abs) return
+    try {
+      await tauriInvoke('reveal_path', { path: abs })
+    } catch (err) {
+      console.warn('[tree] open folder failed:', err)
+    }
+  }
+
   function ctxCopyPath() {
     if (!contextMenu.value) return
     const { rel } = contextMenu.value
@@ -324,6 +345,7 @@ export function useTreeContextMenu(opts: {
     ctxUpload,
     ctxDownload,
     ctxCopyPath,
+    ctxOpenFolder,
     ctxInsertToTerminal,
     ctxRunCode,
     ctxReveal,
